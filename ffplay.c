@@ -224,6 +224,7 @@ typedef struct VideoState {
     int queue_attachments_req;
     int seek_req;
     int seek_flags;
+    int seek_frame;
     int64_t seek_pos;
     int64_t seek_rel;
     int read_pause_return;
@@ -943,7 +944,7 @@ static void s_input_window(VideoState *is)
             // 자식으로 바꾸고 부모 지정
             DWORD ws = GetWindowLong(hWnd, GWL_STYLE);
             ws &= !WS_POPUP;
-            ws |= WS_CHILD | WS_VISIBLE;
+            ws |= WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
             SetWindowLong(hWnd, GWL_STYLE, ws);
             SetParent(hWnd, win_hWnd);
             
@@ -3175,7 +3176,13 @@ static int read_thread(void *arg)
 // FIXME the +-2 is due to rounding being not done in the correct direction in generation
 //      of the seek_pos/seek_rel variables
 
-            ret = avformat_seek_file(is->ic, -1, seek_min, seek_target, seek_max, is->seek_flags);
+            if (is->seek_frame)
+			      {
+				        ret = av_seek_frame(is->ic, -1, seek_target, is->seek_flags | AVSEEK_FLAG_BACKWARD);
+				        is->seek_frame = 0;
+			      }
+			      else
+				        ret = avformat_seek_file(is->ic, -1, seek_min, seek_target, seek_max, is->seek_flags);
             if (ret < 0) {
                 av_log(NULL, AV_LOG_ERROR,
                        "%s: error while seeking\n", is->ic->filename);
@@ -3527,61 +3534,70 @@ static void event_loop(VideoState *cur_stream)
 					case WM_KEYDOWN:
 						switch (event.syswm.msg->msg.win.wParam)
 						{
-							case 32: // space bar
-								toggle_pause(cur_stream);
-								break;
-							case 33: // pgup
-								if (cur_stream->ic->nb_chapters <= 1) {
-									incr = 600.0;
-									goto do_seek;
-								}
-								seek_chapter(cur_stream, 1);
-								break;
-							case 34: // pgdn
-								if (cur_stream->ic->nb_chapters <= 1) {
-									incr = -600.0;
-									goto do_seek;
-								}
-								seek_chapter(cur_stream, -1);
-								break;
-							case 37: // left
-								incr = -10.0;
-								goto do_seek;
-								break;
-							case 38: // up
-								if (volume_s < 128) volume_s = FFMIN(volume_s + 16, 128);
-								break;
-							case 39: // right
-								incr = 10.0;
-								goto do_seek;
-								break;
-							case 40: // down
-								if (volume_s > 0) volume_s = FFMAX(volume_s - 16, 0);
-								break;
-							case 65: // a
-								stream_cycle_channel(cur_stream, AVMEDIA_TYPE_AUDIO);
-								break;
-							case 67: // c 
-								stream_cycle_channel(cur_stream, AVMEDIA_TYPE_VIDEO);
-								stream_cycle_channel(cur_stream, AVMEDIA_TYPE_AUDIO);
-								stream_cycle_channel(cur_stream, AVMEDIA_TYPE_SUBTITLE);
-								break;
-							case 70: // f
+							case 13: // enter
 								if (window_hwnd == NULL && SDL_hwnd != NULL)
 								{
 									toggle_full_screen(cur_stream);
 									cur_stream->force_refresh = 1;
 								}
 								break;
+							case 32: // space bar
+								toggle_pause(cur_stream);
+								break;
+							case 33: // pgup
+								if (cur_stream->ic->nb_chapters <= 1) {
+									incr = 300.0;
+									goto do_seek;
+								}
+								seek_chapter(cur_stream, 1);
+								break;
+							case 34: // pgdn
+								if (cur_stream->ic->nb_chapters <= 1) {
+									incr = -300.0;
+									goto do_seek;
+								}
+								seek_chapter(cur_stream, -1);
+								break;
+							case 38: // up
+								if (volume_s < 128) volume_s = FFMIN(volume_s + 8, 128);
+								break;
+							case 40: // down
+								if (volume_s > 0) volume_s = FFMAX(volume_s - 8, 0);
+								break;
+							case 65: // a
+								stream_cycle_channel(cur_stream, AVMEDIA_TYPE_AUDIO);
+								break;
+							case 67: // c
+								stream_cycle_channel(cur_stream, AVMEDIA_TYPE_VIDEO);
+								stream_cycle_channel(cur_stream, AVMEDIA_TYPE_AUDIO);
+								stream_cycle_channel(cur_stream, AVMEDIA_TYPE_SUBTITLE);
+								break;
+							case 68: // d
+								if (!cur_stream->paused)
+									stream_toggle_pause(cur_stream);
+								incr = -1.0;
+								goto do_seek;
+								break;
+							case 69: // e
+							case 37: // left
+								incr = -5.0;
+								goto do_seek;
+								break;
+							case 70: // f
+								if (!cur_stream->paused)
+									stream_toggle_pause(cur_stream);
+								incr = 0.05;
+								goto do_seek;
+								break;
 							case 27: // esc
 							case 81: // q
 								gui_message(27);
 								do_exit(cur_stream);
 								break;
+							case 39: // right
 							case 82: // r
-								screen_width  = cur_stream->width;
-								screen_height = cur_stream->height;
-								s_resize_event(cur_stream, screen_width, screen_height);
+								incr = 5.0;
+								goto do_seek;
 								break;
 							case 83: // s
 								step_to_next_frame(cur_stream);
@@ -3742,11 +3758,11 @@ static void event_loop(VideoState *cur_stream)
 		case SDL_MOUSEWHEEL:
 			if (event.wheel.y < 0)
 			{
-				if (volume_s > 0) volume_s = FFMAX(volume_s - 16, 0);
+				if (volume_s > 0) volume_s = FFMAX(volume_s - 8, 0);
 			}
 			else
 			{
-				if (volume_s < 128) volume_s = FFMIN(volume_s + 16, 128);
+				if (volume_s < 128) volume_s = FFMIN(volume_s + 8, 128);
 			}
 			break;
         case SDL_QUIT:
