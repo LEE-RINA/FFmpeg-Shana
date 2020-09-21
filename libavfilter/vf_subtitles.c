@@ -51,14 +51,15 @@ typedef struct {
     ASS_Renderer *renderer;
     ASS_Track    *track;
     char *filename;
-    char *fontname;
+	char *fontname;
+    char *fontsdir;
     char *charenc;
     char *force_style;
     int stream_index;
     uint8_t rgba_map[4];
     int     pix_step[4];       ///< steps per pixel for each plane of the main output
     int original_w, original_h;
-    double subdelay;
+	double subdelay;
     int shaping;
     FFDrawContext draw;
 } AssContext;
@@ -70,8 +71,9 @@ typedef struct {
     {"filename",       "set the filename of file to read",                         OFFSET(filename),   AV_OPT_TYPE_STRING,     {.str = NULL},  CHAR_MIN, CHAR_MAX, FLAGS }, \
     {"f",              "set the filename of file to read",                         OFFSET(filename),   AV_OPT_TYPE_STRING,     {.str = NULL},  CHAR_MIN, CHAR_MAX, FLAGS }, \
     {"original_size",  "set the size of the original video (used to scale fonts)", OFFSET(original_w), AV_OPT_TYPE_IMAGE_SIZE, {.str = NULL},  CHAR_MIN, CHAR_MAX, FLAGS }, \
-    {"fontname",       "set the fontname",                                         OFFSET(fontname), FF_OPT_TYPE_STRING,       {.str=NULL}  ,  CHAR_MIN, CHAR_MAX, FLAGS }, \
-    {"subdelay",       "set delay",                                                OFFSET(subdelay), AV_OPT_TYPE_DOUBLE,       {.dbl=0.0}   ,  INT_MIN,  INT_MAX,  FLAGS }, \
+    {"fontsdir",       "set the directory containing the fonts to read",           OFFSET(fontsdir),   AV_OPT_TYPE_STRING,     {.str = NULL},  CHAR_MIN, CHAR_MAX, FLAGS }, \
+    {"fontname",       "set the fontname",                                         OFFSET(fontname),   FF_OPT_TYPE_STRING,     {.str=NULL}  ,  CHAR_MIN, CHAR_MAX, FLAGS }, \
+    {"subdelay",       "set delay",                                                OFFSET(subdelay),   AV_OPT_TYPE_DOUBLE,     {.dbl=0.0}   ,  INT_MIN,  INT_MAX,  FLAGS }, \
 
 /* libass supports a log level ranging from 0 to 7 */
 static const int ass_libavfilter_log_level_map[] = {
@@ -99,6 +101,8 @@ static av_cold int init(AVFilterContext *ctx)
         av_log(ctx, AV_LOG_ERROR, "Could not initialize libass.\n");
         return AVERROR(EINVAL);
     }
+
+    ass_set_fonts_dir(ass->library, ass->fontsdir);
 
     ass->renderer = ass_renderer_init(ass->library);
     if (!ass->renderer) {

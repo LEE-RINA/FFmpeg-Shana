@@ -632,7 +632,7 @@ static int decorrelate(TAKDecContext *s, int c1, int c2, int length)
         for (; length2 > 0; length2 -= tmp) {
             tmp = FFMIN(length2, x);
 
-            for (i = 0; i < tmp; i++)
+            for (i = 0; i < tmp - (tmp == length2); i++)
                 s->residues[filter_order + i] = *p2++ >> dshift;
 
             for (i = 0; i < tmp; i++) {
@@ -656,7 +656,7 @@ static int decorrelate(TAKDecContext *s, int c1, int c2, int length)
                 *p1++ = v;
             }
 
-            memcpy(s->residues, &s->residues[tmp], 2 * filter_order);
+            memmove(s->residues, &s->residues[tmp], 2 * filter_order);
         }
 
         emms_c();
@@ -947,7 +947,7 @@ AVCodec ff_tak_decoder = {
     .decode           = tak_decode_frame,
     .init_thread_copy = ONLY_IF_THREADS_ENABLED(init_thread_copy),
     .update_thread_context = ONLY_IF_THREADS_ENABLED(update_thread_context),
-    .capabilities     = CODEC_CAP_DR1 | CODEC_CAP_FRAME_THREADS,
+    .capabilities     = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS,
     .sample_fmts      = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_U8P,
                                                         AV_SAMPLE_FMT_S16P,
                                                         AV_SAMPLE_FMT_S32P,

@@ -97,6 +97,7 @@ int ffio_init_context(AVIOContext *s,
     s->seekable        = seek ? AVIO_SEEKABLE_NORMAL : 0;
     s->max_packet_size = 0;
     s->update_checksum = NULL;
+    s->short_seek_threshold = SHORT_SEEK_THRESHOLD;
 
     if (!read_packet && !write_flag) {
         s->pos     = buffer_size;
@@ -232,7 +233,7 @@ int64_t avio_seek(AVIOContext *s, int64_t offset, int whence)
         /* can do the seek inside the buffer */
         s->buf_ptr = s->buffer + offset1;
     } else if ((!s->seekable ||
-               offset1 <= s->buf_end + SHORT_SEEK_THRESHOLD - s->buffer) &&
+               offset1 <= s->buf_end + s->short_seek_threshold - s->buffer) &&
                !s->write_flag && offset1 >= 0 &&
                (!s->direct || !s->seek) &&
               (whence != SEEK_END || force)) {
@@ -359,6 +360,8 @@ static inline int put_str16(AVIOContext *s, const char *str, const int be)
 invalid:
         av_log(s, AV_LOG_ERROR, "Invaid UTF8 sequence in avio_put_str16%s\n", be ? "be" : "le");
         err = AVERROR(EINVAL);
+        if (!*(q-1))
+            break;
     }
     if (be)
         avio_wb16(s, 0);
@@ -1020,6 +1023,23 @@ int avio_read_to_bprint(AVIOContext *h, AVBPrint *pb, size_t max_size)
     return 0;
 }
 
+int avio_accept(AVIOContext *s, AVIOContext **c)
+{
+    int ret;
+    URLContext *sc = s->opaque;
+    URLContext *cc = NULL;
+    ret = ffurl_accept(sc, &cc);
+    if (ret < 0)
+        return ret;
+    return ffio_fdopen(c, cc);
+}
+
+int avio_handshake(AVIOContext *c)
+{
+    URLContext *cc = c->opaque;
+    return ffurl_handshake(cc);
+}
+
 /* output in a dynamic buffer */
 
 typedef struct DynBuffer {
@@ -1129,7 +1149,7 @@ int avio_close_dyn_buf(AVIOContext *s, uint8_t **pbuffer)
 {
     DynBuffer *d;
     int size;
-    static const char padbuf[FF_INPUT_BUFFER_PADDING_SIZE] = {0};
+    static const char padbuf[AV_INPUT_BUFFER_PADDING_SIZE] = {0};
     int padding = 0;
 
     if (!s) {
@@ -1140,7 +1160,7 @@ int avio_close_dyn_buf(AVIOContext *s, uint8_t **pbuffer)
     /* don't attempt to pad fixed-size packet buffers */
     if (!s->max_packet_size) {
         avio_write(s, padbuf, sizeof(padbuf));
-        padding = FF_INPUT_BUFFER_PADDING_SIZE;
+        padding = AV_INPUT_BUFFER_PADDING_SIZE;
     }
 
     avio_flush(s);

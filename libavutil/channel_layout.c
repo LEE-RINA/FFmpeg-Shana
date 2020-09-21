@@ -102,6 +102,7 @@ static const struct {
     { "7.1(wide)",   8,  AV_CH_LAYOUT_7POINT1_WIDE_BACK },
     { "7.1(wide-side)",   8,  AV_CH_LAYOUT_7POINT1_WIDE },
     { "octagonal",   8,  AV_CH_LAYOUT_OCTAGONAL },
+    { "hexadecagonal", 16, AV_CH_LAYOUT_HEXADECAGONAL },
     { "downmix",     2,  AV_CH_LAYOUT_STEREO_DOWNMIX, },
 };
 
@@ -125,6 +126,8 @@ static uint64_t get_channel_layout_single(const char *name, int name_len)
             strlen(channel_names[i].name) == name_len &&
             !memcmp(channel_names[i].name, name, name_len))
             return (int64_t)1 << i;
+
+    errno = 0;
     i = strtol(name, &end, 10);
 
 #if FF_API_GET_CHANNEL_LAYOUT_COMPAT
@@ -143,14 +146,15 @@ static uint64_t get_channel_layout_single(const char *name, int name_len)
         }
     } else {
 #endif
-    if ((end + 1 - name == name_len && *end  == 'c'))
+    if (!errno && (end + 1 - name == name_len && *end  == 'c'))
         return av_get_default_channel_layout(i);
 #if FF_API_GET_CHANNEL_LAYOUT_COMPAT
     }
 #endif
 
+    errno = 0;
     layout = strtoll(name, &end, 0);
-    if (end - name == name_len)
+    if (!errno && end - name == name_len)
         return FFMAX(layout, 0);
     return 0;
 }

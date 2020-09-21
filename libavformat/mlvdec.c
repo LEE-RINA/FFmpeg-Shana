@@ -143,7 +143,7 @@ static int scan_file(AVFormatContext *avctx, AVStream *vst, AVStream *ast, int f
             vst->codec->codec_tag = MKTAG('B', 'I', 'T', 16);
             size -= 164;
         } else if (ast && type == MKTAG('W', 'A', 'V', 'I') && size >= 16) {
-            ret = ff_get_wav_header(pb, ast->codec, 16, 0);
+            ret = ff_get_wav_header(avctx, pb, ast->codec, 16, 0);
             if (ret < 0)
                 return ret;
             size -= 16;
@@ -364,6 +364,11 @@ static int read_header(AVFormatContext *avctx)
         vst->duration = vst->nb_index_entries;
     if (ast)
         ast->duration = ast->nb_index_entries;
+
+    if ((vst && !vst->nb_index_entries) || (ast && !ast->nb_index_entries)) {
+        av_log(avctx, AV_LOG_ERROR, "no index entries found\n");
+        return AVERROR_INVALIDDATA;
+    }
 
     if (vst && ast)
         avio_seek(pb, FFMIN(vst->index_entries[0].pos, ast->index_entries[0].pos), SEEK_SET);

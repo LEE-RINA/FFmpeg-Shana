@@ -183,6 +183,38 @@
 
 #define DATA_HEADER_SIZE 50
 
+typedef struct ASFPayload {
+    uint8_t type;
+    uint16_t size;
+} ASFPayload;
+
+typedef struct ASFStream {
+    int num;
+    unsigned char seq;
+    /* use for reading */
+    AVPacket pkt;
+    int frag_offset;
+    int packet_obj_size;
+    int timestamp;
+    int64_t duration;
+    int skip_to_key;
+    int pkt_clean;
+
+    int ds_span;                /* descrambling  */
+    int ds_packet_size;
+    int ds_chunk_size;
+
+    int64_t packet_pos;
+
+    uint16_t stream_language_index;
+
+    int      palette_changed;
+    uint32_t palette[256];
+
+    int payload_ext_ct;
+    ASFPayload payload[8];
+} ASFStream;
+
 typedef struct ASFContext {
     uint32_t seqno;
     int is_streamed;
@@ -927,6 +959,11 @@ static int asf_write_packet(AVFormatContext *s, AVPacket *pkt)
 
     pts = (pkt->pts != AV_NOPTS_VALUE) ? pkt->pts : pkt->dts;
     av_assert0(pts != AV_NOPTS_VALUE);
+    if (   pts < - PREROLL_TIME
+        || pts > (INT_MAX-3)/10000LL * ASF_INDEXED_INTERVAL - PREROLL_TIME) {
+        av_log(s, AV_LOG_ERROR, "input pts %"PRId64" is invalid\n", pts);
+        return AVERROR(EINVAL);
+    }
     pts *= 10000;
     asf->duration = FFMAX(asf->duration, pts + pkt->duration * 10000);
 

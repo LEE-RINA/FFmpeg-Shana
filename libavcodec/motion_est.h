@@ -30,6 +30,11 @@
 struct MpegEncContext;
 
 #define MAX_MV 4096
+#define MAX_DMV (2*MAX_MV)
+
+#define FF_ME_ZERO 0
+#define FF_ME_EPZS 1
+#define FF_ME_XONE 2
 
 /**
  * Motion estimation context.
@@ -80,7 +85,7 @@ typedef struct MotionEstContext {
     op_pixels_func(*hpel_avg)[4];
     qpel_mc_func(*qpel_put)[16];
     qpel_mc_func(*qpel_avg)[16];
-    uint8_t (*mv_penalty)[MAX_MV * 2 + 1]; ///< bit amount needed to encode a MV
+    uint8_t (*mv_penalty)[MAX_DMV * 2 + 1]; ///< bit amount needed to encode a MV
     uint8_t *current_mv_penalty;
     int (*sub_motion_search)(struct MpegEncContext *s,
                              int *mx_ptr, int *my_ptr, int dmin,
@@ -121,8 +126,5 @@ void ff_fix_long_p_mvs(struct MpegEncContext *s);
 void ff_fix_long_mvs(struct MpegEncContext *s, uint8_t *field_select_table,
                      int field_select, int16_t (*mv_table)[2], int f_code,
                      int type, int truncate);
-
-extern const uint8_t ff_aic_dc_scale_table[32];
-extern const uint8_t ff_h263_chroma_qscale_table[32];
 
 #endif /* AVCODEC_MOTIONEST_H */

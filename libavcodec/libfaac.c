@@ -174,7 +174,7 @@ static av_cold int Faac_encode_init(AVCodecContext *avctx)
     faac_cfg->allowMidside = 1;
     faac_cfg->bitRate = avctx->bit_rate / avctx->channels;
     faac_cfg->bandWidth = avctx->cutoff;
-    if(avctx->flags & CODEC_FLAG_QSCALE) {
+    if(avctx->flags & AV_CODEC_FLAG_QSCALE) {
         faac_cfg->bitRate = 0;
         faac_cfg->quantqual = avctx->global_quality / FF_QP2LAMBDA;
     }
@@ -188,14 +188,14 @@ static av_cold int Faac_encode_init(AVCodecContext *avctx)
 
     /* Set decoder specific info */
     avctx->extradata_size = 0;
-    if (avctx->flags & CODEC_FLAG_GLOBAL_HEADER) {
+    if (avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER) {
 
         unsigned char *buffer = NULL;
         unsigned long decoder_specific_info_size;
 
         if (!s->pfn.faacEncGetDecoderSpecificInfo(s->faac_handle, &buffer,
                                            &decoder_specific_info_size)) {
-            avctx->extradata = av_malloc(decoder_specific_info_size + FF_INPUT_BUFFER_PADDING_SIZE);
+            avctx->extradata = av_malloc(decoder_specific_info_size + AV_INPUT_BUFFER_PADDING_SIZE);
             if (!avctx->extradata) {
                 ret = AVERROR(ENOMEM);
                 goto error;
@@ -241,7 +241,7 @@ static int Faac_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
     int num_samples  = frame ? frame->nb_samples : 0;
     void *samples    = frame ? frame->data[0]    : NULL;
 
-    if ((ret = ff_alloc_packet2(avctx, avpkt, (7 + 768) * avctx->channels)) < 0)
+    if ((ret = ff_alloc_packet2(avctx, avpkt, (7 + 768) * avctx->channels, 0)) < 0)
         return ret;
 
     bytes_written = s->pfn.faacEncEncode(s->faac_handle, samples,
@@ -297,7 +297,7 @@ AVCodec ff_libfaac_encoder = {
     .init           = Faac_encode_init,
     .encode2        = Faac_encode_frame,
     .close          = Faac_encode_close,
-    .capabilities   = CODEC_CAP_SMALL_LAST_FRAME | CODEC_CAP_DELAY,
+    .capabilities   = AV_CODEC_CAP_SMALL_LAST_FRAME | AV_CODEC_CAP_DELAY,
     .sample_fmts    = (const enum AVSampleFormat[]){ AV_SAMPLE_FMT_S16,
                                                      AV_SAMPLE_FMT_NONE },
     .profiles       = NULL_IF_CONFIG_SMALL(profiles),

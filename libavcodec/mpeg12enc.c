@@ -42,9 +42,10 @@
 #include "mpegutils.h"
 #include "mpegvideo.h"
 
-
-static const uint8_t inv_non_linear_qscale[] = {
+static const int8_t inv_non_linear_qscale[] = {
     0, 2, 4, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+   -1,17,-1,18,-1,19, -1, 20, -1, 21, -1, 22, -1,
+   23,-1,24,-1,-1,-1
 };
 
 static const uint8_t svcd_scan_offset_placeholder[] = {
@@ -52,7 +53,7 @@ static const uint8_t svcd_scan_offset_placeholder[] = {
     0x81, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
 };
 
-static uint8_t mv_penalty[MAX_FCODE + 1][MAX_MV * 2 + 1];
+static uint8_t mv_penalty[MAX_FCODE + 1][MAX_DMV * 2 + 1];
 static uint8_t fcode_tab[MAX_MV * 2 + 1];
 
 static uint8_t uni_mpeg1_ac_vlc_len[64 * 64 * 2];
@@ -205,7 +206,7 @@ static av_cold int encode_init(AVCodecContext *avctx)
         }
     }
 
-    s->drop_frame_timecode = s->drop_frame_timecode || !!(avctx->flags2 & CODEC_FLAG2_DROP_FRAME_TIMECODE);
+    s->drop_frame_timecode = s->drop_frame_timecode || !!(avctx->flags2 & AV_CODEC_FLAG2_DROP_FRAME_TIMECODE);
     if (s->drop_frame_timecode)
         s->tc.flags |= AV_TIMECODE_FLAG_DROPFRAME;
     if (s->drop_frame_timecode && s->frame_rate_index != 4) {
@@ -384,7 +385,7 @@ static void mpeg1_encode_sequence_header(MpegEncContext *s)
         put_bits(&s->pb, 1, 1);
         put_bits(&s->pb, 6, (uint32_t)((time_code / fps) % 60));
         put_bits(&s->pb, 6, (uint32_t)((time_code % fps)));
-        put_bits(&s->pb, 1, !!(s->avctx->flags & CODEC_FLAG_CLOSED_GOP) || s->intra_only || !s->gop_picture_number);
+        put_bits(&s->pb, 1, !!(s->avctx->flags & AV_CODEC_FLAG_CLOSED_GOP) || s->intra_only || !s->gop_picture_number);
         put_bits(&s->pb, 1, 0);                     // broken link
     }
 }
@@ -402,8 +403,9 @@ static inline void encode_mb_skip_run(MpegEncContext *s, int run)
 static av_always_inline void put_qscale(MpegEncContext *s)
 {
     if (s->q_scale_type) {
-        av_assert2(s->qscale >= 1 && s->qscale <= 12);
-        put_bits(&s->pb, 5, inv_non_linear_qscale[s->qscale]);
+        int qp = inv_non_linear_qscale[s->qscale];
+        av_assert2(s->qscale >= 1 && qp > 0);
+        put_bits(&s->pb, 5, qp);
     } else {
         put_bits(&s->pb, 5, s->qscale);
     }
@@ -1051,7 +1053,7 @@ av_cold void ff_mpeg1_encode_init(MpegEncContext *s)
         }
 
         for (f_code = 1; f_code <= MAX_FCODE; f_code++)
-            for (mv = -MAX_MV; mv <= MAX_MV; mv++) {
+            for (mv = -MAX_DMV; mv <= MAX_DMV; mv++) {
                 int len;
 
                 if (mv == 0) {
@@ -1074,7 +1076,7 @@ av_cold void ff_mpeg1_encode_init(MpegEncContext *s)
                               2 + bit_size;
                 }
 
-                mv_penalty[f_code][mv + MAX_MV] = len;
+                mv_penalty[f_code][mv + MAX_DMV] = len;
             }
 
 
@@ -1155,7 +1157,7 @@ AVCodec ff_mpeg1video_encoder = {
     .supported_framerates = ff_mpeg12_frame_rate_tab + 1,
     .pix_fmts             = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P,
                                                            AV_PIX_FMT_NONE },
-    .capabilities         = CODEC_CAP_DELAY | CODEC_CAP_SLICE_THREADS,
+    .capabilities         = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_SLICE_THREADS,
     .priv_class           = &mpeg1_class,
 };
 
@@ -1172,6 +1174,6 @@ AVCodec ff_mpeg2video_encoder = {
     .pix_fmts             = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P,
                                                            AV_PIX_FMT_YUV422P,
                                                            AV_PIX_FMT_NONE },
-    .capabilities         = CODEC_CAP_DELAY | CODEC_CAP_SLICE_THREADS,
+    .capabilities         = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_SLICE_THREADS,
     .priv_class           = &mpeg2_class,
 };

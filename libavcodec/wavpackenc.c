@@ -128,6 +128,11 @@ static av_cold int wavpack_encode_init(AVCodecContext *avctx)
 
     s->avctx = avctx;
 
+    if (avctx->channels > 255) {
+        av_log(avctx, AV_LOG_ERROR, "Invalid channel count: %d\n", avctx->channels);
+        return AVERROR(EINVAL);
+    }
+
     if (!avctx->frame_size) {
         int block_samples;
         if (!(avctx->sample_rate & 1))
@@ -2878,8 +2883,8 @@ static int wavpack_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
     }
 
     buf_size = s->block_samples * avctx->channels * 8
-             + 200 /* for headers */;
-    if ((ret = ff_alloc_packet2(avctx, avpkt, buf_size)) < 0)
+             + 200 * avctx->channels /* for headers */;
+    if ((ret = ff_alloc_packet2(avctx, avpkt, buf_size, 0)) < 0)
         return ret;
     buf = avpkt->data;
 
@@ -2982,7 +2987,7 @@ AVCodec ff_wavpack_encoder = {
     .init           = wavpack_encode_init,
     .encode2        = wavpack_encode_frame,
     .close          = wavpack_encode_close,
-    .capabilities   = CODEC_CAP_SMALL_LAST_FRAME,
+    .capabilities   = AV_CODEC_CAP_SMALL_LAST_FRAME,
     .sample_fmts    = (const enum AVSampleFormat[]){ AV_SAMPLE_FMT_U8P,
                                                      AV_SAMPLE_FMT_S16P,
                                                      AV_SAMPLE_FMT_S32P,
