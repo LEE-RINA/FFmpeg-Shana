@@ -71,7 +71,7 @@ FFFramePool *ff_frame_pool_video_init(AVBufferRef* (*alloc)(int size),
     pool->format = format;
     pool->align = align;
 
-    if ((ret = av_image_check_size(width, height, 0, NULL)) < 0) {
+    if ((ret = av_image_check_size2(width, height, INT64_MAX, format, 0, NULL)) < 0) {
         goto fail;
     }
 
@@ -240,7 +240,7 @@ AVFrame *ff_frame_pool_get(FFFramePool *pool)
         break;
     case AVMEDIA_TYPE_AUDIO:
         frame->nb_samples = pool->nb_samples;
-        av_frame_set_channels(frame, pool->channels);
+        frame->channels = pool->channels;
         frame->format = pool->format;
         frame->linesize[0] = pool->linesize[0];
 

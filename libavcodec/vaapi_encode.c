@@ -27,7 +27,7 @@
 #include "vaapi_encode.h"
 #include "avcodec.h"
 
-static const char *picture_type_name[] = { "IDR", "I", "P", "B" };
+static const char * const picture_type_name[] = { "IDR", "I", "P", "B" };
 
 static int vaapi_encode_make_packed_header(AVCodecContext *avctx,
                                            VAAPIEncodePicture *pic,
@@ -36,13 +36,17 @@ static int vaapi_encode_make_packed_header(AVCodecContext *avctx,
     VAAPIEncodeContext *ctx = avctx->priv_data;
     VAStatus vas;
     VABufferID param_buffer, data_buffer;
+    VABufferID *tmp;
     VAEncPackedHeaderParameterBuffer params = {
         .type = type,
         .bit_length = bit_len,
         .has_emulation_bytes = 1,
     };
 
-    av_assert0(pic->nb_param_buffers + 2 <= MAX_PARAM_BUFFERS);
+    tmp = av_realloc_array(pic->param_buffers, sizeof(*tmp), pic->nb_param_buffers + 2);
+    if (!tmp)
+        return AVERROR(ENOMEM);
+    pic->param_buffers = tmp;
 
     vas = vaCreateBuffer(ctx->hwctx->display, ctx->va_context,
                          VAEncPackedHeaderParameterBufferType,
@@ -77,9 +81,13 @@ static int vaapi_encode_make_param_buffer(AVCodecContext *avctx,
 {
     VAAPIEncodeContext *ctx = avctx->priv_data;
     VAStatus vas;
+    VABufferID *tmp;
     VABufferID buffer;
 
-    av_assert0(pic->nb_param_buffers + 1 <= MAX_PARAM_BUFFERS);
+    tmp = av_realloc_array(pic->param_buffers, sizeof(*tmp), pic->nb_param_buffers + 1);
+    if (!tmp)
+        return AVERROR(ENOMEM);
+    pic->param_buffers = tmp;
 
     vas = vaCreateBuffer(ctx->hwctx->display, ctx->va_context,
                          type, len, 1, data, &buffer);
@@ -313,14 +321,14 @@ static int vaapi_encode_issue(AVCodecContext *avctx,
         }
     }
 
-    av_assert0(pic->nb_slices <= MAX_PICTURE_SLICES);
+    pic->slices = av_mallocz_array(pic->nb_slices, sizeof(*pic->slices));
+    if (!pic->slices) {
+        err = AVERROR(ENOMEM);
+        goto fail;
+    }
     for (i = 0; i < pic->nb_slices; i++) {
-        slice = av_mallocz(sizeof(*slice));
-        if (!slice) {
-            err = AVERROR(ENOMEM);
-            goto fail;
-        }
-        pic->slices[i] = slice;
+        slice = &pic->slices[i];
+        slice->index = i;
 
         if (ctx->codec->slice_params_size > 0) {
             slice->codec_slice_params = av_mallocz(ctx->codec->slice_params_size);
@@ -391,14 +399,14 @@ static int vaapi_encode_issue(AVCodecContext *avctx,
         err = AVERROR(EIO);
         // vaRenderPicture() has been called here, so we should not destroy
         // the parameter buffers unless separate destruction is required.
-        if (ctx->hwctx->driver_quirks &
+        if (CONFIG_VAAPI_1 || ctx->hwctx->driver_quirks &
             AV_VAAPI_DRIVER_QUIRK_RENDER_PARAM_BUFFERS)
             goto fail;
         else
             goto fail_at_end;
     }
 
-    if (ctx->hwctx->driver_quirks &
+    if (CONFIG_VAAPI_1 || ctx->hwctx->driver_quirks &
         AV_VAAPI_DRIVER_QUIRK_RENDER_PARAM_BUFFERS) {
         for (i = 0; i < pic->nb_param_buffers; i++) {
             vas = vaDestroyBuffer(ctx->hwctx->display,
@@ -424,9 +432,19 @@ fail_with_picture:
 fail:
     for(i = 0; i < pic->nb_param_buffers; i++)
         vaDestroyBuffer(ctx->hwctx->display, pic->param_buffers[i]);
+    for (i = 0; i < pic->nb_slices; i++) {
+        if (pic->slices) {
+            av_freep(&pic->slices[i].priv_data);
+            av_freep(&pic->slices[i].codec_slice_params);
+        }
+    }
 fail_at_end:
     av_freep(&pic->codec_picture_params);
+    av_freep(&pic->param_buffers);
+    av_freep(&pic->slices);
     av_frame_free(&pic->recon_image);
+    av_buffer_unref(&pic->output_buffer_ref);
+    pic->output_buffer = VA_INVALID_ID;
     return err;
 }
 
@@ -532,15 +550,18 @@ static int vaapi_encode_free(AVCodecContext *avctx,
         vaapi_encode_discard(avctx, pic);
 
     for (i = 0; i < pic->nb_slices; i++) {
-        av_freep(&pic->slices[i]->priv_data);
-        av_freep(&pic->slices[i]->codec_slice_params);
-        av_freep(&pic->slices[i]);
+        if (pic->slices) {
+            av_freep(&pic->slices[i].priv_data);
+            av_freep(&pic->slices[i].codec_slice_params);
+        }
     }
     av_freep(&pic->codec_picture_params);
 
     av_frame_free(&pic->input_image);
     av_frame_free(&pic->recon_image);
 
+    av_freep(&pic->param_buffers);
+    av_freep(&pic->slices);
     // Output buffer should already be destroyed.
     av_assert0(pic->output_buffer == VA_INVALID_ID);
 
@@ -590,6 +611,10 @@ static int vaapi_encode_step(AVCodecContext *avctx,
     } else if (ctx->issue_mode == ISSUE_MODE_MAXIMISE_THROUGHPUT) {
         int activity;
 
+        // Run through the list of all available pictures repeatedly
+        // and issue the first one found which has all dependencies
+        // available (including previously-issued but not necessarily
+        // completed pictures).
         do {
             activity = 0;
             for (pic = ctx->pic_start; pic; pic = pic->next) {
@@ -605,9 +630,15 @@ static int vaapi_encode_step(AVCodecContext *avctx,
                 if (err < 0)
                     return err;
                 activity = 1;
+                // Start again from the beginning of the list,
+                // because issuing this picture may have satisfied
+                // forward dependencies of earlier ones.
+                break;
             }
         } while(activity);
 
+        // If we had a defined target for this step then it will
+        // always have been issued by now.
         if (target) {
             av_assert0(target->encode_issued && "broken dependencies?");
         }
@@ -635,50 +666,35 @@ static int vaapi_encode_get_next(AVCodecContext *avctx,
         }
     }
 
-    if (ctx->input_order == 0) {
-        // First frame is always an IDR frame.
-        av_assert0(!ctx->pic_start && !ctx->pic_end);
-
-        pic = vaapi_encode_alloc();
-        if (!pic)
-            return AVERROR(ENOMEM);
-
-        pic->type = PICTURE_TYPE_IDR;
-        pic->display_order = 0;
-        pic->encode_order  = 0;
-
-        ctx->pic_start = ctx->pic_end = pic;
-
-        *pic_out = pic;
-        return 0;
-    }
-
     pic = vaapi_encode_alloc();
     if (!pic)
         return AVERROR(ENOMEM);
 
-    if (ctx->p_per_i == 0 || ctx->p_counter == ctx->p_per_i) {
-        if (ctx->i_per_idr == 0 || ctx->i_counter == ctx->i_per_idr) {
-            pic->type = PICTURE_TYPE_IDR;
-            ctx->i_counter = 0;
-        } else {
-            pic->type = PICTURE_TYPE_I;
-            ++ctx->i_counter;
-        }
+    if (ctx->input_order == 0 || ctx->force_idr ||
+        ctx->gop_counter >= avctx->gop_size) {
+        pic->type = PICTURE_TYPE_IDR;
+        ctx->force_idr = 0;
+        ctx->gop_counter = 1;
+        ctx->p_counter = 0;
+    } else if (ctx->p_counter >= ctx->p_per_i) {
+        pic->type = PICTURE_TYPE_I;
+        ++ctx->gop_counter;
         ctx->p_counter = 0;
     } else {
         pic->type = PICTURE_TYPE_P;
         pic->refs[0] = ctx->pic_end;
         pic->nb_refs = 1;
+        ++ctx->gop_counter;
         ++ctx->p_counter;
     }
     start = end = pic;
 
     if (pic->type != PICTURE_TYPE_IDR) {
         // If that was not an IDR frame, add B-frames display-before and
-        // encode-after it.
+        // encode-after it, but not exceeding the GOP size.
 
-        for (i = 0; i < ctx->b_per_p; i++) {
+        for (i = 0; i < ctx->b_per_p &&
+             ctx->gop_counter < avctx->gop_size; i++) {
             pic = vaapi_encode_alloc();
             if (!pic)
                 goto fail;
@@ -692,23 +708,32 @@ static int vaapi_encode_get_next(AVCodecContext *avctx,
             pic->display_order = ctx->input_order + ctx->b_per_p - i - 1;
             pic->encode_order  = pic->display_order + 1;
             start = pic;
+
+            ++ctx->gop_counter;
         }
     }
 
-    for (i = 0, pic = start; pic; i++, pic = pic->next) {
-        pic->display_order = ctx->input_order + i;
-        if (end->type == PICTURE_TYPE_IDR)
-            pic->encode_order = ctx->input_order + i;
-        else if (pic == end)
-            pic->encode_order = ctx->input_order;
-        else
-            pic->encode_order = ctx->input_order + i + 1;
+    if (ctx->input_order == 0) {
+        pic->display_order = 0;
+        pic->encode_order  = 0;
+
+        ctx->pic_start = ctx->pic_end = pic;
+
+    } else {
+        for (i = 0, pic = start; pic; i++, pic = pic->next) {
+            pic->display_order = ctx->input_order + i;
+            if (end->type == PICTURE_TYPE_IDR)
+                pic->encode_order = ctx->input_order + i;
+            else if (pic == end)
+                pic->encode_order = ctx->input_order;
+            else
+                pic->encode_order = ctx->input_order + i + 1;
+        }
+
+        av_assert0(ctx->pic_end);
+        ctx->pic_end->next = start;
+        ctx->pic_end = end;
     }
-
-    av_assert0(ctx->pic_end);
-    ctx->pic_end->next = start;
-    ctx->pic_end = end;
-
     *pic_out = start;
 
     av_log(avctx, AV_LOG_DEBUG, "Pictures:");
@@ -730,7 +755,7 @@ fail:
     return AVERROR(ENOMEM);
 }
 
-static int vaapi_encode_mangle_end(AVCodecContext *avctx)
+static int vaapi_encode_truncate_gop(AVCodecContext *avctx)
 {
     VAAPIEncodeContext *ctx = avctx->priv_data;
     VAAPIEncodePicture *pic, *last_pic, *next;
@@ -780,7 +805,7 @@ static int vaapi_encode_mangle_end(AVCodecContext *avctx)
         // mangle anything.
     }
 
-    av_log(avctx, AV_LOG_DEBUG, "Pictures at end of stream:");
+    av_log(avctx, AV_LOG_DEBUG, "Pictures ending truncated GOP:");
     for (pic = ctx->pic_start; pic; pic = pic->next) {
         av_log(avctx, AV_LOG_DEBUG, " %s (%"PRId64"/%"PRId64")",
                picture_type_name[pic->type],
@@ -834,6 +859,13 @@ int ff_vaapi_encode2(AVCodecContext *avctx, AVPacket *pkt,
         av_log(avctx, AV_LOG_DEBUG, "Encode frame: %ux%u (%"PRId64").\n",
                input_image->width, input_image->height, input_image->pts);
 
+        if (input_image->pict_type == AV_PICTURE_TYPE_I) {
+            err = vaapi_encode_truncate_gop(avctx);
+            if (err < 0)
+                goto fail;
+            ctx->force_idr = 1;
+        }
+
         err = vaapi_encode_get_next(avctx, &pic);
         if (err) {
             av_log(avctx, AV_LOG_ERROR, "Input setup failed: %d.\n", err);
@@ -862,7 +894,7 @@ int ff_vaapi_encode2(AVCodecContext *avctx, AVPacket *pkt,
 
     } else {
         if (!ctx->end_of_stream) {
-            err = vaapi_encode_mangle_end(avctx);
+            err = vaapi_encode_truncate_gop(avctx);
             if (err < 0)
                 goto fail;
             ctx->end_of_stream = 1;
@@ -1004,6 +1036,8 @@ static av_cold int vaapi_encode_config_attributes(AVCodecContext *avctx)
             // Unfortunately we have to treat this as "don't know" and hope
             // for the best, because the Intel MJPEG encoder returns this
             // for all the interesting attributes.
+            av_log(avctx, AV_LOG_DEBUG, "Attribute (%d) is not supported.\n",
+                   attr[i].type);
             continue;
         }
         switch (attr[i].type) {
@@ -1022,6 +1056,19 @@ static av_cold int vaapi_encode_config_attributes(AVCodecContext *avctx)
             };
             break;
         case VAConfigAttribRateControl:
+            // Hack for backward compatibility: CBR was the only
+            // usable RC mode for a long time, so old drivers will
+            // only have it.  Normal default options may now choose
+            // VBR and then fail, however, so override it here with
+            // CBR if that is the only supported mode.
+            if (ctx->va_rc_mode == VA_RC_VBR &&
+                !(attr[i].value & VA_RC_VBR) &&
+                (attr[i].value & VA_RC_CBR)) {
+                av_log(avctx, AV_LOG_WARNING, "VBR rate control is "
+                       "not supported with this driver version; "
+                       "using CBR instead.\n");
+                ctx->va_rc_mode = VA_RC_CBR;
+            }
             if (!(ctx->va_rc_mode & attr[i].value)) {
                 av_log(avctx, AV_LOG_ERROR, "Rate control mode %#x "
                        "is not supported (mask: %#x).\n",
@@ -1086,8 +1133,12 @@ fail:
 static av_cold int vaapi_encode_init_rate_control(AVCodecContext *avctx)
 {
     VAAPIEncodeContext *ctx = avctx->priv_data;
+    int rc_bits_per_second;
+    int rc_target_percentage;
+    int rc_window_size;
     int hrd_buffer_size;
     int hrd_initial_buffer_fullness;
+    int fr_num, fr_den;
 
     if (avctx->bit_rate > INT32_MAX) {
         av_log(avctx, AV_LOG_ERROR, "Target bitrate of 2^31 bps or "
@@ -1104,13 +1155,29 @@ static av_cold int vaapi_encode_init_rate_control(AVCodecContext *avctx)
     else
         hrd_initial_buffer_fullness = hrd_buffer_size * 3 / 4;
 
+    if (ctx->va_rc_mode == VA_RC_CBR) {
+        rc_bits_per_second   = avctx->bit_rate;
+        rc_target_percentage = 100;
+        rc_window_size       = 1000;
+    } else {
+        if (avctx->rc_max_rate < avctx->bit_rate) {
+            // Max rate is unset or invalid, just use the normal bitrate.
+            rc_bits_per_second   = avctx->bit_rate;
+            rc_target_percentage = 100;
+        } else {
+            rc_bits_per_second   = avctx->rc_max_rate;
+            rc_target_percentage = (avctx->bit_rate * 100) / rc_bits_per_second;
+        }
+        rc_window_size = (hrd_buffer_size * 1000) / avctx->bit_rate;
+    }
+
     ctx->rc_params.misc.type = VAEncMiscParameterTypeRateControl;
     ctx->rc_params.rc = (VAEncMiscParameterRateControl) {
-        .bits_per_second   = avctx->bit_rate,
-        .target_percentage = 66,
-        .window_size       = 1000,
-        .initial_qp        = (avctx->qmax >= 0 ? avctx->qmax : 40),
-        .min_qp            = (avctx->qmin >= 0 ? avctx->qmin : 18),
+        .bits_per_second   = rc_bits_per_second,
+        .target_percentage = rc_target_percentage,
+        .window_size       = rc_window_size,
+        .initial_qp        = 0,
+        .min_qp            = (avctx->qmin > 0 ? avctx->qmin : 0),
         .basic_unit_size   = 0,
     };
     ctx->global_params[ctx->nb_global_params] =
@@ -1127,6 +1194,23 @@ static av_cold int vaapi_encode_init_rate_control(AVCodecContext *avctx)
         &ctx->hrd_params.misc;
     ctx->global_params_size[ctx->nb_global_params++] =
         sizeof(ctx->hrd_params);
+
+    if (avctx->framerate.num > 0 && avctx->framerate.den > 0)
+        av_reduce(&fr_num, &fr_den,
+                  avctx->framerate.num, avctx->framerate.den, 65535);
+    else
+        av_reduce(&fr_num, &fr_den,
+                  avctx->time_base.den, avctx->time_base.num, 65535);
+
+    ctx->fr_params.misc.type = VAEncMiscParameterTypeFrameRate;
+    ctx->fr_params.fr.framerate = (unsigned int)fr_den << 16 | fr_num;
+
+#if VA_CHECK_VERSION(0, 40, 0)
+    ctx->global_params[ctx->nb_global_params] =
+        &ctx->fr_params.misc;
+    ctx->global_params_size[ctx->nb_global_params++] =
+        sizeof(ctx->fr_params);
+#endif
 
     return 0;
 }
@@ -1255,8 +1339,9 @@ static av_cold int vaapi_encode_create_recon_frames(AVCodecContext *avctx)
     ctx->recon_frames->sw_format = recon_format;
     ctx->recon_frames->width     = ctx->surface_width;
     ctx->recon_frames->height    = ctx->surface_height;
-    ctx->recon_frames->initial_pool_size =
-        avctx->max_b_frames + 3;
+    // At most three IDR/I/P frames and two runs of B frames can be in
+    // flight at any one time.
+    ctx->recon_frames->initial_pool_size = 3 + 2 * avctx->max_b_frames;
 
     err = av_hwframe_ctx_init(ctx->recon_frames_ref);
     if (err < 0) {
@@ -1364,15 +1449,48 @@ av_cold int ff_vaapi_encode_init(AVCodecContext *avctx)
             goto fail;
     }
 
+    if (avctx->compression_level >= 0) {
+#if VA_CHECK_VERSION(0, 36, 0)
+        VAConfigAttrib attr = { VAConfigAttribEncQualityRange };
+
+        vas = vaGetConfigAttributes(ctx->hwctx->display,
+                                    ctx->va_profile,
+                                    ctx->va_entrypoint,
+                                    &attr, 1);
+        if (vas != VA_STATUS_SUCCESS) {
+            av_log(avctx, AV_LOG_WARNING, "Failed to query quality "
+                   "attribute: will use default compression level.\n");
+        } else {
+            if (avctx->compression_level > attr.value) {
+                av_log(avctx, AV_LOG_WARNING, "Invalid compression "
+                       "level: valid range is 0-%d, using %d.\n",
+                       attr.value, attr.value);
+                avctx->compression_level = attr.value;
+            }
+
+            ctx->quality_params.misc.type =
+                VAEncMiscParameterTypeQualityLevel;
+            ctx->quality_params.quality.quality_level =
+                avctx->compression_level;
+
+            ctx->global_params[ctx->nb_global_params] =
+                &ctx->quality_params.misc;
+            ctx->global_params_size[ctx->nb_global_params++] =
+                sizeof(ctx->quality_params);
+        }
+#else
+        av_log(avctx, AV_LOG_WARNING, "The encode compression level "
+               "option is not supported with this VAAPI version.\n");
+#endif
+    }
+
     ctx->input_order  = 0;
     ctx->output_delay = avctx->max_b_frames;
     ctx->decode_delay = 1;
     ctx->output_order = - ctx->output_delay - 1;
 
     // Currently we never generate I frames, only IDR.
-    ctx->i_per_idr = 0;
-    ctx->p_per_i = ((avctx->gop_size + avctx->max_b_frames) /
-                    (avctx->max_b_frames + 1));
+    ctx->p_per_i = INT_MAX;
     ctx->b_per_p = avctx->max_b_frames;
 
     if (ctx->codec->sequence_params_size > 0) {

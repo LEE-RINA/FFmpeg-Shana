@@ -140,7 +140,7 @@ static av_cold int mp3lame_encode_init(AVCodecContext *avctx)
         lame_set_brate(s->gfp, avctx->bit_rate / 1000);
         lame_set_VBR_min_bitrate_kbps(s->gfp, avctx->bit_rate / 1000);
         lame_set_VBR(s->gfp, vbr_off);
-        if (avctx->flags & CODEC_FLAG_QSCALE)
+        if (avctx->flags & AV_CODEC_FLAG_QSCALE)
             lame_set_VBR_quality(s->gfp, avctx->global_quality / (float)FF_QP2LAMBDA);
         else
             lame_set_VBR_quality(s->gfp, 4);
@@ -149,7 +149,7 @@ static av_cold int mp3lame_encode_init(AVCodecContext *avctx)
         //ABR
         lame_set_VBR(s->gfp, vbr_abr);
         lame_set_VBR_mean_bitrate_kbps(s->gfp, avctx->bit_rate / 1000);
-        if (avctx->flags & CODEC_FLAG_QSCALE)
+        if (avctx->flags & AV_CODEC_FLAG_QSCALE)
             lame_set_VBR_quality(s->gfp, avctx->global_quality / (float)FF_QP2LAMBDA);
         else
             lame_set_VBR_quality(s->gfp, 4);
@@ -175,7 +175,7 @@ static av_cold int mp3lame_encode_init(AVCodecContext *avctx)
         lame_set_VBR_quality(s->gfp, avctx->global_quality / (float)FF_QP2LAMBDA);
     } else if (s->lamebtmode == -1) {
         //AUTO
-        if (avctx->flags & CODEC_FLAG_QSCALE) {
+        if (avctx->flags & AV_CODEC_FLAG_QSCALE) {
             lame_set_VBR(s->gfp, vbr_default);
             lame_set_VBR_quality(s->gfp, avctx->global_quality / (float)FF_QP2LAMBDA);
         } else {
@@ -419,4 +419,5 @@ AVCodec ff_libmp3lame_encoder = {
                                                   0 },
     .priv_class            = &libmp3lame_class,
     .defaults              = libmp3lame_defaults,
+    .wrapper_name          = "libmp3lame",
 };

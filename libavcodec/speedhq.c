@@ -135,7 +135,7 @@ static const uint8_t speedhq_run[121] = {
 static RLTable ff_rl_speedhq = {
     121,
     121,
-    speedhq_vlc,
+    (const uint16_t (*)[])speedhq_vlc,
     speedhq_run,
     speedhq_level,
 };
@@ -196,7 +196,7 @@ static inline int decode_alpha_block(const SHQContext *s, GetBitContext *gb, uin
             UPDATE_CACHE_LE(re, gb);
             GET_VLC(run, re, gb, ff_dc_alpha_run_vlc_le.table, ALPHA_VLC_BITS, 2);
 
-            if (run == 128) break;
+            if (run < 0) break;
             i += run;
             if (i >= 128)
                 return AVERROR_INVALIDDATA;
@@ -224,7 +224,7 @@ static inline int decode_dct_block(const SHQContext *s, GetBitContext *gb, int l
 {
     const int *quant_matrix = s->quant_matrix;
     const uint8_t *scantable = s->intra_scantable.permutated;
-    LOCAL_ALIGNED_16(int16_t, block, [64]);
+    LOCAL_ALIGNED_32(int16_t, block, [64]);
     int dc_offset;
 
     s->bdsp.clear_block(block);
@@ -409,7 +409,7 @@ static int decode_speedhq_field(const SHQContext *s, const uint8_t *buf, int buf
 static void compute_quant_matrix(int *output, int qscale)
 {
     int i;
-    for (i = 0; i < 64; i++) output[i] = unscaled_quant_matrix[i] * qscale;
+    for (i = 0; i < 64; i++) output[i] = unscaled_quant_matrix[ff_zigzag_direct[i]] * qscale;
 }
 
 static int speedhq_decode_frame(AVCodecContext *avctx,
@@ -450,10 +450,13 @@ static int speedhq_decode_frame(AVCodecContext *avctx,
     if (second_field_offset == 4) {
         /*
          * Overlapping first and second fields is used to signal
-         * encoding only a single field (the second field then comes
-         * as a separate, later frame).
+         * encoding only a single field. In this case, "height"
+         * is ambiguous; it could mean either the height of the
+         * frame as a whole, or of the field. The former would make
+         * more sense for compatibility with legacy decoders,
+         * but this matches the convention used in NDI, which is
+         * the primary user of this trick.
          */
-        frame->height >>= 1;
         if ((ret = decode_speedhq_field(s, buf, buf_size, frame, 0, 4, buf_size, 1)) < 0)
             return ret;
     } else {
@@ -474,61 +477,89 @@ static int speedhq_decode_frame(AVCodecContext *avctx,
  */
 static av_cold void compute_alpha_vlcs(void)
 {
-    uint16_t run_code[129], level_code[256];
-    uint8_t run_bits[129], level_bits[256];
-    int run, level;
+    uint16_t run_code[134], level_code[266];
+    uint8_t run_bits[134], level_bits[266];
+    int16_t run_symbols[134], level_symbols[266];
+    int entry, i, sign;
 
-    for (run = 0; run < 128; run++) {
-        if (!run) {
-            /* 0 -> 0. */
-            run_code[run] = 0;
-            run_bits[run] = 1;
-        } else if (run <= 4) {
-            /* 10xx -> xx plus 1. */
-            run_code[run] = ((run - 1) << 2) | 1;
-            run_bits[run] = 4;
-        } else {
-            /* 111xxxxxxx -> xxxxxxxx. */
-            run_code[run] = (run << 3) | 7;
-            run_bits[run] = 10;
-        }
+    /* Initialize VLC for alpha run. */
+    entry = 0;
+
+    /* 0 -> 0. */
+    run_code[entry] = 0;
+    run_bits[entry] = 1;
+    run_symbols[entry] = 0;
+    ++entry;
+
+    /* 10xx -> xx plus 1. */
+    for (i = 0; i < 4; ++i) {
+        run_code[entry] = (i << 2) | 1;
+        run_bits[entry] = 4;
+        run_symbols[entry] = i + 1;
+        ++entry;
+    }
+
+    /* 111xxxxxxx -> xxxxxxx. */
+    for (i = 0; i < 128; ++i) {
+        run_code[entry] = (i << 3) | 7;
+        run_bits[entry] = 10;
+        run_symbols[entry] = i;
+        ++entry;
     }
 
     /* 110 -> EOB. */
-    run_code[128] = 3;
-    run_bits[128] = 3;
+    run_code[entry] = 3;
+    run_bits[entry] = 3;
+    run_symbols[entry] = -1;
+    ++entry;
 
-    INIT_LE_VLC_STATIC(&ff_dc_alpha_run_vlc_le, ALPHA_VLC_BITS, 129,
-                       run_bits, 1, 1,
-                       run_code, 2, 2, 160);
+    av_assert0(entry == FF_ARRAY_ELEMS(run_code));
 
-    for (level = 0; level < 256; level++) {
-        int8_t signed_level = (int8_t)level;
-        int abs_signed_level = abs(signed_level);
-        int sign = (signed_level < 0) ? 1 : 0;
+    INIT_LE_VLC_SPARSE_STATIC(&ff_dc_alpha_run_vlc_le, ALPHA_VLC_BITS,
+                              FF_ARRAY_ELEMS(run_code),
+                              run_bits, 1, 1,
+                              run_code, 2, 2,
+                              run_symbols, 2, 2, 160);
 
-        if (abs_signed_level == 1) {
-            /* 1s -> -1 or +1 (depending on sign bit). */
-            level_code[level] = (sign << 1) | 1;
-            level_bits[level] = 2;
-        } else if (abs_signed_level >= 2 && abs_signed_level <= 5) {
-            /* 01sxx -> xx plus 2 (2..5 or -2..-5, depending on sign bit). */
-            level_code[level] = ((abs_signed_level - 2) << 3) | (sign << 2) | 2;
-            level_bits[level] = 5;
-        } else {
-            /*
-             * 00xxxxxxxx -> xxxxxxxx, in two's complement. 0 is technically an
-             * illegal code (that would be encoded by increasing run), but it
-             * doesn't hurt and simplifies indexing.
-             */
-            level_code[level] = level << 2;
-            level_bits[level] = 10;
+    /* Initialize VLC for alpha level. */
+    entry = 0;
+
+    for (sign = 0; sign <= 1; ++sign) {
+        /* 1s -> -1 or +1 (depending on sign bit). */
+        level_code[entry] = (sign << 1) | 1;
+        level_bits[entry] = 2;
+        level_symbols[entry] = sign ? -1 : 1;
+        ++entry;
+
+        /* 01sxx -> xx plus 2 (2..5 or -2..-5, depending on sign bit). */
+        for (i = 0; i < 4; ++i) {
+            level_code[entry] = (i << 3) | (sign << 2) | 2;
+            level_bits[entry] = 5;
+            level_symbols[entry] = sign ? -(i + 2) : (i + 2);
+            ++entry;
         }
     }
 
-    INIT_LE_VLC_STATIC(&ff_dc_alpha_level_vlc_le, ALPHA_VLC_BITS, 256,
-                       level_bits, 1, 1,
-                       level_code, 2, 2, 288);
+    /*
+     * 00xxxxxxxx -> xxxxxxxx, in two's complement. There are many codes
+     * here that would better be encoded in other ways (e.g. 0 would be
+     * encoded by increasing run, and +/- 1 would be encoded with a
+     * shorter code), but it doesn't hurt to allow everything.
+     */
+    for (i = 0; i < 256; ++i) {
+        level_code[entry] = i << 2;
+        level_bits[entry] = 10;
+        level_symbols[entry] = i;
+        ++entry;
+    }
+
+    av_assert0(entry == FF_ARRAY_ELEMS(level_code));
+
+    INIT_LE_VLC_SPARSE_STATIC(&ff_dc_alpha_level_vlc_le, ALPHA_VLC_BITS,
+                              FF_ARRAY_ELEMS(level_code),
+                              level_bits, 1, 1,
+                              level_code, 2, 2,
+                              level_symbols, 2, 2, 288);
 }
 
 static uint32_t reverse(uint32_t num, int bits)

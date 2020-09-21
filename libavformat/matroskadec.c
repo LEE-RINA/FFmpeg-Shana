@@ -89,6 +89,7 @@ typedef const struct EbmlSyntax {
     int list_elem_size;
     int data_offset;
     union {
+        int64_t     i;
         uint64_t    u;
         double      f;
         const char *s;
@@ -361,8 +362,11 @@ typedef struct MatroskaDemuxContext {
     /* File has SSA subtitles which prevent incremental cluster parsing. */
     int contains_ssa;
 
-    /* WebM DASH Manifest live flag/ */
+    /* WebM DASH Manifest live flag */
     int is_live;
+
+    /* Bandwidth value for WebM DASH Manifest */
+    int bandwidth;
 } MatroskaDemuxContext;
 
 typedef struct MatroskaBlock {
@@ -696,7 +700,7 @@ static const EbmlSyntax matroska_blockgroup[] = {
     { MATROSKA_ID_SIMPLEBLOCK,    EBML_BIN,  0, offsetof(MatroskaBlock, bin) },
     { MATROSKA_ID_BLOCKDURATION,  EBML_UINT, 0, offsetof(MatroskaBlock, duration) },
     { MATROSKA_ID_DISCARDPADDING, EBML_SINT, 0, offsetof(MatroskaBlock, discard_padding) },
-    { MATROSKA_ID_BLOCKREFERENCE, EBML_SINT, 0, offsetof(MatroskaBlock, reference) },
+    { MATROSKA_ID_BLOCKREFERENCE, EBML_SINT, 0, offsetof(MatroskaBlock, reference), { .i = INT64_MIN } },
     { MATROSKA_ID_CODECSTATE,     EBML_NONE },
     {                          1, EBML_UINT, 0, offsetof(MatroskaBlock, non_simple), { .u = 1 } },
     { 0 }
@@ -1071,6 +1075,9 @@ static int ebml_parse_nest(MatroskaDemuxContext *matroska, EbmlSyntax *syntax,
 
     for (i = 0; syntax[i].id; i++)
         switch (syntax[i].type) {
+        case EBML_SINT:
+            *(int64_t *) ((char *) data + syntax[i].data_offset) = syntax[i].def.i;
+            break;
         case EBML_UINT:
             *(uint64_t *) ((char *) data + syntax[i].data_offset) = syntax[i].def.u;
             break;
@@ -1612,7 +1619,7 @@ static void matroska_execute_seekhead(MatroskaDemuxContext *matroska)
     int i;
 
     // we should not do any seeking in the streaming case
-    if (!matroska->ctx->pb->seekable)
+    if (!(matroska->ctx->pb->seekable & AVIO_SEEKABLE_NORMAL))
         return;
 
     for (i = 0; i < seekhead_list->nb_elem; i++) {
@@ -1862,6 +1869,21 @@ static int mkv_parse_video_color(AVStream *st, const MatroskaTrack *track) {
             avcodec_chroma_pos_to_enum((color->chroma_siting_horz - 1) << 7,
                                        (color->chroma_siting_vert - 1) << 7);
     }
+    if (color->max_cll && color->max_fall) {
+        size_t size = 0;
+        int ret;
+        AVContentLightMetadata *metadata = av_content_light_metadata_alloc(&size);
+        if (!metadata)
+            return AVERROR(ENOMEM);
+        ret = av_stream_add_side_data(st, AV_PKT_DATA_CONTENT_LIGHT_LEVEL,
+                                      (uint8_t *)metadata, size);
+        if (ret < 0) {
+            av_freep(&metadata);
+            return ret;
+        }
+        metadata->MaxCLL  = color->max_cll;
+        metadata->MaxFALL = color->max_fall;
+    }
 
     if (has_mastering_primaries || has_mastering_luminance) {
         // Use similar rationals as other standards.
@@ -1909,31 +1931,90 @@ static int mkv_parse_video_projection(AVStream *st, const MatroskaTrack *track) 
     AVSphericalMapping *spherical;
     enum AVSphericalProjection projection;
     size_t spherical_size;
+    uint32_t l = 0, t = 0, r = 0, b = 0;
+    uint32_t padding = 0;
     int ret;
+    GetByteContext gb;
+
+    bytestream2_init(&gb, track->video.projection.private.data,
+                     track->video.projection.private.size);
+
+    if (bytestream2_get_byte(&gb) != 0) {
+        av_log(NULL, AV_LOG_WARNING, "Unknown spherical metadata\n");
+        return 0;
+    }
+
+    bytestream2_skip(&gb, 3); // flags
 
     switch (track->video.projection.type) {
     case MATROSKA_VIDEO_PROJECTION_TYPE_EQUIRECTANGULAR:
-        if (track->video.projection.private.size < 4)
+        if (track->video.projection.private.size == 20) {
+            t = bytestream2_get_be32(&gb);
+            b = bytestream2_get_be32(&gb);
+            l = bytestream2_get_be32(&gb);
+            r = bytestream2_get_be32(&gb);
+
+            if (b >= UINT_MAX - t || r >= UINT_MAX - l) {
+                av_log(NULL, AV_LOG_ERROR,
+                       "Invalid bounding rectangle coordinates "
+                       "%"PRIu32",%"PRIu32",%"PRIu32",%"PRIu32"\n",
+                       l, t, r, b);
+                return AVERROR_INVALIDDATA;
+            }
+        } else if (track->video.projection.private.size != 0) {
+            av_log(NULL, AV_LOG_ERROR, "Unknown spherical metadata\n");
             return AVERROR_INVALIDDATA;
-        projection = AV_SPHERICAL_EQUIRECTANGULAR;
+        }
+
+        if (l || t || r || b)
+            projection = AV_SPHERICAL_EQUIRECTANGULAR_TILE;
+        else
+            projection = AV_SPHERICAL_EQUIRECTANGULAR;
         break;
     case MATROSKA_VIDEO_PROJECTION_TYPE_CUBEMAP:
-        if (track->video.projection.private.size < 4)
+        if (track->video.projection.private.size < 4) {
+            av_log(NULL, AV_LOG_ERROR, "Missing projection private properties\n");
             return AVERROR_INVALIDDATA;
-        projection = AV_SPHERICAL_CUBEMAP;
+        } else if (track->video.projection.private.size == 12) {
+            uint32_t layout = bytestream2_get_be32(&gb);
+            if (layout) {
+                av_log(NULL, AV_LOG_WARNING,
+                       "Unknown spherical cubemap layout %"PRIu32"\n", layout);
+                return 0;
+            }
+            projection = AV_SPHERICAL_CUBEMAP;
+            padding = bytestream2_get_be32(&gb);
+        } else {
+            av_log(NULL, AV_LOG_ERROR, "Unknown spherical metadata\n");
+            return AVERROR_INVALIDDATA;
+        }
         break;
+    case MATROSKA_VIDEO_PROJECTION_TYPE_RECTANGULAR:
+        /* No Spherical metadata */
+        return 0;
     default:
+        av_log(NULL, AV_LOG_WARNING,
+               "Unknown spherical metadata type %"PRIu64"\n",
+               track->video.projection.type);
         return 0;
     }
 
     spherical = av_spherical_alloc(&spherical_size);
     if (!spherical)
         return AVERROR(ENOMEM);
+
     spherical->projection = projection;
 
-    spherical->yaw   = (int32_t)(track->video.projection.yaw   * (1 << 16));
-    spherical->pitch = (int32_t)(track->video.projection.pitch * (1 << 16));
-    spherical->roll  = (int32_t)(track->video.projection.roll  * (1 << 16));
+    spherical->yaw   = (int32_t) (track->video.projection.yaw   * (1 << 16));
+    spherical->pitch = (int32_t) (track->video.projection.pitch * (1 << 16));
+    spherical->roll  = (int32_t) (track->video.projection.roll  * (1 << 16));
+
+    spherical->padding = padding;
+
+    spherical->bound_left   = l;
+    spherical->bound_top    = t;
+    spherical->bound_right  = r;
+    spherical->bound_bottom = b;
 
     ret = av_stream_add_side_data(st, AV_PKT_DATA_SPHERICAL, (uint8_t *)spherical,
                                   spherical_size);
@@ -2156,12 +2237,9 @@ static int matroska_parse_tracks(AVFormatContext *s)
                 fourcc = MKTAG('S','V','Q','3');
                 codec_id = ff_codec_get_id(ff_codec_movvideo_tags, fourcc);
             }
-            if (codec_id == AV_CODEC_ID_NONE) {
-                char buf[32];
-                av_get_codec_tag_string(buf, sizeof(buf), fourcc);
+            if (codec_id == AV_CODEC_ID_NONE)
                 av_log(matroska->ctx, AV_LOG_ERROR,
-                       "mov FourCC not found %s.\n", buf);
-            }
+                       "mov FourCC not found %s.\n", av_fourcc2str(fourcc));
             if (track->codec_priv.size >= 86) {
                 bit_depth = AV_RB16(track->codec_priv.data + 82);
                 ffio_init_context(&b, track->codec_priv.data,
@@ -2287,7 +2365,7 @@ static int matroska_parse_tracks(AVFormatContext *s)
                 track->audio.coded_framesize <= 0 ||
                 track->audio.sub_packet_h    <= 0 ||
                 track->audio.frame_size      <= 0 ||
-                track->audio.sub_packet_size <= 0)
+                track->audio.sub_packet_size <= 0 && codec_id != AV_CODEC_ID_SIPR)
                 return AVERROR_INVALIDDATA;
             track->audio.buf = av_malloc_array(track->audio.sub_packet_h,
                                                track->audio.frame_size);
@@ -2495,10 +2573,9 @@ static int matroska_read_header(AVFormatContext *s)
         ebml.max_size        > sizeof(uint64_t)  ||
         ebml.id_length       > sizeof(uint32_t)  ||
         ebml.doctype_version > 3) {
-        av_log(matroska->ctx, AV_LOG_ERROR,
-               "EBML header using unsupported features\n"
-               "(EBML version %"PRIu64", doctype %s, doc version %"PRIu64")\n",
-               ebml.version, ebml.doctype, ebml.doctype_version);
+        avpriv_report_missing_feature(matroska->ctx,
+                                      "EBML version %"PRIu64", doctype %s, doc version %"PRIu64,
+                                      ebml.version, ebml.doctype, ebml.doctype_version);
         ebml_free(ebml_syntax, &ebml);
         return AVERROR_PATCHWELCOME;
     } else if (ebml.doctype_version == 3) {
@@ -3363,7 +3440,7 @@ static int matroska_parse_cluster_incremental(MatroskaDemuxContext *matroska)
         matroska->current_cluster_num_blocks = blocks_list->nb_elem;
         i                                    = blocks_list->nb_elem - 1;
         if (blocks[i].bin.size > 0 && blocks[i].bin.data) {
-            int is_keyframe = blocks[i].non_simple ? !blocks[i].reference : -1;
+            int is_keyframe = blocks[i].non_simple ? blocks[i].reference == INT64_MIN : -1;
             uint8_t* additional = blocks[i].additional.size > 0 ?
                                     blocks[i].additional.data : NULL;
             if (!blocks[i].non_simple)
@@ -3401,7 +3478,7 @@ static int matroska_parse_cluster(MatroskaDemuxContext *matroska)
     blocks      = blocks_list->elem;
     for (i = 0; i < blocks_list->nb_elem; i++)
         if (blocks[i].bin.size > 0 && blocks[i].bin.data) {
-            int is_keyframe = blocks[i].non_simple ? !blocks[i].reference : -1;
+            int is_keyframe = blocks[i].non_simple ? blocks[i].reference == INT64_MIN : -1;
             res = matroska_parse_block(matroska, blocks[i].bin.data,
                                        blocks[i].bin.size, blocks[i].bin.pos,
                                        cluster.timecode, blocks[i].duration,
@@ -3520,7 +3597,7 @@ typedef struct {
     int64_t end_offset;
 } CueDesc;
 
-/* This function searches all the Cues and returns the CueDesc corresponding the
+/* This function searches all the Cues and returns the CueDesc corresponding to
  * the timestamp ts. Returned CueDesc will be such that start_time_ns <= ts <
  * end_time_ns. All 4 fields will be set to -1 if ts >= file's duration.
  */
@@ -3760,7 +3837,7 @@ static int64_t webm_dash_manifest_compute_bandwidth(AVFormatContext *s, int64_t 
     return (int64_t)bandwidth;
 }
 
-static int webm_dash_manifest_cues(AVFormatContext *s)
+static int webm_dash_manifest_cues(AVFormatContext *s, int64_t init_range)
 {
     MatroskaDemuxContext *matroska = s->priv_data;
     EbmlList *seekhead_list = &matroska->seekhead;
@@ -3768,6 +3845,7 @@ static int webm_dash_manifest_cues(AVFormatContext *s)
     char *buf;
     int64_t cues_start = -1, cues_end = -1, before_pos, bandwidth;
     int i;
+    int end = 0;
 
     // determine cues start and end positions
     for (i = 0; i < seekhead_list->nb_elem; i++)
@@ -3799,6 +3877,11 @@ static int webm_dash_manifest_cues(AVFormatContext *s)
     // cues end
     av_dict_set_int(&s->streams[0]->metadata, CUES_END, cues_end, 0);
 
+    // if the file has cues at the start, fix up the init range so tht
+    // it does not include it
+    if (cues_start <= init_range)
+        av_dict_set_int(&s->streams[0]->metadata, INITIALIZATION_RANGE, cues_start - 1, 0);
+
     // bandwidth
     bandwidth = webm_dash_manifest_compute_bandwidth(s, cues_start);
     if (bandwidth < 0) return -1;
@@ -3813,10 +3896,18 @@ static int webm_dash_manifest_cues(AVFormatContext *s)
     if (!buf) return -1;
     strcpy(buf, "");
     for (i = 0; i < s->streams[0]->nb_index_entries; i++) {
-        snprintf(buf, (i + 1) * 20 * sizeof(char),
-                 "%s%" PRId64, buf, s->streams[0]->index_entries[i].timestamp);
-        if (i != s->streams[0]->nb_index_entries - 1)
+        int ret = snprintf(buf + end, 20 * sizeof(char),
+                           "%" PRId64, s->streams[0]->index_entries[i].timestamp);
+        if (ret <= 0 || (ret == 20 && i ==  s->streams[0]->nb_index_entries - 1)) {
+            av_log(s, AV_LOG_ERROR, "timestamp too long.\n");
+            av_free(buf);
+            return AVERROR_INVALIDDATA;
+        }
+        end += ret;
+        if (i != s->streams[0]->nb_index_entries - 1) {
             strncat(buf, ",", sizeof(char));
+            end++;
+        }
     }
     av_dict_set(&s->streams[0]->metadata, CUE_TIMESTAMPS, buf, 0);
     av_free(buf);
@@ -3828,6 +3919,7 @@ static int webm_dash_manifest_read_header(AVFormatContext *s)
 {
     char *buf;
     int ret = matroska_read_header(s);
+    int64_t init_range;
     MatroskaTrack *tracks;
     MatroskaDemuxContext *matroska = s->priv_data;
     if (ret) {
@@ -3848,7 +3940,8 @@ static int webm_dash_manifest_read_header(AVFormatContext *s)
 
         // initialization range
         // 5 is the offset of Cluster ID.
-        av_dict_set_int(&s->streams[0]->metadata, INITIALIZATION_RANGE, avio_tell(s->pb) - 5, 0);
+        init_range = avio_tell(s->pb) - 5;
+        av_dict_set_int(&s->streams[0]->metadata, INITIALIZATION_RANGE, init_range, 0);
     }
 
     // basename of the file
@@ -3860,7 +3953,20 @@ static int webm_dash_manifest_read_header(AVFormatContext *s)
     av_dict_set_int(&s->streams[0]->metadata, TRACK_NUMBER, tracks[0].num, 0);
 
     // parse the cues and populate Cue related fields
-    return matroska->is_live ? 0 : webm_dash_manifest_cues(s);
+    if (!matroska->is_live) {
+        ret = webm_dash_manifest_cues(s, init_range);
+        if (ret < 0) {
+            av_log(s, AV_LOG_ERROR, "Error parsing Cues\n");
+            return ret;
+        }
+    }
+
+    // use the bandwidth from the command line if it was provided
+    if (matroska->bandwidth > 0) {
+        av_dict_set_int(&s->streams[0]->metadata, BANDWIDTH,
+                        matroska->bandwidth, 0);
+    }
+    return 0;
 }
 
 static int webm_dash_manifest_read_packet(AVFormatContext *s, AVPacket *pkt)
@@ -3871,6 +3977,7 @@ static int webm_dash_manifest_read_packet(AVFormatContext *s, AVPacket *pkt)
 #define OFFSET(x) offsetof(MatroskaDemuxContext, x)
 static const AVOption options[] = {
     { "live", "flag indicating that the input is a live file that only has the headers.", OFFSET(is_live), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, AV_OPT_FLAG_DECODING_PARAM },
+    { "bandwidth", "bandwidth of this stream to be specified in the DASH manifest.", OFFSET(bandwidth), AV_OPT_TYPE_INT, {.i64 = 0}, 0, INT_MAX, AV_OPT_FLAG_DECODING_PARAM },
     { NULL },
 };
 

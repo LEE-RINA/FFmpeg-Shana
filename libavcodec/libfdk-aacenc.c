@@ -92,7 +92,10 @@ static const AVOption aac_enc_options[] = {
 };
 
 static const AVClass aac_enc_class = {
-    "libfdk_aac", av_default_item_name, aac_enc_options, LIBAVUTIL_VERSION_INT
+    .class_name = "libfdk_aac",
+    .item_name  = av_default_item_name,
+    .option     = aac_enc_options,
+    .version    = LIBAVUTIL_VERSION_INT,
 };
 
 static const char *aac_get_error(AACENC_ERROR err)
@@ -271,7 +274,7 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
         if ((err = aacEncoder_SetParam(s->handle, AACENC_BITRATE,
                                        avctx->bit_rate)) != AACENC_OK) {
             av_log(avctx, AV_LOG_ERROR, "Unable to set the bitrate %"PRId64": %s\n",
-                   (int64_t)avctx->bit_rate, aac_get_error(err));
+                   avctx->bit_rate, aac_get_error(err));
             goto error;
         }
     }
@@ -479,4 +482,5 @@ AVCodec ff_libfdk_aac_encoder = {
     .profiles              = profiles,
     .supported_samplerates = aac_sample_rates,
     .channel_layouts       = aac_channel_layout,
+    .wrapper_name          = "libfdk",
 };

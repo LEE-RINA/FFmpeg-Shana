@@ -41,6 +41,7 @@ typedef struct TCPContext {
     int listen_timeout;
     int recv_buffer_size;
     int send_buffer_size;
+    int tcp_nodelay;
 } TCPContext;
 
 #define OFFSET(x) offsetof(TCPContext, x)
@@ -52,6 +53,7 @@ static const AVOption options[] = {
     { "listen_timeout",  "Connection awaiting timeout (in milliseconds)",      OFFSET(listen_timeout), AV_OPT_TYPE_INT, { .i64 = -1 },         -1, INT_MAX, .flags = D|E },
     { "send_buffer_size", "Socket send buffer size (in bytes)",                OFFSET(send_buffer_size), AV_OPT_TYPE_INT, { .i64 = -1 },         -1, INT_MAX, .flags = D|E },
     { "recv_buffer_size", "Socket receive buffer size (in bytes)",             OFFSET(recv_buffer_size), AV_OPT_TYPE_INT, { .i64 = -1 },         -1, INT_MAX, .flags = D|E },
+    { "tcp_nodelay", "Use TCP_NODELAY to disable nagle's algorithm",           OFFSET(tcp_nodelay), AV_OPT_TYPE_BOOL, { .i64 = 0 },             0, 1, .flags = D|E },
     { NULL }
 };
 
@@ -140,6 +142,18 @@ static int tcp_open(URLContext *h, const char *uri, int flags)
         goto fail;
     }
 
+    /* Set the socket's send or receive buffer sizes, if specified.
+       If unspecified or setting fails, system default is used. */
+    if (s->recv_buffer_size > 0) {
+        setsockopt (fd, SOL_SOCKET, SO_RCVBUF, &s->recv_buffer_size, sizeof (s->recv_buffer_size));
+    }
+    if (s->send_buffer_size > 0) {
+        setsockopt (fd, SOL_SOCKET, SO_SNDBUF, &s->send_buffer_size, sizeof (s->send_buffer_size));
+    }
+    if (s->tcp_nodelay > 0) {
+        setsockopt (fd, IPPROTO_TCP, TCP_NODELAY, &s->tcp_nodelay, sizeof (s->tcp_nodelay));
+    }
+
     if (s->listen == 2) {
         // multi-client
         if ((ret = ff_listen(fd, cur_ai->ai_addr, cur_ai->ai_addrlen)) < 0)
@@ -164,14 +178,6 @@ static int tcp_open(URLContext *h, const char *uri, int flags)
 
     h->is_streamed = 1;
     s->fd = fd;
-    /* Set the socket's send or receive buffer sizes, if specified.
-       If unspecified or setting fails, system default is used. */
-    if (s->recv_buffer_size > 0) {
-        setsockopt (fd, SOL_SOCKET, SO_RCVBUF, &s->recv_buffer_size, sizeof (s->recv_buffer_size));
-    }
-    if (s->send_buffer_size > 0) {
-        setsockopt (fd, SOL_SOCKET, SO_SNDBUF, &s->send_buffer_size, sizeof (s->send_buffer_size));
-    }
 
     freeaddrinfo(ai);
     return 0;
@@ -203,7 +209,7 @@ static int tcp_accept(URLContext *s, URLContext **c)
     cc = (*c)->priv_data;
     ret = ff_accept(sc->fd, sc->listen_timeout, s);
     if (ret < 0)
-        return ff_neterrno();
+        return ret;
     cc->fd = ret;
     return 0;
 }
@@ -219,6 +225,8 @@ static int tcp_read(URLContext *h, uint8_t *buf, int size)
             return ret;
     }
     ret = recv(s->fd, buf, size, 0);
+    if (ret == 0)
+        return AVERROR_EOF;
     return ret < 0 ? ff_neterrno() : ret;
 }
 
@@ -265,6 +273,26 @@ static int tcp_get_file_handle(URLContext *h)
     return s->fd;
 }
 
+static int tcp_get_window_size(URLContext *h)
+{
+    TCPContext *s = h->priv_data;
+    int avail;
+    socklen_t avail_len = sizeof(avail);
+
+#if HAVE_WINSOCK2_H
+    /* SO_RCVBUF with winsock only reports the actual TCP window size when
+    auto-tuning has been disabled via setting SO_RCVBUF */
+    if (s->recv_buffer_size < 0) {
+        return AVERROR(ENOSYS);
+    }
+#endif
+
+    if (getsockopt(s->fd, SOL_SOCKET, SO_RCVBUF, &avail, &avail_len)) {
+        return ff_neterrno();
+    }
+    return avail;
+}
+
 const URLProtocol ff_tcp_protocol = {
     .name                = "tcp",
     .url_open            = tcp_open,
@@ -273,6 +301,7 @@ const URLProtocol ff_tcp_protocol = {
     .url_write           = tcp_write,
     .url_close           = tcp_close,
     .url_get_file_handle = tcp_get_file_handle,
+    .url_get_short_seek  = tcp_get_window_size,
     .url_shutdown        = tcp_shutdown,
     .priv_data_size      = sizeof(TCPContext),
     .flags               = URL_PROTOCOL_FLAG_NETWORK,

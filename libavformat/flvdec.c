@@ -484,7 +484,7 @@ static int amf_parse_object(AVFormatContext *s, AVStream *astream,
         break;
     case AMF_DATA_TYPE_OBJECT:
         if (key &&
-            ioc->seekable &&
+            (ioc->seekable & AVIO_SEEKABLE_NORMAL) &&
             !strcmp(KEYFRAMES_TAG, key) && depth == 1)
             if (parse_keyframes_index(s, ioc,
                                       max_pos) < 0)
@@ -709,6 +709,7 @@ static int flv_read_header(AVFormatContext *s)
     int flags;
     FLVContext *flv = s->priv_data;
     int offset;
+    int pre_tag_size = 0;
 
     avio_skip(s->pb, 4);
     flags = avio_r8(s->pb);
@@ -719,7 +720,16 @@ static int flv_read_header(AVFormatContext *s)
 
     offset = avio_rb32(s->pb);
     avio_seek(s->pb, offset, SEEK_SET);
-    avio_skip(s->pb, 4);
+
+    /* Annex E. The FLV File Format
+     * E.3 TheFLVFileBody
+     *     Field               Type    Comment
+     *     PreviousTagSize0    UI32    Always 0
+     * */
+    pre_tag_size = avio_rb32(s->pb);
+    if (pre_tag_size) {
+        av_log(s, AV_LOG_WARNING, "Read FLV header error, input file is not a standard flv format, first PreviousTagSize0 always is 0\n");
+    }
 
     s->start_time = 0;
     flv->sum_flv_tag_size = 0;
@@ -744,6 +754,7 @@ static int flv_get_extradata(AVFormatContext *s, AVStream *st, int size)
     av_freep(&st->codecpar->extradata);
     if (ff_get_extradata(s, st->codecpar, s->pb, size) < 0)
         return AVERROR(ENOMEM);
+    st->internal->need_context_update = 1;
     return 0;
 }
 
@@ -1004,7 +1015,13 @@ retry:
                    "Skipping flv packet: type %d, size %d, flags %d.\n",
                    type, size, flags);
 skip:
-            avio_seek(s->pb, next, SEEK_SET);
+            if (avio_seek(s->pb, next, SEEK_SET) != next) {
+                 // This can happen if flv_read_metabody above read past
+                 // next, on a non-seekable input, and the preceding data has
+                 // been flushed out from the IO buffer.
+                 av_log(s, AV_LOG_ERROR, "Unable to seek to the next packet\n");
+                 return AVERROR_INVALIDDATA;
+            }
             ret = FFERROR_REDO;
             goto leave;
         }
@@ -1033,7 +1050,6 @@ skip:
         }
         if (i == s->nb_streams) {
             static const enum AVMediaType stream_types[] = {AVMEDIA_TYPE_VIDEO, AVMEDIA_TYPE_AUDIO, AVMEDIA_TYPE_SUBTITLE};
-            av_log(s, AV_LOG_WARNING, "%s stream discovered after head already parsed\n", av_get_media_type_string(stream_types[stream_type]));
             st = create_stream(s, stream_types[stream_type]);
             if (!st)
                 return AVERROR(ENOMEM);
@@ -1041,7 +1057,7 @@ skip:
         }
         av_log(s, AV_LOG_TRACE, "%d %X %d \n", stream_type, flags, st->discard);
 
-        if (s->pb->seekable &&
+        if ((s->pb->seekable & AVIO_SEEKABLE_NORMAL) &&
             ((flags & FLV_VIDEO_FRAMETYPE_MASK) == FLV_FRAME_KEY ||
               stream_type == FLV_STREAM_TYPE_AUDIO))
             av_add_index_entry(st, pos, dts, size, 0, AVINDEX_KEYFRAME);
@@ -1057,7 +1073,8 @@ skip:
 
     // if not streamed and no duration from metadata then seek to end to find
     // the duration from the timestamps
-    if (s->pb->seekable && (!s->duration || s->duration == AV_NOPTS_VALUE) &&
+    if ((s->pb->seekable & AVIO_SEEKABLE_NORMAL) &&
+        (!s->duration || s->duration == AV_NOPTS_VALUE) &&
         !flv->searched_for_end) {
         int size;
         const int64_t pos   = avio_tell(s->pb);
@@ -1135,6 +1152,12 @@ retry_duration:
         st->codecpar->codec_id == AV_CODEC_ID_MPEG4) {
         int type = avio_r8(s->pb);
         size--;
+
+        if (size < 0) {
+            ret = AVERROR_INVALIDDATA;
+            goto leave;
+        }
+
         if (st->codecpar->codec_id == AV_CODEC_ID_H264 || st->codecpar->codec_id == AV_CODEC_ID_MPEG4) {
             // sign extension
             int32_t cts = (avio_rb24(s->pb) + 0xff800000) ^ 0xff800000;

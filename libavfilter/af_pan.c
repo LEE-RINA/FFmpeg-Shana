@@ -115,6 +115,11 @@ static av_cold int init(AVFilterContext *ctx)
     if (!args)
         return AVERROR(ENOMEM);
     arg = av_strtok(args, "|", &tokenizer);
+    if (!arg) {
+        av_log(ctx, AV_LOG_ERROR, "Channel layout not specified\n");
+        ret = AVERROR(EINVAL);
+        goto fail;
+    }
     ret = ff_parse_channel_layout(&pan->out_channel_layout,
                                   &pan->nb_output_channels, arg, ctx);
     if (ret < 0)
@@ -161,6 +166,7 @@ static av_cold int init(AVFilterContext *ctx)
             goto fail;
         }
         /* gains */
+        sign = 1;
         while (1) {
             gain = 1;
             if (sscanf(arg, "%lf%n *%n", &gain, &len, &len))
@@ -378,13 +384,15 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *insamples)
     AVFrame *outsamples = ff_get_audio_buffer(outlink, n);
     PanContext *pan = inlink->dst->priv;
 
-    if (!outsamples)
+    if (!outsamples) {
+        av_frame_free(&insamples);
         return AVERROR(ENOMEM);
+    }
     swr_convert(pan->swr, outsamples->extended_data, n,
                 (void *)insamples->extended_data, n);
     av_frame_copy_props(outsamples, insamples);
     outsamples->channel_layout = outlink->channel_layout;
-    av_frame_set_channels(outsamples, outlink->channels);
+    outsamples->channels = outlink->channels;
 
     ret = ff_filter_frame(outlink, outsamples);
     av_frame_free(&insamples);

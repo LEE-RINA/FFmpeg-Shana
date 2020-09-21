@@ -626,13 +626,15 @@ static int shift_data(AVFormatContext *s)
     avio_seek(read_pb, flv->keyframes_info_offset, SEEK_SET);
     pos = avio_tell(read_pb);
 
-    /* shift data by chunk of at most keyframe *filepositions* and *times* size */
+#define READ_BLOCK do {                                                             \
     read_size[read_buf_id] = avio_read(read_pb, read_buf[read_buf_id], metadata_size);  \
-    read_buf_id ^= 1;
-    do {
+    read_buf_id ^= 1;                                                               \
+} while (0)
 
-        read_size[read_buf_id] = avio_read(read_pb, read_buf[read_buf_id], metadata_size);  \
-        read_buf_id ^= 1;
+    /* shift data by chunk of at most keyframe *filepositions* and *times* size */
+    READ_BLOCK;
+    do {
+        READ_BLOCK;
         n = read_size[read_buf_id];
         if (n < 0)
             break;
@@ -846,20 +848,22 @@ end:
         avio_seek(pb, flv->datasize_offset, SEEK_SET);
         put_amf_double(pb, flv->datasize);
     }
-    if (!(flv->flags & FLV_NO_DURATION_FILESIZE)) {
-        /* update information */
-        if (avio_seek(pb, flv->duration_offset, SEEK_SET) < 0) {
-            av_log(s, AV_LOG_WARNING, "Failed to update header with correct duration.\n");
-        } else {
-            put_amf_double(pb, flv->duration / (double)1000);
-        }
-        if (avio_seek(pb, flv->filesize_offset, SEEK_SET) < 0) {
-            av_log(s, AV_LOG_WARNING, "Failed to update header with correct filesize.\n");
-        } else {
-            put_amf_double(pb, file_size);
+    if (!(flv->flags & FLV_NO_METADATA)) {
+        if (!(flv->flags & FLV_NO_DURATION_FILESIZE)) {
+            /* update information */
+            if (avio_seek(pb, flv->duration_offset, SEEK_SET) < 0) {
+                av_log(s, AV_LOG_WARNING, "Failed to update header with correct duration.\n");
+            } else {
+                put_amf_double(pb, flv->duration / (double)1000);
+            }
+            if (avio_seek(pb, flv->filesize_offset, SEEK_SET) < 0) {
+                av_log(s, AV_LOG_WARNING, "Failed to update header with correct filesize.\n");
+            } else {
+                put_amf_double(pb, file_size);
+            }
         }
     }
-    avio_seek(pb, file_size, SEEK_SET);
+
     return 0;
 }
 

@@ -121,12 +121,6 @@ struct AVFormatInternal {
     int avoid_negative_ts_use_pts;
 
     /**
-     * Whether or not a header has already been written
-     */
-    int header_written;
-    int write_header_ret;
-
-    /**
      * Timestamp of the end of the shortest stream.
      */
     int64_t shortest_end;
@@ -140,6 +134,16 @@ struct AVFormatInternal {
      * Whether or not avformat_init_output fully initialized streams
      */
     int streams_initialized;
+
+    /**
+     * ID3v2 tag useful for MP3 demuxing
+     */
+    AVDictionary *id3v2_meta;
+
+    /*
+     * Prefer the codec framerate for avg_frame_rate computation.
+     */
+    int prefer_codec_framerate;
 };
 
 struct AVStreamInternal {
@@ -173,10 +177,21 @@ struct AVStreamInternal {
 
     enum AVCodecID orig_codec_id;
 
+    /* the context for extracting extradata in find_stream_info()
+     * inited=1/bsf=NULL signals that extracting is not possible (codec not
+     * supported) */
+    struct {
+        AVBSFContext *bsf;
+        AVPacket     *pkt;
+        int inited;
+    } extract_extradata;
+
     /**
      * Whether the internal avctx needs to be updated from codecpar (after a late change to codecpar)
      */
     int need_context_update;
+
+    FFFrac *priv_pts;
 };
 
 #ifdef __GNUC__
@@ -526,8 +541,11 @@ static inline int ff_rename(const char *oldpath, const char *newpath, void *logc
     int ret = 0;
     if (rename(oldpath, newpath) == -1) {
         ret = AVERROR(errno);
-        if (logctx)
-            av_log(logctx, AV_LOG_ERROR, "failed to rename file %s to %s\n", oldpath, newpath);
+        if (logctx) {
+            char err[AV_ERROR_MAX_STRING_SIZE] = {0};
+            av_make_error_string(err, AV_ERROR_MAX_STRING_SIZE, ret);
+            av_log(logctx, AV_LOG_ERROR, "failed to rename file %s to %s: %s\n", oldpath, newpath, err);
+        }
     }
     return ret;
 }
@@ -604,6 +622,14 @@ int ff_format_output_open(AVFormatContext *s, const char *url, AVDictionary **op
 void ff_format_io_close(AVFormatContext *s, AVIOContext **pb);
 
 /**
+ * Utility function to check if the file uses http or https protocol
+ *
+ * @param s AVFormatContext
+ * @param filename URL or file name to open for writing
+ */
+int ff_is_http_proto(char *filename);
+
+/**
  * Parse creation_time in AVFormatContext metadata if exists and warn if the
  * parsing fails.
  *
@@ -665,5 +691,9 @@ int ff_bprint_to_codecpar_extradata(AVCodecParameters *par, struct AVBPrint *buf
  */
 int ff_interleaved_peek(AVFormatContext *s, int stream,
                         AVPacket *pkt, int add_offset);
+
+
+int ff_lock_avformat(void);
+int ff_unlock_avformat(void);
 
 #endif /* AVFORMAT_INTERNAL_H */

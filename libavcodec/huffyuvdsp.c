@@ -23,10 +23,13 @@
 #include "mathops.h"
 #include "huffyuvdsp.h"
 
+// 0x00010001 or 0x0001000100010001 or whatever, depending on the cpu's native arithmetic size
+#define pw_1 (ULONG_MAX / UINT16_MAX)
+
 static void add_int16_c(uint16_t *dst, const uint16_t *src, unsigned mask, int w){
     long i;
-    unsigned long pw_lsb = (mask >> 1) * 0x0001000100010001ULL;
-    unsigned long pw_msb = pw_lsb +  0x0001000100010001ULL;
+    unsigned long pw_lsb = (mask >> 1) * pw_1;
+    unsigned long pw_msb = pw_lsb +  pw_1;
     for (i = 0; i <= w - (int)sizeof(long)/2; i += sizeof(long)/2) {
         long a = *(long*)(src+i);
         long b = *(long*)(dst+i);
@@ -77,12 +80,12 @@ static void add_hfyu_left_pred_bgr32_c(uint8_t *dst, const uint8_t *src,
     left[A] = a;
 }
 
-av_cold void ff_huffyuvdsp_init(HuffYUVDSPContext *c, AVCodecContext *avctx)
+av_cold void ff_huffyuvdsp_init(HuffYUVDSPContext *c, enum AVPixelFormat pix_fmt)
 {
     c->add_int16 = add_int16_c;
     c->add_hfyu_median_pred_int16 = add_hfyu_median_pred_int16_c;
     c->add_hfyu_left_pred_bgr32 = add_hfyu_left_pred_bgr32_c;
 
     if (ARCH_X86)
-        ff_huffyuvdsp_init_x86(c, avctx);
+        ff_huffyuvdsp_init_x86(c, pix_fmt);
 }
