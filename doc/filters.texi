@@ -2585,6 +2585,10 @@ Set file for dumping, suitable for gnuplot.
 @item dumpscale
 Set scale for dumpfile. Acceptable values are same with scale option.
 Default is linlog.
+
+@item fft2
+Enable 2-channel convolution using complex FFT. This improves speed significantly.
+Default is disabled.
 @end table
 
 @subsection Examples
@@ -2917,9 +2921,6 @@ EBU R128 loudness normalization. Includes both dynamic and linear normalization 
 Support for both single pass (livestreams, files) and double pass (files) modes.
 This algorithm can target IL, LRA, and maximum true peak.
 
-To enable compilation of this filter you need to configure FFmpeg with
-@code{--enable-libebur128}.
-
 The filter accepts the following options:
 
 @table @option
@@ -3025,7 +3026,7 @@ output channel layout or number of channels
 
 @item outdef
 output channel specification, of the form:
-"@var{out_name}=[@var{gain}*]@var{in_name}[+[@var{gain}*]@var{in_name}...]"
+"@var{out_name}=[@var{gain}*]@var{in_name}[(+-)[@var{gain}*]@var{in_name}...]"
 
 @item out_name
 output channel to define, either a channel name (FL, FR, etc.) or a channel
@@ -3510,10 +3511,10 @@ sofalizer=sofa=/path/to/ClubFritz12.sofa:type=freq:radius=2:rotation=5
 @end example
 
 @item
-Similar as above but with custom speaker positions for front left, front right, rear left and rear right
+Similar as above but with custom speaker positions for front left, front right, back left and back right
 and also with custom gain:
 @example
-"sofalizer=sofa=/path/to/ClubFritz6.sofa:type=freq:radius=2:speakers=FL 45|FR 315|RL 135|RR 225:gain=28"
+"sofalizer=sofa=/path/to/ClubFritz6.sofa:type=freq:radius=2:speakers=FL 45|FR 315|BL 135|BR 225:gain=28"
 @end example
 @end itemize
 
@@ -4538,6 +4539,10 @@ the position in the file if known or -1 and the timestamp in seconds.
 In order to display the output lines, you need to set the loglevel at
 least to the AV_LOG_INFO value.
 
+This filter exports frame metadata @code{lavfi.blackframe.pblack}.
+The value represents the percentage of pixels in the picture that
+are below the threshold value.
+
 It accepts the following parameters:
 
 @table @option
@@ -5273,6 +5278,7 @@ colormatrix=bt601:smpte240m
 @section colorspace
 
 Convert colorspace, transfer characteristics or color primaries.
+Input video needs to have an even size.
 
 The filter accepts the following options:
 
@@ -5330,6 +5336,9 @@ SMPTE-170M or BT.601-6 525
 @item smpte240m
 SMPTE-240M
 
+@item ycgco
+YCgCo
+
 @item bt2020ncl
 BT.2020 with non-constant luminance
 
@@ -5344,6 +5353,12 @@ The accepted values are:
 @item bt709
 BT.709
 
+@item bt470m
+BT.470M
+
+@item bt470bg
+BT.470BG
+
 @item gamma22
 Constant gamma of 2.2
 
@@ -5355,6 +5370,18 @@ SMPTE-170M, BT.601-6 625 or BT.601-6 525
 
 @item smpte240m
 SMPTE-240M
+
+@item srgb
+SRGB
+
+@item iec61966-2-1
+iec61966-2-1
+
+@item iec61966-2-4
+iec61966-2-4
+
+@item xvycc
+xvycc
 
 @item bt2020-10
 BT.2020 for 10-bits content
@@ -5385,6 +5412,15 @@ SMPTE-170M or BT.601-6 525
 @item smpte240m
 SMPTE-240M
 
+@item film
+film
+
+@item smpte431
+SMPTE-431
+
+@item smpte432
+SMPTE-432
+
 @item bt2020
 BT.2020
 
@@ -5396,8 +5432,14 @@ Specify output color range.
 
 The accepted values are:
 @table @samp
+@item tv
+TV (restricted) range
+
 @item mpeg
 MPEG (restricted) range
+
+@item pc
+PC (full) range
 
 @item jpeg
 JPEG (full) range
@@ -6161,11 +6203,16 @@ absolute value will be picked. For example direction 0, -PI or -2*PI radians
 will pick only pixels on same row and -PI/2 will pick only pixels on same
 column.
 
-@item blur
+@item blur, b
 If enabled, current pixel is compared with average value of all four
 surrounding pixels. The default is enabled. If disabled current pixel is
 compared with all four surrounding pixels. The pixel is considered banded
 if only all four differences with surrounding pixels are less than threshold.
+
+@item coupling, c
+If enabled, current pixel is changed if and only if all pixel components are banded,
+e.g. banding detection threshold is triggered for all color components.
+The default is disabled.
 @end table
 
 @anchor{decimate}
@@ -7091,6 +7138,14 @@ DE=10.0 # display end
 FID=1.5 # fade in duration
 FOD=5 # fade out duration
 ffplay -f lavfi "color,drawtext=text=TEST:fontsize=50:fontfile=FreeSerif.ttf:fontcolor_expr=ff0000%@{eif\\\\: clip(255*(1*between(t\\, $DS + $FID\\, $DE - $FOD) + ((t - $DS)/$FID)*between(t\\, $DS\\, $DS + $FID) + (-(t - $DE)/$FOD)*between(t\\, $DE - $FOD\\, $DE) )\\, 0\\, 255) \\\\: x\\\\: 2 @}"
+@end example
+
+@item
+Horizontally align multiple separate texts. Note that @option{max_glyph_a}
+and the @option{fontsize} value are included in the @option{y} offset.
+@example
+drawtext=fontfile=FreeSans.ttf:text=DOG:fontsize=24:x=10:y=20+24-max_glyph_a,
+drawtext=fontfile=FreeSans.ttf:text=cow:fontsize=24:x=80:y=20+24-max_glyph_a
 @end example
 
 @end itemize
@@ -9654,7 +9709,7 @@ Macroblock size. Default @code{16}.
 @item search_param
 Motion estimation search parameter. Default @code{32}.
 
-@item vsmbc
+@item vsbmc
 Enable variable-size block motion compensation. Motion estimation is applied with smaller block sizes at object boundaries in order to make the them less blur. Default is @code{0} (disabled).
 @end table
 @end table
@@ -10367,6 +10422,24 @@ Specify the color of the padded area. For the syntax of this option,
 check the "Color" section in the ffmpeg-utils manual.
 
 The default value of @var{color} is "black".
+
+@item eval
+Specify when to evaluate  @var{width}, @var{height}, @var{x} and @var{y} expression.
+
+It accepts the following values:
+
+@table @samp
+@item init
+Only evaluate expressions once during the filter initialization or when
+a command is processed.
+
+@item frame
+Evaluate expressions for each incoming frame.
+
+@end table
+
+Default value is @samp{init}.
+
 @end table
 
 The value for the @var{width}, @var{height}, @var{x}, and @var{y}
@@ -10940,6 +11013,12 @@ Set soft thresholding (better de-ringing effect, but likely blurrier).
 Set medium thresholding (good results, default).
 @end table
 @end table
+
+@section premultiply
+Apply alpha premultiply effect to input video stream using first plane
+of second stream as alpha.
+
+Both streams must have same dimensions and same pixel format.
 
 @section prewitt
 Apply prewitt operator to input video stream.
@@ -12206,7 +12285,7 @@ Set the size of the box used to represent one palette color entry. Default is
 
 @section shuffleframes
 
-Reorder and/or duplicate video frames.
+Reorder and/or duplicate and/or drop video frames.
 
 It accepts the following parameters:
 
@@ -12215,6 +12294,7 @@ It accepts the following parameters:
 Set the destination indexes of input frames.
 This is space or '|' separated list of indexes that maps input frames to output
 frames. Number of indexes also sets maximal value that each index may have.
+'-1' index have special meaning and that is to drop frame.
 @end table
 
 The first frame has the index 0. The default is to keep the input unchanged.
@@ -12493,20 +12573,20 @@ in [-30,0] will filter edges. Default value is 0.
 @item chroma_radius, cr
 Set the chroma radius. The option value must be a float number in
 the range [0.1,5.0] that specifies the variance of the gaussian filter
-used to blur the image (slower if larger). Default value is 1.0.
+used to blur the image (slower if larger). Default value is @option{luma_radius}.
 
 @item chroma_strength, cs
 Set the chroma strength. The option value must be a float number
 in the range [-1.0,1.0] that configures the blurring. A value included
 in [0.0,1.0] will blur the image whereas a value included in
-[-1.0,0.0] will sharpen the image. Default value is 1.0.
+[-1.0,0.0] will sharpen the image. Default value is @option{luma_strength}.
 
 @item chroma_threshold, ct
 Set the chroma threshold used as a coefficient to determine
 whether a pixel should be blurred or not. The option value must be an
 integer in the range [-30,30]. A value of 0 will filter all the image,
 a value included in [0,30] will filter flat areas and a value included
-in [-30,0] will filter edges. Default value is 0.
+in [-30,0] will filter edges. Default value is @option{luma_threshold}.
 @end table
 
 If a chroma option is not explicitly set, the corresponding luma value
@@ -14619,6 +14699,9 @@ Possible values are:
 @item linear
 @item 2020_10
 @item 2020_12
+@item smpte2084
+@item iec61966-2-1
+@item arib-std-b67
 @end table
 
 Default is same as input.
@@ -14723,6 +14806,9 @@ Possible values are:
 @item bottomleft
 @item bottom
 @end table
+
+@item npl
+Set the nominal peak luminance.
 @end table
 
 The values of the @option{w} and @option{h} options are expressions
@@ -16834,6 +16920,10 @@ Acceptable range is @code{[1, 7]}.
 @item bar_g, gamma2
 Specify the bargraph gamma. Default value is @code{1}. Acceptable range is
 @code{[1, 7]}.
+
+@item bar_t
+Specify the bargraph transparency level. Lower value makes the bargraph sharper.
+Default value is @code{1}. Acceptable range is @code{[0, 1]}.
 
 @item timeclamp, tc
 Specify the transform timeclamp. At low frequency, there is trade-off between

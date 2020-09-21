@@ -408,7 +408,7 @@ static int tiff_unpack_lzma(TiffContext *s, AVFrame *p, uint8_t *dst, int stride
                             const uint8_t *src, int size, int width, int lines,
                             int strip_start, int is_yuv)
 {
-    uint64_t outlen = width * lines;
+    uint64_t outlen = width * (uint64_t)lines;
     int ret, line;
     uint8_t *buf = av_malloc(outlen);
     if (!buf)
@@ -772,9 +772,18 @@ static void set_sar(TiffContext *s, unsigned tag, unsigned num, unsigned den)
     int offset = tag == TIFF_YRES ? 2 : 0;
     s->res[offset++] = num;
     s->res[offset]   = den;
-    if (s->res[0] && s->res[1] && s->res[2] && s->res[3])
+    if (s->res[0] && s->res[1] && s->res[2] && s->res[3]) {
+        uint64_t num = s->res[2] * (uint64_t)s->res[1];
+        uint64_t den = s->res[0] * (uint64_t)s->res[3];
+        if (num > INT64_MAX || den > INT64_MAX) {
+            num = num >> 1;
+            den = den >> 1;
+        }
         av_reduce(&s->avctx->sample_aspect_ratio.num, &s->avctx->sample_aspect_ratio.den,
-                  s->res[2] * (uint64_t)s->res[1], s->res[0] * (uint64_t)s->res[3], INT32_MAX);
+                  num, den, INT32_MAX);
+        if (!s->avctx->sample_aspect_ratio.den)
+            s->avctx->sample_aspect_ratio = (AVRational) {0, 1};
+    }
 }
 
 static int tiff_decode_tag(TiffContext *s, AVFrame *frame)

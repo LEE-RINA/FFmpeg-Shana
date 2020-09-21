@@ -1,8 +1,8 @@
 #include <winver.h>
 
 1 VERSIONINFO
-FILEVERSION 3,2,2,111
-PRODUCTVERSION 4,0,0,0
+FILEVERSION 2017,01,17,115
+PRODUCTVERSION 4,1,0,0
 FILEOS VOS__WINDOWS32
 FILETYPE VFT_APP
 {
@@ -11,9 +11,9 @@ FILETYPE VFT_APP
         BLOCK "000004b0" // LANG_NEUTRAL,UNICODE_CP
         {
             VALUE "FileDescription", "ShanaEncoder"
-            VALUE "FileVersion", "3.2.2.111"
+            VALUE "FileVersion", "2017.01.17.115"
             VALUE "ProductName", "FFmpeg for ShanaEncoder"
-            VALUE "ProductVersion", "4.0.0.0"
+            VALUE "ProductVersion", "4.1.0.0"
             VALUE "LegalCopyright", "Copyright (c) 2000-2017 the FFmpeg developers"
             VALUE "OriginalFilename", "ShanaEncoder.sha"
         }

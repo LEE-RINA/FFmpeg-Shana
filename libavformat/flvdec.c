@@ -64,9 +64,12 @@ typedef struct FLVContext {
 
     int last_keyframe_stream_index;
     int keyframe_count;
+    int64_t video_bit_rate;
+    int64_t audio_bit_rate;
     int64_t *keyframe_times;
     int64_t *keyframe_filepositions;
     int missing_streams;
+    AVRational framerate;
 } FLVContext;
 
 static int probe(AVProbeData *p, int live)
@@ -114,6 +117,8 @@ static void add_keyframes_index(AVFormatContext *s)
 
     if (stream->nb_index_entries == 0) {
         for (i = 0; i < flv->keyframe_count; i++) {
+            av_log(s, AV_LOG_TRACE, "keyframe filepositions = %"PRId64" times = %"PRId64"\n",
+                   flv->keyframe_filepositions[i], flv->keyframe_times[i] * 1000);
             av_add_index_entry(stream, flv->keyframe_filepositions[i],
                 flv->keyframe_times[i] * 1000, 0, 0, AVINDEX_KEYFRAME);
         }
@@ -138,10 +143,15 @@ static AVStream *create_stream(AVFormatContext *s, int codec_type)
                            && s->streams[0]->codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE
                            && s->streams[1]->codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE))
         s->ctx_flags &= ~AVFMTCTX_NOHEADER;
-    if (codec_type == AVMEDIA_TYPE_AUDIO)
+    if (codec_type == AVMEDIA_TYPE_AUDIO) {
+        st->codecpar->bit_rate = flv->audio_bit_rate;
         flv->missing_streams &= ~FLV_HEADER_FLAG_HASAUDIO;
-    if (codec_type == AVMEDIA_TYPE_VIDEO)
+    }
+    if (codec_type == AVMEDIA_TYPE_VIDEO) {
+        st->codecpar->bit_rate = flv->video_bit_rate;
         flv->missing_streams &= ~FLV_HEADER_FLAG_HASVIDEO;
+        st->avg_frame_rate = flv->framerate;
+    }
 
 
     avpriv_set_pts_info(st, 32, 1, 1000); /* 32 bit pts in ms */
@@ -542,17 +552,21 @@ static int amf_parse_object(AVFormatContext *s, AVStream *astream,
                 amf_type == AMF_DATA_TYPE_BOOL) {
                 if (!strcmp(key, "duration"))
                     s->duration = num_val * AV_TIME_BASE;
-                else if (!strcmp(key, "videodatarate") && vpar &&
+                else if (!strcmp(key, "videodatarate") &&
                          0 <= (int)(num_val * 1024.0))
-                    vpar->bit_rate = num_val * 1024.0;
-                else if (!strcmp(key, "audiodatarate") && apar &&
+                    flv->video_bit_rate = num_val * 1024.0;
+                else if (!strcmp(key, "audiodatarate") &&
                          0 <= (int)(num_val * 1024.0))
-                    apar->bit_rate = num_val * 1024.0;
+                    flv->audio_bit_rate = num_val * 1024.0;
                 else if (!strcmp(key, "datastream")) {
                     AVStream *st = create_stream(s, AVMEDIA_TYPE_SUBTITLE);
                     if (!st)
                         return AVERROR(ENOMEM);
                     st->codecpar->codec_id = AV_CODEC_ID_TEXT;
+                } else if (!strcmp(key, "framerate")) {
+                    flv->framerate = av_d2q(num_val, 1000);
+                    if (vstream)
+                        vstream->avg_frame_rate = flv->framerate;
                 } else if (flv->trust_metadata) {
                     if (!strcmp(key, "videocodecid") && vpar) {
                         int ret = flv_set_video_codec(s, vstream, num_val, 0);

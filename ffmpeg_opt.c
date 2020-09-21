@@ -121,6 +121,8 @@ int qp_hist           = 0;
 int stdin_interaction = 1;
 int frame_bits_per_raw_sample = 0;
 float max_error_rate  = 2.0/3;
+int filter_nbthreads = 0;
+int filter_complex_nbthreads = 0;
 
 
 static int intra_only         = 0;
@@ -1218,7 +1220,7 @@ static OutputStream *new_output_stream(OptionsContext *o, AVFormatContext *oc, e
     OutputStream *ost;
     AVStream *st = avformat_new_stream(oc, NULL);
     int idx      = oc->nb_streams - 1, ret = 0;
-    const char *bsfs = NULL;
+    const char *bsfs = NULL, *time_base = NULL;
     char *next, *codec_tag = NULL;
     double qscale = -1;
     int i;
@@ -1293,6 +1295,17 @@ static OutputStream *new_output_stream(OptionsContext *o, AVFormatContext *oc, e
         }
     } else {
         ost->encoder_opts = filter_codec_opts(o->g->codec_opts, AV_CODEC_ID_NONE, oc, st, NULL);
+    }
+
+    MATCH_PER_STREAM_OPT(time_bases, str, time_base, oc, st);
+    if (time_base) {
+        AVRational q;
+        if (av_parse_ratio(&q, time_base, INT_MAX, 0, NULL) < 0 ||
+            q.num <= 0 || q.den <= 0) {
+            av_log(NULL, AV_LOG_FATAL, "Invalid time base: %s\n", time_base);
+            exit_program(1);
+        }
+        st->time_base = q;
     }
 
     ost->max_frames = INT64_MAX;
@@ -1940,6 +1953,7 @@ static void init_output_filter(OutputFilter *ofilter, OptionsContext *o,
     ost->filter       = ofilter;
 
     ofilter->ost      = ost;
+    ofilter->format   = -1;
 
     if (ost->stream_copy) {
         av_log(NULL, AV_LOG_ERROR, "Streamcopy requested for output stream %d:%d, "
@@ -1977,12 +1991,28 @@ static int init_complex_filters(void)
 
 static int configure_complex_filters(void)
 {
-    int i, ret = 0;
+    int i, j, ret = 0;
 
-    for (i = 0; i < nb_filtergraphs; i++)
-        if (!filtergraph_is_simple(filtergraphs[i]) &&
-            (ret = configure_filtergraph(filtergraphs[i])) < 0)
+    for (i = 0; i < nb_filtergraphs; i++) {
+        FilterGraph *fg = filtergraphs[i];
+
+        if (filtergraph_is_simple(fg))
+            continue;
+
+        for (j = 0; j < fg->nb_inputs; j++) {
+            ret = ifilter_parameters_from_decoder(fg->inputs[j],
+                                                  fg->inputs[j]->ist->dec_ctx);
+            if (ret < 0) {
+                av_log(NULL, AV_LOG_ERROR,
+                       "Error initializing filtergraph %d input %d\n", i, j);
+                return ret;
+            }
+        }
+
+        ret = configure_filtergraph(filtergraphs[i]);
+        if (ret < 0)
             return ret;
+    }
     return 0;
 }
 
@@ -1996,7 +2026,7 @@ static int open_output_file(OptionsContext *o, const char *filename)
     InputStream  *ist;
     AVDictionary *unused_opts = NULL;
     AVDictionaryEntry *e = NULL;
-
+    int format_flags = 0;
 
     if (o->stop_time != INT64_MAX && o->recording_time != INT64_MAX) {
         o->stop_time = INT64_MAX;
@@ -2042,6 +2072,12 @@ static int open_output_file(OptionsContext *o, const char *filename)
     file_oformat= oc->oformat;
     oc->interrupt_callback = int_cb;
 
+    e = av_dict_get(o->g->format_opts, "fflags", NULL, 0);
+    if (e) {
+        const AVOption *o = av_opt_find(oc, "fflags", NULL, 0, 0);
+        av_opt_eval_flags(oc, o, e->value, &format_flags);
+    }
+
     /* create streams for all unlabeled output pads */
     for (i = 0; i < nb_filtergraphs; i++) {
         FilterGraph *fg = filtergraphs[i];
@@ -2062,6 +2098,7 @@ static int open_output_file(OptionsContext *o, const char *filename)
 
     /* ffserver seeking with date=... needs a date reference */
     if (!strcmp(file_oformat->name, "ffm") &&
+        !(format_flags & AVFMT_FLAG_BITEXACT) &&
         av_strstart(filename, "http:", NULL)) {
         int err = parse_option(o, "metadata", "creation_time=now", options);
         if (err < 0) {
@@ -2359,6 +2396,67 @@ loop_end:
                            nb_output_files - 1, ost->st->index);
                     exit_program(1);
                 }
+            }
+        }
+
+        /* set the filter output constraints */
+        if (ost->filter) {
+            OutputFilter *f = ost->filter;
+            int count;
+            switch (ost->enc_ctx->codec_type) {
+            case AVMEDIA_TYPE_VIDEO:
+                f->frame_rate = ost->frame_rate;
+                f->width      = ost->enc_ctx->width;
+                f->height     = ost->enc_ctx->height;
+                if (ost->enc_ctx->pix_fmt != AV_PIX_FMT_NONE) {
+                    f->format = ost->enc_ctx->pix_fmt;
+                } else if (ost->enc->pix_fmts) {
+                    count = 0;
+                    while (ost->enc->pix_fmts[count] != AV_PIX_FMT_NONE)
+                        count++;
+                    f->formats = av_mallocz_array(count + 1, sizeof(*f->formats));
+                    if (!f->formats)
+                        exit_program(1);
+                    memcpy(f->formats, ost->enc->pix_fmts, (count + 1) * sizeof(*f->formats));
+                }
+                break;
+            case AVMEDIA_TYPE_AUDIO:
+                if (ost->enc_ctx->sample_fmt != AV_SAMPLE_FMT_NONE) {
+                    f->format = ost->enc_ctx->sample_fmt;
+                } else if (ost->enc->sample_fmts) {
+                    count = 0;
+                    while (ost->enc->sample_fmts[count] != AV_SAMPLE_FMT_NONE)
+                        count++;
+                    f->formats = av_mallocz_array(count + 1, sizeof(*f->formats));
+                    if (!f->formats)
+                        exit_program(1);
+                    memcpy(f->formats, ost->enc->sample_fmts, (count + 1) * sizeof(*f->formats));
+                }
+                if (ost->enc_ctx->sample_rate) {
+                    f->sample_rate = ost->enc_ctx->sample_rate;
+                } else if (ost->enc->supported_samplerates) {
+                    count = 0;
+                    while (ost->enc->supported_samplerates[count])
+                        count++;
+                    f->sample_rates = av_mallocz_array(count + 1, sizeof(*f->sample_rates));
+                    if (!f->sample_rates)
+                        exit_program(1);
+                    memcpy(f->sample_rates, ost->enc->supported_samplerates,
+                           (count + 1) * sizeof(*f->sample_rates));
+                }
+                if (ost->enc_ctx->channels) {
+                    f->channel_layout = av_get_default_channel_layout(ost->enc_ctx->channels);
+                } else if (ost->enc->channel_layouts) {
+                    count = 0;
+                    while (ost->enc->channel_layouts[count])
+                        count++;
+                    f->channel_layouts = av_mallocz_array(count + 1, sizeof(*f->channel_layouts));
+                    if (!f->channel_layouts)
+                        exit_program(1);
+                    memcpy(f->channel_layouts, ost->enc->channel_layouts,
+                           (count + 1) * sizeof(*f->channel_layouts));
+                }
+                break;
             }
         }
     }
@@ -3329,12 +3427,16 @@ const OptionDef options[] = {
         "set profile", "profile" },
     { "filter",         HAS_ARG | OPT_STRING | OPT_SPEC | OPT_OUTPUT, { .off = OFFSET(filters) },
         "set stream filtergraph", "filter_graph" },
+    { "filter_threads",  HAS_ARG | OPT_INT,                          { &filter_nbthreads },
+        "number of non-complex filter threads" },
     { "filter_script",  HAS_ARG | OPT_STRING | OPT_SPEC | OPT_OUTPUT, { .off = OFFSET(filter_scripts) },
         "read stream filtergraph description from a file", "filename" },
     { "reinit_filter",  HAS_ARG | OPT_INT | OPT_SPEC | OPT_INPUT,    { .off = OFFSET(reinit_filters) },
         "reinit filtergraph on input parameter changes", "" },
     { "filter_complex", HAS_ARG | OPT_EXPERT,                        { .func_arg = opt_filter_complex },
         "create a complex filtergraph", "graph_description" },
+    { "filter_complex_threads", HAS_ARG | OPT_INT,                   { &filter_complex_nbthreads },
+        "number of threads for -filter_complex" },
     { "lavfi",          HAS_ARG | OPT_EXPERT,                        { .func_arg = opt_filter_complex },
         "create a complex filtergraph", "graph_description" },
     { "filter_complex_script", HAS_ARG | OPT_EXPERT,                 { .func_arg = opt_filter_complex_script },
@@ -3522,6 +3624,9 @@ const OptionDef options[] = {
     { "sdp_file", HAS_ARG | OPT_EXPERT | OPT_OUTPUT, { .func_arg = opt_sdp_file },
         "specify a file in which to print sdp information", "file" },
 
+    { "time_base", HAS_ARG | OPT_STRING | OPT_EXPERT | OPT_SPEC | OPT_OUTPUT, { .off = OFFSET(time_bases) },
+        "set the desired time base hint for output stream (1:24, 1:48000 or 0.04166, 2.0833e-5)", "ratio" },
+
     { "bsf", HAS_ARG | OPT_STRING | OPT_SPEC | OPT_EXPERT | OPT_OUTPUT, { .off = OFFSET(bitstream_filters) },
         "A comma-separated list of bitstream filters", "bitstream_filters" },
     { "absf", HAS_ARG | OPT_AUDIO | OPT_EXPERT| OPT_PERFILE | OPT_OUTPUT, { .func_arg = opt_old2new },
@@ -3550,6 +3655,11 @@ const OptionDef options[] = {
 #if CONFIG_VAAPI
     { "vaapi_device", HAS_ARG | OPT_EXPERT, { .func_arg = opt_vaapi_device },
         "set VAAPI hardware device (DRM path or X11 display name)", "device" },
+#endif
+
+#if CONFIG_QSV
+    { "qsv_device", HAS_ARG | OPT_STRING | OPT_EXPERT, { &qsv_device },
+        "set QSV hardware device (DirectX adapter index, DRM path or X11 display name)", "device"},
 #endif
 
     /* shana */

@@ -224,6 +224,8 @@ typedef struct OptionsContext {
     int        nb_disposition;
     SpecifierOpt *program;
     int        nb_program;
+    SpecifierOpt *time_bases;
+    int        nb_time_bases;
 } OptionsContext;
 
 typedef struct InputFilter {
@@ -231,6 +233,18 @@ typedef struct InputFilter {
     struct InputStream *ist;
     struct FilterGraph *graph;
     uint8_t            *name;
+
+    // parameters configured for this input
+    int format;
+
+    int width, height;
+    AVRational sample_aspect_ratio;
+
+    int sample_rate;
+    int channels;
+    uint64_t channel_layout;
+
+    AVBufferRef *hw_frames_ctx;
 } InputFilter;
 
 typedef struct OutputFilter {
@@ -242,6 +256,18 @@ typedef struct OutputFilter {
     /* temporary storage until stream maps are processed */
     AVFilterInOut       *out_tmp;
     enum AVMediaType     type;
+
+    /* desired output stream properties */
+    int width, height;
+    AVRational frame_rate;
+    int format;
+    int sample_rate;
+    uint64_t channel_layout;
+
+    // those are only set if no format is specified and the encoder gives us multiple options
+    int *formats;
+    uint64_t *channel_layouts;
+    int *sample_rates;
 } OutputFilter;
 
 typedef struct FilterGraph {
@@ -571,12 +597,18 @@ extern AVIOContext *progress_avio;
 extern float max_error_rate;
 extern char *videotoolbox_pixfmt;
 
+extern int filter_nbthreads;
+extern int filter_complex_nbthreads;
+
 extern const AVIOInterruptCB int_cb;
 
 extern const OptionDef options[];
 extern const HWAccel hwaccels[];
 extern int hwaccel_lax_profile_check;
 extern AVBufferRef *hw_device_ctx;
+#if CONFIG_QSV
+extern char *qsv_device;
+#endif
 
 
 void term_init(void);
@@ -601,6 +633,9 @@ int ist_in_filtergraph(FilterGraph *fg, InputStream *ist);
 int filtergraph_is_simple(FilterGraph *fg);
 int init_simple_filtergraph(InputStream *ist, OutputStream *ost);
 int init_complex_filtergraph(FilterGraph *fg);
+
+int ifilter_parameters_from_frame(InputFilter *ifilter, const AVFrame *frame);
+int ifilter_parameters_from_decoder(InputFilter *ifilter, const AVCodecContext *avctx);
 
 int ffmpeg_parse_options(int argc, char **argv);
 
