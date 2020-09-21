@@ -30,11 +30,11 @@
 
 #include "internal.h"
 #include "avcodec.h"
-#include "mpegvideo.h"
 #include "h264.h"
 #include "h264data.h" // FIXME FIXME FIXME
 #include "h264_mvpred.h"
 #include "golomb.h"
+#include "mpegutils.h"
 #include "libavutil/avassert.h"
 
 
@@ -773,6 +773,10 @@ decode_intra_mb:
 
         // We assume these blocks are very rare so we do not optimize it.
         h->intra_pcm_ptr = align_get_bits(&h->gb);
+        if (get_bits_left(&h->gb) < mb_size) {
+            av_log(h->avctx, AV_LOG_ERROR, "Not enough data for an intra PCM block.\n");
+            return AVERROR_INVALIDDATA;
+        }
         skip_bits_long(&h->gb, mb_size);
 
         // In deblocking, the quantizer is 0

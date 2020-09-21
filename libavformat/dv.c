@@ -1,5 +1,5 @@
 /*
- * General DV muxer/demuxer
+ * General DV demuxer
  * Copyright (c) 2003 Roman Shaposhnik
  *
  * Many thanks to Dan Dennedy <dan@dennedy.org> for providing wealth
@@ -288,7 +288,7 @@ static int dv_extract_video_info(DVDemuxContext *c, uint8_t *frame)
 
         avpriv_set_pts_info(c->vst, 64, c->sys->time_base.num,
                             c->sys->time_base.den);
-        avctx->time_base = c->sys->time_base;
+        c->vst->avg_frame_rate = av_inv_q(c->vst->time_base);
 
         /* finding out SAR is a little bit messy */
         vsc_pack = dv_extract_pack(frame, dv_video_control);
@@ -622,7 +622,6 @@ static int dv_probe(AVProbeData *p)
     return 0;
 }
 
-#if CONFIG_DV_DEMUXER
 AVInputFormat ff_dv_demuxer = {
     .name           = "dv",
     .long_name      = NULL_IF_CONFIG_SMALL("DV (Digital Video)"),
@@ -634,4 +633,3 @@ AVInputFormat ff_dv_demuxer = {
     .read_seek      = dv_read_seek,
     .extensions     = "dv,dif",
 };
-#endif

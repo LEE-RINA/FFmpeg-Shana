@@ -51,7 +51,9 @@ unsigned avutil_version(void)
         av_log(NULL, AV_LOG_ERROR, "Libavutil has been linked to a broken llrint()\n");
     }
 
+#if defined(ASSERT_LEVEL) && ASSERT_LEVEL > 0
     ff_check_pixfmt_descriptors();
+#endif
     checks_done = 1;
     return LIBAVUTIL_VERSION_INT;
 }
@@ -110,4 +112,9 @@ unsigned av_int_list_length_for_size(unsigned elsize,
     default: av_assert0(!"valid element size");
     }
     return i;
+}
+
+AVRational av_get_time_base_q(void)
+{
+    return (AVRational){1, AV_TIME_BASE};
 }

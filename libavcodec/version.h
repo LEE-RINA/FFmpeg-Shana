@@ -26,11 +26,11 @@
  * Libavcodec version macros.
  */
 
-#include "libavutil/avutil.h"
+#include "libavutil/version.h"
 
 #define LIBAVCODEC_VERSION_MAJOR 55
-#define LIBAVCODEC_VERSION_MINOR  43
-#define LIBAVCODEC_VERSION_MICRO 101
+#define LIBAVCODEC_VERSION_MINOR  68
+#define LIBAVCODEC_VERSION_MICRO 100
 
 #define LIBAVCODEC_VERSION_INT  AV_VERSION_INT(LIBAVCODEC_VERSION_MAJOR, \
                                                LIBAVCODEC_VERSION_MINOR, \
@@ -137,6 +137,30 @@
 #endif
 #ifndef FF_API_NEG_LINESIZES
 #define FF_API_NEG_LINESIZES     (LIBAVCODEC_VERSION_MAJOR < 56)
+#endif
+#ifndef FF_API_EMU_EDGE
+#define FF_API_EMU_EDGE          (LIBAVCODEC_VERSION_MAJOR < 56)
+#endif
+#ifndef FF_API_ARCH_SH4
+#define FF_API_ARCH_SH4          (LIBAVCODEC_VERSION_MAJOR < 56)
+#endif
+#ifndef FF_API_ARCH_SPARC
+#define FF_API_ARCH_SPARC        (LIBAVCODEC_VERSION_MAJOR < 56)
+#endif
+#ifndef FF_API_INPUT_PRESERVED
+#define FF_API_INPUT_PRESERVED   (LIBAVCODEC_VERSION_MAJOR < 57)
+#endif
+#ifndef FF_API_NORMALIZE_AQP
+#define FF_API_NORMALIZE_AQP     (LIBAVCODEC_VERSION_MAJOR < 57)
+#endif
+#ifndef FF_API_GMC
+#define FF_API_GMC               (LIBAVCODEC_VERSION_MAJOR < 57)
+#endif
+#ifndef FF_API_MV0
+#define FF_API_MV0               (LIBAVCODEC_VERSION_MAJOR < 57)
+#endif
+#ifndef FF_API_CODEC_NAME
+#define FF_API_CODEC_NAME        (LIBAVCODEC_VERSION_MAJOR < 57)
 #endif
 
 #endif /* AVCODEC_VERSION_H */

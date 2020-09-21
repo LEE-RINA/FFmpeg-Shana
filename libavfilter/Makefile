@@ -1,27 +1,6 @@
 include $(SUBDIR)../config.mak
 
 NAME = avfilter
-FFLIBS = avutil
-FFLIBS-$(CONFIG_ACONVERT_FILTER)             += swresample
-FFLIBS-$(CONFIG_AMOVIE_FILTER)               += avformat avcodec
-FFLIBS-$(CONFIG_ARESAMPLE_FILTER)            += swresample
-FFLIBS-$(CONFIG_ASYNCTS_FILTER)              += avresample
-FFLIBS-$(CONFIG_ATEMPO_FILTER)               += avcodec
-FFLIBS-$(CONFIG_DECIMATE_FILTER)             += avcodec
-FFLIBS-$(CONFIG_DESHAKE_FILTER)              += avcodec
-FFLIBS-$(CONFIG_ELBG_FILTER)                 += avcodec
-FFLIBS-$(CONFIG_MCDEINT_FILTER)              += avcodec
-FFLIBS-$(CONFIG_MOVIE_FILTER)                += avformat avcodec
-FFLIBS-$(CONFIG_MP_FILTER)                   += avcodec
-FFLIBS-$(CONFIG_PAN_FILTER)                  += swresample
-FFLIBS-$(CONFIG_PP_FILTER)                   += postproc
-FFLIBS-$(CONFIG_REMOVELOGO_FILTER)           += avformat avcodec swscale
-FFLIBS-$(CONFIG_RESAMPLE_FILTER)             += avresample
-FFLIBS-$(CONFIG_SAB_FILTER)                  += swscale
-FFLIBS-$(CONFIG_SCALE_FILTER)                += swscale
-FFLIBS-$(CONFIG_SHOWSPECTRUM_FILTER)         += avcodec
-FFLIBS-$(CONFIG_SMARTBLUR_FILTER)            += swscale
-FFLIBS-$(CONFIG_SUBTITLES_FILTER)            += avformat avcodec
 
 HEADERS = asrc_abuffer.h                                                \
           avcodec.h                                                     \
@@ -49,12 +28,11 @@ OBJS = allfilters.o                                                     \
 
 
 OBJS-$(CONFIG_AVCODEC)                       += avcodec.o
-OBJS-$(CONFIG_AVFORMAT)                      += lavfutils.o
-OBJS-$(CONFIG_SWSCALE)                       += lswsutils.o
 
 OBJS-$(CONFIG_ACONVERT_FILTER)               += af_aconvert.o
 OBJS-$(CONFIG_ADELAY_FILTER)                 += af_adelay.o
 OBJS-$(CONFIG_AECHO_FILTER)                  += af_aecho.o
+OBJS-$(CONFIG_AEVAL_FILTER)                  += aeval.o
 OBJS-$(CONFIG_AFADE_FILTER)                  += af_afade.o
 OBJS-$(CONFIG_AFORMAT_FILTER)                += af_aformat.o
 OBJS-$(CONFIG_AINTERLEAVE_FILTER)            += f_interleave.o
@@ -71,7 +49,7 @@ OBJS-$(CONFIG_ASENDCMD_FILTER)               += f_sendcmd.o
 OBJS-$(CONFIG_ASETNSAMPLES_FILTER)           += af_asetnsamples.o
 OBJS-$(CONFIG_ASETPTS_FILTER)                += setpts.o
 OBJS-$(CONFIG_ASETRATE_FILTER)               += af_asetrate.o
-OBJS-$(CONFIG_ASETTB_FILTER)                 += f_settb.o
+OBJS-$(CONFIG_ASETTB_FILTER)                 += settb.o
 OBJS-$(CONFIG_ASHOWINFO_FILTER)              += af_ashowinfo.o
 OBJS-$(CONFIG_ASPLIT_FILTER)                 += split.o
 OBJS-$(CONFIG_ASTATS_FILTER)                 += af_astats.o
@@ -84,6 +62,7 @@ OBJS-$(CONFIG_BANDPASS_FILTER)               += af_biquads.o
 OBJS-$(CONFIG_BANDREJECT_FILTER)             += af_biquads.o
 OBJS-$(CONFIG_BASS_FILTER)                   += af_biquads.o
 OBJS-$(CONFIG_BIQUAD_FILTER)                 += af_biquads.o
+OBJS-$(CONFIG_BS2B_FILTER)                   += af_bs2b.o
 OBJS-$(CONFIG_CHANNELMAP_FILTER)             += af_channelmap.o
 OBJS-$(CONFIG_CHANNELSPLIT_FILTER)           += af_channelsplit.o
 OBJS-$(CONFIG_COMPAND_FILTER)                += af_compand.o
@@ -102,7 +81,7 @@ OBJS-$(CONFIG_TREBLE_FILTER)                 += af_biquads.o
 OBJS-$(CONFIG_VOLUME_FILTER)                 += af_volume.o
 OBJS-$(CONFIG_VOLUMEDETECT_FILTER)           += af_volumedetect.o
 
-OBJS-$(CONFIG_AEVALSRC_FILTER)               += asrc_aevalsrc.o
+OBJS-$(CONFIG_AEVALSRC_FILTER)               += aeval.o
 OBJS-$(CONFIG_ANULLSRC_FILTER)               += asrc_anullsrc.o
 OBJS-$(CONFIG_FLITE_FILTER)                  += asrc_flite.o
 OBJS-$(CONFIG_SINE_FILTER)                   += asrc_sine.o
@@ -126,6 +105,7 @@ OBJS-$(CONFIG_CROPDETECT_FILTER)             += vf_cropdetect.o
 OBJS-$(CONFIG_CURVES_FILTER)                 += vf_curves.o
 OBJS-$(CONFIG_DCTDNOIZ_FILTER)               += vf_dctdnoiz.o
 OBJS-$(CONFIG_DECIMATE_FILTER)               += vf_decimate.o
+OBJS-$(CONFIG_DEJUDDER_FILTER)               += vf_dejudder.o
 OBJS-$(CONFIG_DELOGO_FILTER)                 += vf_delogo.o
 OBJS-$(CONFIG_DESHAKE_FILTER)                += vf_deshake.o
 OBJS-$(CONFIG_DRAWBOX_FILTER)                += vf_drawbox.o
@@ -141,6 +121,7 @@ OBJS-$(CONFIG_FIELDORDER_FILTER)             += vf_fieldorder.o
 OBJS-$(CONFIG_FORMAT_FILTER)                 += vf_format.o
 OBJS-$(CONFIG_FRAMESTEP_FILTER)              += vf_framestep.o
 OBJS-$(CONFIG_FPS_FILTER)                    += vf_fps.o
+OBJS-$(CONFIG_FRAMEPACK_FILTER)              += vf_framepack.o
 OBJS-$(CONFIG_FREI0R_FILTER)                 += vf_frei0r.o
 OBJS-$(CONFIG_GEQ_FILTER)                    += vf_geq.o
 OBJS-$(CONFIG_GRADFUN_FILTER)                += vf_gradfun.o
@@ -190,8 +171,10 @@ OBJS-$(CONFIG_SETDAR_FILTER)                 += vf_aspect.o
 OBJS-$(CONFIG_SETFIELD_FILTER)               += vf_setfield.o
 OBJS-$(CONFIG_SETPTS_FILTER)                 += setpts.o
 OBJS-$(CONFIG_SETSAR_FILTER)                 += vf_aspect.o
-OBJS-$(CONFIG_SETTB_FILTER)                  += f_settb.o
+OBJS-$(CONFIG_SETTB_FILTER)                  += settb.o
 OBJS-$(CONFIG_SHOWINFO_FILTER)               += vf_showinfo.o
+OBJS-$(CONFIG_SHUFFLEPLANES_FILTER)          += vf_shuffleplanes.o
+OBJS-$(CONFIG_SIGNALSTATS_FILTER)            += vf_signalstats.o
 OBJS-$(CONFIG_SMARTBLUR_FILTER)              += vf_smartblur.o
 OBJS-$(CONFIG_SPLIT_FILTER)                  += split.o
 OBJS-$(CONFIG_SPP_FILTER)                    += vf_spp.o
@@ -213,6 +196,7 @@ OBJS-$(CONFIG_VIGNETTE_FILTER)               += vf_vignette.o
 OBJS-$(CONFIG_W3FDIF_FILTER)                 += vf_w3fdif.o
 OBJS-$(CONFIG_YADIF_FILTER)                  += vf_yadif.o
 OBJS-$(CONFIG_ZMQ_FILTER)                    += f_zmq.o
+OBJS-$(CONFIG_ZOOMPAN_FILTER)                += vf_zoompan.o
 
 OBJS-$(CONFIG_CELLAUTO_FILTER)               += vsrc_cellauto.o
 OBJS-$(CONFIG_COLOR_FILTER)                  += vsrc_testsrc.o
@@ -242,12 +226,16 @@ OBJS-$(CONFIG_MP_FILTER) += libmpcodecs/vf_uspp.o
 # multimedia filters
 OBJS-$(CONFIG_AVECTORSCOPE_FILTER)           += avf_avectorscope.o
 OBJS-$(CONFIG_CONCAT_FILTER)                 += avf_concat.o
+OBJS-$(CONFIG_SHOWCQT_FILTER)                += avf_showcqt.o
 OBJS-$(CONFIG_SHOWSPECTRUM_FILTER)           += avf_showspectrum.o
 OBJS-$(CONFIG_SHOWWAVES_FILTER)              += avf_showwaves.o
 
 # multimedia sources
 OBJS-$(CONFIG_AMOVIE_FILTER)                 += src_movie.o
 OBJS-$(CONFIG_MOVIE_FILTER)                  += src_movie.o
+
+# Windows resource file
+SLIBOBJS-$(HAVE_GNU_WINDRES)                 += avfilterres.o
 
 SKIPHEADERS-$(CONFIG_LIBVIDSTAB)             += vidstabutils.h
 SKIPHEADERS-$(CONFIG_OPENCL)                 += opencl_internal.h deshake_opencl_kernel.h unsharp_opencl_kernel.h

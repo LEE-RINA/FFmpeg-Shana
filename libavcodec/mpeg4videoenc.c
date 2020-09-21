@@ -23,6 +23,7 @@
 #include "libavutil/attributes.h"
 #include "libavutil/log.h"
 #include "libavutil/opt.h"
+#include "mpegutils.h"
 #include "mpegvideo.h"
 #include "h263.h"
 #include "mpeg4video.h"
@@ -277,19 +278,19 @@ static inline void mpeg4_encode_dc(PutBitContext *s, int level, int n)
 
     if (n < 4) {
         /* luminance */
-        put_bits(&s->pb, ff_mpeg4_DCtab_lum[size][1], ff_mpeg4_DCtab_lum[size][0]);
+        put_bits(s, ff_mpeg4_DCtab_lum[size][1], ff_mpeg4_DCtab_lum[size][0]);
     } else {
         /* chrominance */
-        put_bits(&s->pb, ff_mpeg4_DCtab_chrom[size][1], ff_mpeg4_DCtab_chrom[size][0]);
+        put_bits(s, ff_mpeg4_DCtab_chrom[size][1], ff_mpeg4_DCtab_chrom[size][0]);
     }
 
     /* encode remaining bits */
     if (size > 0) {
         if (level < 0)
             level = (-level) ^ ((1 << size) - 1);
-        put_bits(&s->pb, size, level);
+        put_bits(s, size, level);
         if (size > 8)
-            put_bits(&s->pb, 1, 1);
+            put_bits(s, 1, 1);
     }
 #endif
 }
@@ -484,7 +485,7 @@ static inline int get_b_cbp(MpegEncContext *s, int16_t block[6][64],
         for (i = 0; i < 6; i++) {
             if (s->block_last_index[i] >= 0 && ((cbp >> (5 - i)) & 1) == 0) {
                 s->block_last_index[i] = -1;
-                s->dsp.clear_block(s->block[i]);
+                s->bdsp.clear_block(s->block[i]);
             }
         }
     } else {
@@ -670,7 +671,7 @@ void ff_mpeg4_encode_mb(MpegEncContext *s, int16_t block[6][64],
                     y = s->mb_y * 16;
 
                     offset = x + y * s->linesize;
-                    p_pic  = s->new_picture.f.data[0] + offset;
+                    p_pic  = s->new_picture.f->data[0] + offset;
 
                     s->mb_skipped = 1;
                     for (i = 0; i < s->max_b_frames; i++) {
@@ -678,10 +679,10 @@ void ff_mpeg4_encode_mb(MpegEncContext *s, int16_t block[6][64],
                         int diff;
                         Picture *pic = s->reordered_input_picture[i + 1];
 
-                        if (!pic || pic->f.pict_type != AV_PICTURE_TYPE_B)
+                        if (!pic || pic->f->pict_type != AV_PICTURE_TYPE_B)
                             break;
 
-                        b_pic = pic->f.data[0] + offset;
+                        b_pic = pic->f->data[0] + offset;
                         if (!pic->shared)
                             b_pic += INPLACE_OFFSET;
 
@@ -915,9 +916,9 @@ static void mpeg4_encode_gop_header(MpegEncContext *s)
     put_bits(&s->pb, 16, 0);
     put_bits(&s->pb, 16, GOP_STARTCODE);
 
-    time = s->current_picture_ptr->f.pts;
+    time = s->current_picture_ptr->f->pts;
     if (s->reordered_input_picture[1])
-        time = FFMIN(time, s->reordered_input_picture[1]->f.pts);
+        time = FFMIN(time, s->reordered_input_picture[1]->f->pts);
     time = time * s->avctx->time_base.num;
     s->last_time_base = FFUDIV(time, s->avctx->time_base.den);
 
@@ -1048,9 +1049,9 @@ static void mpeg4_encode_vol_header(MpegEncContext *s,
     put_bits(&s->pb, 1, s->progressive_sequence ? 0 : 1);
     put_bits(&s->pb, 1, 1);             /* obmc disable */
     if (vo_ver_id == 1)
-        put_bits(&s->pb, 1, s->vol_sprite_usage);       /* sprite enable */
+        put_bits(&s->pb, 1, 0);       /* sprite enable */
     else
-        put_bits(&s->pb, 2, s->vol_sprite_usage);       /* sprite enable */
+        put_bits(&s->pb, 2, 0);       /* sprite enable */
 
     put_bits(&s->pb, 1, 0);             /* not 8 bit == false */
     put_bits(&s->pb, 1, s->mpeg_quant); /* quant type= (0=h263 style)*/
@@ -1063,8 +1064,7 @@ static void mpeg4_encode_vol_header(MpegEncContext *s,
     if (vo_ver_id != 1)
         put_bits(&s->pb, 1, s->quarter_sample);
     put_bits(&s->pb, 1, 1);             /* complexity estimation disable */
-    s->resync_marker = s->rtp_mode;
-    put_bits(&s->pb, 1, s->resync_marker ? 0 : 1); /* resync marker disable */
+    put_bits(&s->pb, 1, s->rtp_mode ? 0 : 1); /* resync marker disable */
     put_bits(&s->pb, 1, s->data_partitioning ? 1 : 0);
     if (s->data_partitioning)
         put_bits(&s->pb, 1, 0);         /* no rvlc */
@@ -1121,13 +1121,12 @@ void ff_mpeg4_encode_picture_header(MpegEncContext *s, int picture_number)
     put_bits(&s->pb, s->time_increment_bits, time_mod); /* time increment */
     put_bits(&s->pb, 1, 1);                             /* marker */
     put_bits(&s->pb, 1, 1);                             /* vop coded */
-    if (s->pict_type == AV_PICTURE_TYPE_P ||
-        (s->pict_type == AV_PICTURE_TYPE_S && s->vol_sprite_usage == GMC_SPRITE)) {
+    if (s->pict_type == AV_PICTURE_TYPE_P) {
         put_bits(&s->pb, 1, s->no_rounding);    /* rounding type */
     }
     put_bits(&s->pb, 3, 0);     /* intra dc VLC threshold */
     if (!s->progressive_sequence) {
-        put_bits(&s->pb, 1, s->current_picture_ptr->f.top_field_first);
+        put_bits(&s->pb, 1, s->current_picture_ptr->f->top_field_first);
         put_bits(&s->pb, 1, s->alternate_scan);
     }
     // FIXME sprite stuff

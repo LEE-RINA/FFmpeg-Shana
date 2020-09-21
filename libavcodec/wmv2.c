@@ -28,6 +28,7 @@
 av_cold void ff_wmv2_common_init(Wmv2Context * w){
     MpegEncContext * const s= &w->s;
 
+    ff_blockdsp_init(&s->bdsp, s->avctx);
     ff_wmv2dsp_init(&w->wdsp);
     s->dsp.idct_permutation_type = w->wdsp.idct_perm;
     ff_init_scantable_permutation(s->dsp.idct_permutation,
@@ -60,12 +61,12 @@ static void wmv2_add_block(Wmv2Context *w, int16_t *block1, uint8_t *dst, int st
     case 1:
         ff_simple_idct84_add(dst           , stride, block1);
         ff_simple_idct84_add(dst + 4*stride, stride, w->abt_block2[n]);
-        s->dsp.clear_block(w->abt_block2[n]);
+        s->bdsp.clear_block(w->abt_block2[n]);
         break;
     case 2:
         ff_simple_idct48_add(dst           , stride, block1);
         ff_simple_idct48_add(dst + 4       , stride, w->abt_block2[n]);
-        s->dsp.clear_block(w->abt_block2[n]);
+        s->bdsp.clear_block(w->abt_block2[n]);
         break;
     default:
         av_log(s->avctx, AV_LOG_ERROR, "internal error in WMV2 abt\n");
@@ -117,40 +118,32 @@ void ff_mspel_motion(MpegEncContext *s,
     uvlinesize = s->uvlinesize;
     ptr = ref_picture[0] + (src_y * linesize) + src_x;
 
-        if(src_x<1 || src_y<1 || src_x + 17  >= s->h_edge_pos
-                              || src_y + h+1 >= v_edge_pos){
-            s->vdsp.emulated_edge_mc(s->edge_emu_buffer,
-                                     ptr - 1 - s->linesize,
-                                     s->linesize, s->linesize,
-                                     19, 19,
-                                     src_x - 1, src_y - 1,
-                                     s->h_edge_pos, s->v_edge_pos);
-            ptr= s->edge_emu_buffer + 1 + s->linesize;
-            emu=1;
-        }
+    if(src_x<1 || src_y<1 || src_x + 17  >= s->h_edge_pos
+                          || src_y + h+1 >= v_edge_pos){
+        s->vdsp.emulated_edge_mc(s->edge_emu_buffer,
+                                 ptr - 1 - s->linesize,
+                                 s->linesize, s->linesize,
+                                 19, 19,
+                                 src_x - 1, src_y - 1,
+                                 s->h_edge_pos, s->v_edge_pos);
+        ptr= s->edge_emu_buffer + 1 + s->linesize;
+        emu=1;
+    }
 
-    s->dsp.put_mspel_pixels_tab[dxy](dest_y             , ptr             , linesize);
-    s->dsp.put_mspel_pixels_tab[dxy](dest_y+8           , ptr+8           , linesize);
-    s->dsp.put_mspel_pixels_tab[dxy](dest_y  +8*linesize, ptr  +8*linesize, linesize);
-    s->dsp.put_mspel_pixels_tab[dxy](dest_y+8+8*linesize, ptr+8+8*linesize, linesize);
+    w->wdsp.put_mspel_pixels_tab[dxy](dest_y,                    ptr,                    linesize);
+    w->wdsp.put_mspel_pixels_tab[dxy](dest_y     + 8,            ptr     + 8,            linesize);
+    w->wdsp.put_mspel_pixels_tab[dxy](dest_y     + 8 * linesize, ptr     + 8 * linesize, linesize);
+    w->wdsp.put_mspel_pixels_tab[dxy](dest_y + 8 + 8 * linesize, ptr + 8 + 8 * linesize, linesize);
 
     if(s->flags&CODEC_FLAG_GRAY) return;
 
-    if (s->out_format == FMT_H263) {
-        dxy = 0;
-        if ((motion_x & 3) != 0)
-            dxy |= 1;
-        if ((motion_y & 3) != 0)
-            dxy |= 2;
-        mx = motion_x >> 2;
-        my = motion_y >> 2;
-    } else {
-        mx = motion_x / 2;
-        my = motion_y / 2;
-        dxy = ((my & 1) << 1) | (mx & 1);
-        mx >>= 1;
-        my >>= 1;
-    }
+    dxy = 0;
+    if ((motion_x & 3) != 0)
+        dxy |= 1;
+    if ((motion_y & 3) != 0)
+        dxy |= 2;
+    mx = motion_x >> 2;
+    my = motion_y >> 2;
 
     src_x = s->mb_x * 8 + mx;
     src_y = s->mb_y * 8 + my;

@@ -44,8 +44,8 @@ streams of this type.
 If @var{stream_index} is given, then it matches the stream with number @var{stream_index}
 in the program with the id @var{program_id}. Otherwise, it matches all streams in the
 program.
-@item #@var{stream_id}
-Matches the stream by a format-specific ID.
+@item #@var{stream_id} or i:@var{stream_id}
+Match the stream by stream id (e.g. PID in MPEG-TS container).
 @end table
 
 @section Generic options
@@ -189,10 +189,19 @@ following option is recognized:
 set the file name to use for the report; @code{%p} is expanded to the name
 of the program, @code{%t} is expanded to a timestamp, @code{%%} is expanded
 to a plain @code{%}
+@item level
+set the log level
 @end table
 
 Errors in parsing the environment variable are not fatal, and will not
 appear in the report.
+
+@item -hide_banner
+Suppress printing banner.
+
+All FFmpeg tools will normally show a copyright notice, build options
+and library versions. This option can be used to suppress printing
+this information.
 
 @item -cpuflags flags (@emph{global})
 Allows setting and clearing cpu flags. This option is intended
@@ -249,6 +258,10 @@ Possible flags for this option are:
 @item k8
 @end table
 @end table
+
+@item -opencl_bench
+Benchmark all available OpenCL devices and show the results. This option
+is only available when FFmpeg has been compiled with @code{--enable-opencl}.
 
 @item -opencl_options options (@emph{global})
 Set OpenCL environment options. This option is only available when

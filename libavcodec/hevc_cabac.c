@@ -27,12 +27,12 @@
 #include "cabac_functions.h"
 #include "hevc.h"
 
-#define CABAC_MAX_BIN 100
+#define CABAC_MAX_BIN 31
 
 /**
  * number of bin by SyntaxElement.
  */
-static const int8_t num_bins_in_se[] = {
+av_unused static const int8_t num_bins_in_se[] = {
      1, // sao_merge_flag
      1, // sao_type_idx
      0, // sao_eo_class
@@ -537,7 +537,7 @@ static void cabac_init_state(HEVCContext *s)
         int init_value = init_values[init_type][i];
         int m = (init_value >> 4) * 5 - 45;
         int n = ((init_value & 15) << 3) - 16;
-        int pre = 2 * (((m * av_clip_c(s->sh.slice_qp, 0, 51)) >> 4) + n) - 127;
+        int pre = 2 * (((m * av_clip(s->sh.slice_qp, 0, 51)) >> 4) + n) - 127;
 
         pre ^= pre >> 31;
         if (pre > 124)
@@ -1114,7 +1114,7 @@ void ff_hevc_hls_residual_coding(HEVCContext *s, int x0, int y0,
             else
                 offset = s->pps->cr_qp_offset + s->sh.slice_cr_qp_offset;
 
-            qp_i = av_clip_c(qp_y + offset, - s->sps->qp_bd_offset, 57);
+            qp_i = av_clip(qp_y + offset, - s->sps->qp_bd_offset, 57);
             if (qp_i < 30)
                 qp = qp_i;
             else if (qp_i > 43)
@@ -1388,8 +1388,21 @@ void ff_hevc_hls_residual_coding(HEVCContext *s, int x0, int y0,
             s->hevcdsp.transform_skip(dst, coeffs, stride);
         else if (lc->cu.pred_mode == MODE_INTRA && c_idx == 0 && log2_trafo_size == 2)
             s->hevcdsp.transform_4x4_luma_add(dst, coeffs, stride);
-        else
-            s->hevcdsp.transform_add[log2_trafo_size-2](dst, coeffs, stride);
+        else {
+            int max_xy = FFMAX(last_significant_coeff_x, last_significant_coeff_y);
+            if (max_xy == 0)
+                s->hevcdsp.transform_dc_add[log2_trafo_size-2](dst, coeffs, stride);
+            else {
+                int col_limit = last_significant_coeff_x + last_significant_coeff_y + 4;
+                if (max_xy < 4)
+                    col_limit = FFMIN(4, col_limit);
+                else if (max_xy < 8)
+                    col_limit = FFMIN(8, col_limit);
+                else if (max_xy < 12)
+                    col_limit = FFMIN(24, col_limit);
+                s->hevcdsp.transform_add[log2_trafo_size-2](dst, coeffs, stride, col_limit);
+            }
+        }
     }
 }
 

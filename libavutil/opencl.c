@@ -27,15 +27,20 @@
 #include "avassert.h"
 #include "opt.h"
 
+#if HAVE_THREADS
 #if HAVE_PTHREADS
-
 #include <pthread.h>
-static pthread_mutex_t atomic_opencl_lock = PTHREAD_MUTEX_INITIALIZER;
+#elif HAVE_W32THREADS
+#include "compat/w32pthreads.h"
+#elif HAVE_OS2THREADS
+#include "compat/os2threads.h"
+#endif
+#include "atomic.h"
 
-#define LOCK_OPENCL pthread_mutex_lock(&atomic_opencl_lock)
-#define UNLOCK_OPENCL pthread_mutex_unlock(&atomic_opencl_lock)
-
-#elif !HAVE_THREADS
+static volatile pthread_mutex_t *atomic_opencl_lock = NULL;
+#define LOCK_OPENCL pthread_mutex_lock(atomic_opencl_lock)
+#define UNLOCK_OPENCL pthread_mutex_unlock(atomic_opencl_lock)
+#else
 #define LOCK_OPENCL
 #define UNLOCK_OPENCL
 #endif
@@ -98,7 +103,7 @@ static const AVClass openclutils_class = {
 
 static OpenclContext opencl_ctx = {&openclutils_class};
 
-static const cl_device_type device_type[] = {CL_DEVICE_TYPE_GPU, CL_DEVICE_TYPE_CPU, CL_DEVICE_TYPE_DEFAULT};
+static const cl_device_type device_type[] = {CL_DEVICE_TYPE_GPU, CL_DEVICE_TYPE_CPU};
 
 typedef struct {
     int err_code;
@@ -169,7 +174,7 @@ static const OpenclErrorMsg opencl_err_msg[] = {
 const char *av_opencl_errstr(cl_int status)
 {
     int i;
-    for (i = 0; i < sizeof(opencl_err_msg); i++) {
+    for (i = 0; i < FF_ARRAY_ELEMS(opencl_err_msg); i++) {
         if (opencl_err_msg[i].err_code == status)
             return opencl_err_msg[i].err_str;
     }
@@ -321,9 +326,32 @@ void av_opencl_free_device_list(AVOpenCLDeviceList **device_list)
     av_freep(device_list);
 }
 
+static inline int init_opencl_mtx(void)
+{
+#if HAVE_THREADS
+    if (!atomic_opencl_lock) {
+        int err;
+        pthread_mutex_t *tmp = av_malloc(sizeof(pthread_mutex_t));
+        if (!tmp)
+            return AVERROR(ENOMEM);
+        if ((err = pthread_mutex_init(tmp, NULL))) {
+            av_free(tmp);
+            return AVERROR(err);
+        }
+        if (avpriv_atomic_ptr_cas(&atomic_opencl_lock, NULL, tmp)) {
+            pthread_mutex_destroy(tmp);
+            av_free(tmp);
+        }
+    }
+#endif
+    return 0;
+}
+
 int av_opencl_set_option(const char *key, const char *val)
 {
-    int ret = 0;
+    int ret = init_opencl_mtx( );
+    if (ret < 0)
+        return ret;
     LOCK_OPENCL;
     if (!opencl_ctx.opt_init_flag) {
         av_opt_set_defaults(&opencl_ctx);
@@ -368,7 +396,9 @@ void av_opencl_free_external_env(AVOpenCLExternalEnv **ext_opencl_env)
 
 int av_opencl_register_kernel_code(const char *kernel_code)
 {
-    int i, ret = 0;
+    int i, ret = init_opencl_mtx( );
+    if (ret < 0)
+        return ret;
     LOCK_OPENCL;
     if (opencl_ctx.kernel_code_count >= MAX_KERNEL_CODE_NUM) {
         av_log(&opencl_ctx, AV_LOG_ERROR,
@@ -553,7 +583,9 @@ static int init_opencl_env(OpenclContext *opencl_ctx, AVOpenCLExternalEnv *ext_o
 
 int av_opencl_init(AVOpenCLExternalEnv *ext_opencl_env)
 {
-    int ret = 0;
+    int ret = init_opencl_mtx( );
+    if (ret < 0)
+        return ret;
     LOCK_OPENCL;
     if (!opencl_ctx.init_count) {
         if (!opencl_ctx.opt_init_flag) {
@@ -760,4 +792,46 @@ int av_opencl_buffer_read_image(uint8_t **dst_data, int *plane_size, int plane_n
         return AVERROR_EXTERNAL;
     }
     return 0;
+}
+
+int64_t av_opencl_benchmark(AVOpenCLDeviceNode *device_node, cl_platform_id platform,
+                            int64_t (*benchmark)(AVOpenCLExternalEnv *ext_opencl_env))
+{
+    int64_t ret = 0;
+    cl_int status;
+    cl_context_properties cps[3];
+    AVOpenCLExternalEnv *ext_opencl_env = NULL;
+
+    ext_opencl_env = av_opencl_alloc_external_env();
+    ext_opencl_env->device_id = device_node->device_id;
+    ext_opencl_env->device_type = device_node->device_type;
+    av_log(&opencl_ctx, AV_LOG_VERBOSE, "Performing test on OpenCL device %s\n",
+           device_node->device_name);
+
+    cps[0] = CL_CONTEXT_PLATFORM;
+    cps[1] = (cl_context_properties)platform;
+    cps[2] = 0;
+    ext_opencl_env->context = clCreateContextFromType(cps, ext_opencl_env->device_type,
+                                                      NULL, NULL, &status);
+    if (status != CL_SUCCESS || !ext_opencl_env->context) {
+        ret = AVERROR_EXTERNAL;
+        goto end;
+    }
+    ext_opencl_env->command_queue = clCreateCommandQueue(ext_opencl_env->context,
+                                                         ext_opencl_env->device_id, 0, &status);
+    if (status != CL_SUCCESS || !ext_opencl_env->command_queue) {
+        ret = AVERROR_EXTERNAL;
+        goto end;
+    }
+    ret = benchmark(ext_opencl_env);
+    if (ret < 0)
+        av_log(&opencl_ctx, AV_LOG_ERROR, "Benchmark failed with OpenCL device %s\n",
+               device_node->device_name);
+end:
+    if (ext_opencl_env->command_queue)
+        clReleaseCommandQueue(ext_opencl_env->command_queue);
+    if (ext_opencl_env->context)
+        clReleaseContext(ext_opencl_env->context);
+    av_opencl_free_external_env(&ext_opencl_env);
+    return ret;
 }

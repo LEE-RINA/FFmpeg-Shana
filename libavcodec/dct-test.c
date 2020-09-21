@@ -47,10 +47,6 @@
 #include "x86/idct_xvid.h"
 #include "dctref.h"
 
-// BFIN
-void ff_bfin_idct(int16_t *block);
-void ff_bfin_fdct(int16_t *block);
-
 // ALTIVEC
 void ff_fdct_altivec(int16_t *block);
 
@@ -92,13 +88,21 @@ static const struct algo fdct_tab[] = {
     { "altivecfdct",    ff_fdct_altivec,       NO_PERM,   AV_CPU_FLAG_ALTIVEC },
 #endif
 
-#if ARCH_BFIN
-    { "BFINfdct",       ff_bfin_fdct,          NO_PERM  },
-#endif
-
     { 0 }
 };
 
+static void ff_prores_idct_wrap(int16_t *dst){
+    DECLARE_ALIGNED(16, static int16_t, qmat)[64];
+    int i;
+
+    for(i=0; i<64; i++){
+        qmat[i]=4;
+    }
+    ff_prores_idct(dst, qmat);
+    for(i=0; i<64; i++) {
+         dst[i] -= 512;
+    }
+}
 #if ARCH_X86_64 && HAVE_MMX && HAVE_YASM
 void ff_prores_idct_put_10_sse2(uint16_t *dst, int linesize,
                                 int16_t *block, int16_t *qmat);
@@ -113,6 +117,10 @@ static void ff_prores_idct_put_10_sse2_wrap(int16_t *dst){
         tmp[i]= dst[i];
     }
     ff_prores_idct_put_10_sse2(dst, 16, tmp, qmat);
+
+    for(i=0; i<64; i++) {
+         dst[i] -= 512;
+    }
 }
 #endif
 
@@ -121,6 +129,7 @@ static const struct algo idct_tab[] = {
     { "REF-DBL",        ff_ref_idct,           NO_PERM  },
     { "INT",            ff_j_rev_dct,          MMX_PERM },
     { "SIMPLE-C",       ff_simple_idct_8,      NO_PERM  },
+    { "PR-C",           ff_prores_idct_wrap,   NO_PERM, 0, 1 },
 
 #if HAVE_MMX_INLINE
     { "SIMPLE-MMX",     ff_simple_idct_mmx,  MMX_SIMPLE_PERM, AV_CPU_FLAG_MMX },
@@ -136,10 +145,6 @@ static const struct algo idct_tab[] = {
 #endif
 #endif
 
-#if ARCH_BFIN
-    { "BFINidct",       ff_bfin_idct,          NO_PERM  },
-#endif
-
 #if ARCH_ARM
     { "SIMPLE-ARM",     ff_simple_idct_arm,    NO_PERM  },
     { "INT-ARM",        ff_j_rev_dct_arm,      MMX_PERM },
@@ -150,7 +155,7 @@ static const struct algo idct_tab[] = {
 #if HAVE_ARMV6
     { "SIMPLE-ARMV6",   ff_simple_idct_armv6,  MMX_PERM,  AV_CPU_FLAG_ARMV6   },
 #endif
-#if HAVE_NEON
+#if HAVE_NEON && ARCH_ARM
     { "SIMPLE-NEON",    ff_simple_idct_neon, PARTTRANS_PERM, AV_CPU_FLAG_NEON },
 #endif
 
@@ -280,6 +285,9 @@ static int dct_error(const struct algo *dct, int test, int is_idct, int speed, c
         }
 
         ref(block1);
+        if (!strcmp(dct->name, "PR-SSE2"))
+            for (i = 0; i < 64; i++)
+                block1[i] = av_clip(block1[i], 4-512, 1019-512);
 
         blockSumErr = 0;
         for (i = 0; i < 64; i++) {
@@ -328,7 +336,7 @@ static int dct_error(const struct algo *dct, int test, int is_idct, int speed, c
     init_block(block, test, is_idct, &prng, vals);
     permute(block1, block, dct->format);
 
-    ti = av_gettime();
+    ti = av_gettime_relative();
     it1 = 0;
     do {
         for (it = 0; it < NB_ITS_SPEED; it++) {
@@ -337,7 +345,7 @@ static int dct_error(const struct algo *dct, int test, int is_idct, int speed, c
         }
         emms_c();
         it1 += NB_ITS_SPEED;
-        ti1 = av_gettime() - ti;
+        ti1 = av_gettime_relative() - ti;
     } while (ti1 < 1000000);
 
     printf("%s %s: %0.1f kdct/s\n", is_idct ? "IDCT" : "DCT", dct->name,
@@ -488,7 +496,7 @@ static void idct248_error(const char *name,
     if (!speed)
         return;
 
-    ti = av_gettime();
+    ti = av_gettime_relative();
     it1 = 0;
     do {
         for (it = 0; it < NB_ITS_SPEED; it++) {
@@ -498,7 +506,7 @@ static void idct248_error(const char *name,
         }
         emms_c();
         it1 += NB_ITS_SPEED;
-        ti1 = av_gettime() - ti;
+        ti1 = av_gettime_relative() - ti;
     } while (ti1 < 1000000);
 
     printf("%s %s: %0.1f kdct/s\n", 1 ? "IDCT248" : "DCT248", name,

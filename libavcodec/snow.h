@@ -24,6 +24,7 @@
 
 #include "dsputil.h"
 #include "hpeldsp.h"
+#include "qpeldsp.h"
 #include "snow_dwt.h"
 
 #include "rangecoder.h"
@@ -111,6 +112,7 @@ typedef struct SnowContext{
     RangeCoder c;
     DSPContext dsp;
     HpelDSPContext hdsp;
+    QpelDSPContext qdsp;
     VideoDSPContext vdsp;
     H264QpelContext h264qpel;
     SnowDWTContext dwt;
@@ -318,7 +320,8 @@ static av_always_inline void add_yblock(SnowContext *s, int sliced, slice_buffer
         if(!sliced && !offset_dst)
             dst -= src_x;
         src_x=0;
-    }else if(src_x + b_w > w){
+    }
+    if(src_x + b_w > w){
         b_w = w - src_x;
     }
     if(src_y<0){
@@ -327,7 +330,8 @@ static av_always_inline void add_yblock(SnowContext *s, int sliced, slice_buffer
         if(!sliced && !offset_dst)
             dst -= src_y*dst_stride;
         src_y=0;
-    }else if(src_y + b_h> h){
+    }
+    if(src_y + b_h> h){
         b_h = h - src_y;
     }
 

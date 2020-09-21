@@ -34,6 +34,7 @@
 #include "mpegvideo.h"
 #include "h263.h"
 #include "mathops.h"
+#include "mpegutils.h"
 #include "unary.h"
 #include "flv.h"
 #include "mpeg4video.h"
@@ -565,10 +566,6 @@ void ff_h263_encode_mb(MpegEncContext * s,
                 else
                     level = (level - (scale>>1))/scale;
 
-                /* AIC can change CBP */
-                if (level == 0 && s->block_last_index[i] == 0)
-                    s->block_last_index[i] = -1;
-
                 if(!s->modified_quant){
                     if (level < -127)
                         level = -127;
@@ -591,7 +588,9 @@ void ff_h263_encode_mb(MpegEncContext * s,
 
                 /* Update AC/DC tables */
                 *dc_ptr[i] = rec_intradc[i];
-                if (s->block_last_index[i] >= 0)
+                /* AIC can change CBP */
+                if (s->block_last_index[i] > 0 ||
+                    (s->block_last_index[i] == 0 && level !=0))
                     cbp |= 1 << (5 - i);
             }
         }else{

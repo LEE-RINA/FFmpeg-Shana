@@ -30,7 +30,6 @@
 #define BITSTREAM_READER_LE
 #include "avcodec.h"
 #include "get_bits.h"
-#include "dsputil.h"
 #include "ivi_dsp.h"
 #include "ivi_common.h"
 #include "indeo5data.h"
@@ -290,14 +289,18 @@ static int decode_gop_header(IVI45DecContext *ctx, AVCodecContext *avctx)
  *
  *  @param[in,out]  gb  the GetBit context
  */
-static inline void skip_hdr_extension(GetBitContext *gb)
+static inline int skip_hdr_extension(GetBitContext *gb)
 {
     int i, len;
 
     do {
         len = get_bits(gb, 8);
+        if (8*len > get_bits_left(gb))
+            return AVERROR_INVALIDDATA;
         for (i = 0; i < len; i++) skip_bits(gb, 8);
     } while(len);
+
+    return 0;
 }
 
 
@@ -336,7 +339,7 @@ static int decode_pic_hdr(IVI45DecContext *ctx, AVCodecContext *avctx)
     }
 
     if (ctx->frame_type == FRAMETYPE_INTER_SCAL && !ctx->is_scalable) {
-        av_log(avctx, AV_LOG_ERROR, "Scalable inter frame in non scaleable stream\n");
+        av_log(avctx, AV_LOG_ERROR, "Scalable inter frame in non scalable stream\n");
         ctx->frame_type = FRAMETYPE_INTER;
         return AVERROR_INVALIDDATA;
     }

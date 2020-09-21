@@ -88,7 +88,7 @@ int ff_snow_alloc_blocks(SnowContext *s){
     s->b_height= h;
 
     av_free(s->block);
-    s->block= av_mallocz(w * h * sizeof(BlockNode) << (s->block_max_depth*2));
+    s->block= av_mallocz_array(w * h,  sizeof(BlockNode) << (s->block_max_depth*2));
     if (!s->block)
         return AVERROR(ENOMEM);
 
@@ -358,9 +358,13 @@ void ff_snow_pred_block(SnowContext *s, uint8_t *dst, uint8_t *tmp, ptrdiff_t st
 
         av_assert2(s->chroma_h_shift == s->chroma_v_shift); // only one mv_scale
 
-        av_assert2(b_w>1 && b_h>1);
         av_assert2((tab_index>=0 && tab_index<4) || b_w==32);
-        if((dx&3) || (dy&3) || !(b_w == b_h || 2*b_w == b_h || b_w == 2*b_h) || (b_w&(b_w-1)) || !s->plane[plane_index].fast_mc )
+        if(    (dx&3) || (dy&3)
+            || !(b_w == b_h || 2*b_w == b_h || b_w == 2*b_h)
+            || (b_w&(b_w-1))
+            || b_w == 1
+            || b_h == 1
+            || !s->plane[plane_index].fast_mc )
             mc_block(&s->plane[plane_index], dst, src, stride, b_w, b_h, dx, dy);
         else if(b_w==32){
             int y;
@@ -411,11 +415,11 @@ av_cold int ff_snow_common_init(AVCodecContext *avctx){
     ff_h264qpel_init(&s->h264qpel, 8);
 
 #define mcf(dx,dy)\
-    s->dsp.put_qpel_pixels_tab       [0][dy+dx/4]=\
-    s->dsp.put_no_rnd_qpel_pixels_tab[0][dy+dx/4]=\
+    s->qdsp.put_qpel_pixels_tab       [0][dy+dx/4]=\
+    s->qdsp.put_no_rnd_qpel_pixels_tab[0][dy+dx/4]=\
         s->h264qpel.put_h264_qpel_pixels_tab[0][dy+dx/4];\
-    s->dsp.put_qpel_pixels_tab       [1][dy+dx/4]=\
-    s->dsp.put_no_rnd_qpel_pixels_tab[1][dy+dx/4]=\
+    s->qdsp.put_qpel_pixels_tab       [1][dy+dx/4]=\
+    s->qdsp.put_no_rnd_qpel_pixels_tab[1][dy+dx/4]=\
         s->h264qpel.put_h264_qpel_pixels_tab[1][dy+dx/4];
 
     mcf( 0, 0)
@@ -455,11 +459,11 @@ av_cold int ff_snow_common_init(AVCodecContext *avctx){
     width= s->avctx->width;
     height= s->avctx->height;
 
-    FF_ALLOCZ_OR_GOTO(avctx, s->spatial_idwt_buffer, width * height * sizeof(IDWTELEM), fail);
-    FF_ALLOCZ_OR_GOTO(avctx, s->spatial_dwt_buffer,  width * height * sizeof(DWTELEM),  fail); //FIXME this does not belong here
-    FF_ALLOCZ_OR_GOTO(avctx, s->temp_dwt_buffer,     width * sizeof(DWTELEM),  fail);
-    FF_ALLOCZ_OR_GOTO(avctx, s->temp_idwt_buffer,    width * sizeof(IDWTELEM), fail);
-    FF_ALLOC_OR_GOTO(avctx,  s->run_buffer,          ((width + 1) >> 1) * ((height + 1) >> 1) * sizeof(*s->run_buffer), fail);
+    FF_ALLOCZ_ARRAY_OR_GOTO(avctx, s->spatial_idwt_buffer, width, height * sizeof(IDWTELEM), fail);
+    FF_ALLOCZ_ARRAY_OR_GOTO(avctx, s->spatial_dwt_buffer,  width, height * sizeof(DWTELEM),  fail); //FIXME this does not belong here
+    FF_ALLOCZ_ARRAY_OR_GOTO(avctx, s->temp_dwt_buffer,     width, sizeof(DWTELEM),  fail);
+    FF_ALLOCZ_ARRAY_OR_GOTO(avctx, s->temp_idwt_buffer,    width, sizeof(IDWTELEM), fail);
+    FF_ALLOC_ARRAY_OR_GOTO(avctx,  s->run_buffer,          ((width + 1) >> 1), ((height + 1) >> 1) * sizeof(*s->run_buffer), fail);
 
     for(i=0; i<MAX_REF_FRAMES; i++) {
         for(j=0; j<MAX_REF_FRAMES; j++)
@@ -488,7 +492,7 @@ int ff_snow_common_init_after_header(AVCodecContext *avctx) {
         if ((ret = ff_get_buffer(s->avctx, s->mconly_picture,
                                  AV_GET_BUFFER_FLAG_REF)) < 0)
             return ret;
-        FF_ALLOCZ_OR_GOTO(avctx, s->scratchbuf, FFMAX(s->mconly_picture->linesize[0], 2*avctx->width+256)*7*MB_SIZE, fail);
+        FF_ALLOCZ_ARRAY_OR_GOTO(avctx, s->scratchbuf, FFMAX(s->mconly_picture->linesize[0], 2*avctx->width+256), 7*MB_SIZE, fail);
         emu_buf_size = FFMAX(s->mconly_picture->linesize[0], 2*avctx->width+256) * (2 * MB_SIZE + HTAPS_MAX - 1);
         FF_ALLOC_OR_GOTO(avctx, s->emu_edge_buffer, emu_buf_size, fail);
     }
@@ -537,7 +541,7 @@ int ff_snow_common_init_after_header(AVCodecContext *avctx) {
                     b->parent= &s->plane[plane_index].band[level-1][orientation];
                 //FIXME avoid this realloc
                 av_freep(&b->x_coeff);
-                b->x_coeff=av_mallocz(((b->width+1) * b->height+1)*sizeof(x_and_coeff));
+                b->x_coeff=av_mallocz_array(((b->width+1) * b->height+1), sizeof(x_and_coeff));
                 if (!b->x_coeff)
                     goto fail;
             }

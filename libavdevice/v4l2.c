@@ -351,12 +351,12 @@ static int mmap_init(AVFormatContext *ctx)
         return AVERROR(ENOMEM);
     }
     s->buffers = req.count;
-    s->buf_start = av_malloc(sizeof(void *) * s->buffers);
+    s->buf_start = av_malloc_array(s->buffers, sizeof(void *));
     if (s->buf_start == NULL) {
         av_log(ctx, AV_LOG_ERROR, "Cannot allocate buffer pointers\n");
         return AVERROR(ENOMEM);
     }
-    s->buf_len = av_malloc(sizeof(unsigned int) * s->buffers);
+    s->buf_len = av_malloc_array(s->buffers, sizeof(unsigned int));
     if (s->buf_len == NULL) {
         av_log(ctx, AV_LOG_ERROR, "Cannot allocate buffer sizes\n");
         av_free(s->buf_start);
@@ -427,10 +427,7 @@ static void mmap_release_buffer(void *opaque, uint8_t *data)
 #if HAVE_CLOCK_GETTIME && defined(CLOCK_MONOTONIC)
 static int64_t av_gettime_monotonic(void)
 {
-    struct timespec tv;
-
-    clock_gettime(CLOCK_MONOTONIC, &tv);
-    return (int64_t)tv.tv_sec * 1000000 + tv.tv_nsec / 1000;
+    return av_gettime_relative();
 }
 #endif
 
@@ -447,18 +444,20 @@ static int init_convert_timestamp(AVFormatContext *ctx, int64_t ts)
         return 0;
     }
 #if HAVE_CLOCK_GETTIME && defined(CLOCK_MONOTONIC)
-    now = av_gettime_monotonic();
-    if (s->ts_mode == V4L_TS_MONO2ABS ||
-        (ts <= now + 1 * AV_TIME_BASE && ts >= now - 10 * AV_TIME_BASE)) {
-        AVRational tb = {AV_TIME_BASE, 1};
-        int64_t period = av_rescale_q(1, tb, ctx->streams[0]->avg_frame_rate);
-        av_log(ctx, AV_LOG_INFO, "Detected monotonic timestamps, converting\n");
-        /* microseconds instead of seconds, MHz instead of Hz */
-        s->timefilter = ff_timefilter_new(1, period, 1.0E-6);
-        if (!s->timefilter)
-            return AVERROR(ENOMEM);
-        s->ts_mode = V4L_TS_CONVERT_READY;
-        return 0;
+    if (ctx->streams[0]->avg_frame_rate.num) {
+        now = av_gettime_monotonic();
+        if (s->ts_mode == V4L_TS_MONO2ABS ||
+            (ts <= now + 1 * AV_TIME_BASE && ts >= now - 10 * AV_TIME_BASE)) {
+            AVRational tb = {AV_TIME_BASE, 1};
+            int64_t period = av_rescale_q(1, tb, ctx->streams[0]->avg_frame_rate);
+            av_log(ctx, AV_LOG_INFO, "Detected monotonic timestamps, converting\n");
+            /* microseconds instead of seconds, MHz instead of Hz */
+            s->timefilter = ff_timefilter_new(1, period, 1.0E-6);
+            if (!s->timefilter)
+                return AVERROR(ENOMEM);
+            s->ts_mode = V4L_TS_CONVERT_READY;
+            return 0;
+        }
     }
 #endif
     av_log(ctx, AV_LOG_ERROR, "Unknown timestamps\n");
@@ -742,9 +741,12 @@ static int v4l2_set_parameters(AVFormatContext *s1)
                    "The driver does not allow to change time per frame\n");
         }
     }
-    s1->streams[0]->avg_frame_rate.num = tpf->denominator;
-    s1->streams[0]->avg_frame_rate.den = tpf->numerator;
-    s1->streams[0]->r_frame_rate = s1->streams[0]->avg_frame_rate;
+    if (tpf->denominator > 0 && tpf->numerator > 0) {
+        s1->streams[0]->avg_frame_rate.num = tpf->denominator;
+        s1->streams[0]->avg_frame_rate.den = tpf->numerator;
+        s1->streams[0]->r_frame_rate = s1->streams[0]->avg_frame_rate;
+    } else
+        av_log(s1, AV_LOG_WARNING, "Time per frame unknown\n");
 
     return 0;
 }
@@ -866,6 +868,9 @@ static int v4l2_read_header(AVFormatContext *s1)
 
     avpriv_set_pts_info(st, 64, 1, 1000000); /* 64 bits pts in us */
 
+    if ((res = v4l2_set_parameters(s1)) < 0)
+        return res;
+
     if (s->pixel_format) {
         AVCodec *codec = avcodec_find_decoder_by_name(s->pixel_format);
 
@@ -917,9 +922,6 @@ static int v4l2_read_header(AVFormatContext *s1)
 
     s->frame_format = desired_format;
 
-    if ((res = v4l2_set_parameters(s1)) < 0)
-        return res;
-
     st->codec->pix_fmt = avpriv_fmt_v4l2ff(desired_format, codec_id);
     s->frame_size =
         avpicture_get_size(st->codec->pix_fmt, s->width, s->height);
@@ -946,7 +948,8 @@ static int v4l2_read_header(AVFormatContext *s1)
         st->codec->codec_tag = MKTAG('Y', 'V', 'U', '9');
     st->codec->width = s->width;
     st->codec->height = s->height;
-    st->codec->bit_rate = s->frame_size * av_q2d(st->avg_frame_rate) * 8;
+    if (st->avg_frame_rate.den)
+        st->codec->bit_rate = s->frame_size * av_q2d(st->avg_frame_rate) * 8;
 
     return 0;
 }
@@ -1008,7 +1011,7 @@ static const AVOption options[] = {
     { "default",      "use timestamps from the kernel",                           OFFSET(ts_mode),      AV_OPT_TYPE_CONST,  {.i64 = V4L_TS_DEFAULT  }, 0, 2, DEC, "timestamps" },
     { "abs",          "use absolute timestamps (wall clock)",                     OFFSET(ts_mode),      AV_OPT_TYPE_CONST,  {.i64 = V4L_TS_ABS      }, 0, 2, DEC, "timestamps" },
     { "mono2abs",     "force conversion from monotonic to absolute timestamps",   OFFSET(ts_mode),      AV_OPT_TYPE_CONST,  {.i64 = V4L_TS_MONO2ABS }, 0, 2, DEC, "timestamps" },
-    { "use_libv4l2",  "use libv4l2 (v4l-utils) convertion functions",             OFFSET(use_libv4l2),  AV_OPT_TYPE_INT,    {.i64 = 0}, 0, 1, DEC },
+    { "use_libv4l2",  "use libv4l2 (v4l-utils) conversion functions",             OFFSET(use_libv4l2),  AV_OPT_TYPE_INT,    {.i64 = 0}, 0, 1, DEC },
     { NULL },
 };
 
@@ -1017,6 +1020,7 @@ static const AVClass v4l2_class = {
     .item_name  = av_default_item_name,
     .option     = options,
     .version    = LIBAVUTIL_VERSION_INT,
+    .category   = AV_CLASS_CATEGORY_DEVICE_VIDEO_INPUT,
 };
 
 AVInputFormat ff_v4l2_demuxer = {

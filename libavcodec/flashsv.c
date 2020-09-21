@@ -69,7 +69,7 @@ typedef struct FlashSVContext {
     int             diff_start, diff_height;
 } FlashSVContext;
 
-static int decode_hybrid(const uint8_t *sptr, uint8_t *dptr, int dx, int dy,
+static int decode_hybrid(const uint8_t *sptr, const uint8_t *sptr_end, uint8_t *dptr, int dx, int dy,
                          int h, int w, int stride, const uint32_t *pal)
 {
     int x, y;
@@ -78,6 +78,8 @@ static int decode_hybrid(const uint8_t *sptr, uint8_t *dptr, int dx, int dy,
     for (y = dx + h; y > dx; y--) {
         uint8_t *dst = dptr + (y * stride) + dy * 3;
         for (x = 0; x < w; x++) {
+            if (sptr >= sptr_end)
+                return AVERROR_INVALIDDATA;
             if (*sptr & 0x80) {
                 /* 15-bit color */
                 unsigned c = AV_RB16(sptr) & ~0x8000;
@@ -232,10 +234,15 @@ static int flashsv_decode_block(AVCodecContext *avctx, AVPacket *avpkt,
         }
     } else {
         /* hybrid 15-bit/palette mode */
-        decode_hybrid(s->tmpblock, s->frame->data[0],
+        ret = decode_hybrid(s->tmpblock, s->zstream.next_out,
+                      s->frame->data[0],
                       s->image_height - (y_pos + 1 + s->diff_height),
                       x_pos, s->diff_height, width,
                       s->frame->linesize[0], s->pal);
+        if (ret < 0) {
+            av_log(avctx, AV_LOG_ERROR, "decode_hybrid failed\n");
+            return ret;
+        }
     }
     skip_bits_long(gb, 8 * block_size); /* skip the consumed bits */
     return 0;
@@ -307,13 +314,13 @@ static int flashsv_decode_frame(AVCodecContext *avctx, void *data,
     /* the block size could change between frames, make sure the buffer
      * is large enough, if not, get a larger one */
     if (s->block_size < s->block_width * s->block_height) {
-        int tmpblock_size = 3 * s->block_width * s->block_height;
+        int tmpblock_size = 3 * s->block_width * s->block_height, err;
 
-        s->tmpblock = av_realloc(s->tmpblock, tmpblock_size);
-        if (!s->tmpblock) {
+        if ((err = av_reallocp(&s->tmpblock, tmpblock_size)) < 0) {
+            s->block_size = 0;
             av_log(avctx, AV_LOG_ERROR,
                    "Cannot allocate decompression buffer.\n");
-            return AVERROR(ENOMEM);
+            return err;
         }
         if (s->ver == 2) {
             s->deflate_block_size = calc_deflate_block_size(tmpblock_size);
@@ -322,12 +329,10 @@ static int flashsv_decode_frame(AVCodecContext *avctx, void *data,
                        "Cannot determine deflate buffer size.\n");
                 return -1;
             }
-            s->deflate_block = av_realloc(s->deflate_block,
-                                          s->deflate_block_size);
-            if (!s->deflate_block) {
-                av_log(avctx, AV_LOG_ERROR,
-                       "Cannot allocate deflate buffer.\n");
-                return AVERROR(ENOMEM);
+            if ((err = av_reallocp(&s->deflate_block, s->deflate_block_size)) < 0) {
+                s->block_size = 0;
+                av_log(avctx, AV_LOG_ERROR, "Cannot allocate deflate buffer.\n");
+                return err;
             }
         }
     }
@@ -351,7 +356,9 @@ static int flashsv_decode_frame(AVCodecContext *avctx, void *data,
     /* we care for keyframes only in Screen Video v2 */
     s->is_keyframe = (avpkt->flags & AV_PKT_FLAG_KEY) && (s->ver == 2);
     if (s->is_keyframe) {
-        s->keyframedata = av_realloc(s->keyframedata, avpkt->size);
+        int err;
+        if ((err = av_reallocp(&s->keyframedata, avpkt->size)) < 0)
+            return err;
         memcpy(s->keyframedata, avpkt->data, avpkt->size);
     }
     if(s->ver == 2 && !s->blocks)

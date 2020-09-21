@@ -77,7 +77,7 @@ static int query_formats(AVFilterContext *ctx)
     return 0;
 }
 
-typedef struct {
+typedef struct PadContext {
     const AVClass *class;
     int w, h;               ///< output dimensions, a value of 0 will result in the input size
     int x, y;               ///< offsets of the input area with respect to the padded area
@@ -251,7 +251,7 @@ static int buffer_needs_copy(PadContext *s, AVFrame *frame, AVBufferRef *buf)
                               (s->y >> vsub) * frame->linesize[planes[i]];
         ptrdiff_t req_end   = ((s->w - s->x - frame->width) >> hsub) *
                               s->draw.pixelstep[planes[i]] +
-                              (s->y >> vsub) * frame->linesize[planes[i]];
+                              ((s->h - s->y - frame->height) >> vsub) * frame->linesize[planes[i]];
 
         if (frame->linesize[planes[i]] < (s->w >> hsub) * s->draw.pixelstep[planes[i]])
             return 1;

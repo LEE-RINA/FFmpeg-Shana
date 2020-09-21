@@ -181,9 +181,10 @@ static int tgv_decode_inter(TgvContext *s, AVFrame *frame,
     }
 
     if (num_blocks_packed > s->num_blocks_packed) {
-        if (av_reallocp_array(&s->block_codebook, num_blocks_packed, sizeof(*s->block_codebook))) {
+        int err;
+        if ((err = av_reallocp(&s->block_codebook, num_blocks_packed * 16)) < 0) {
             s->num_blocks_packed = 0;
-            return AVERROR(ENOMEM);
+            return err;
         }
         s->num_blocks_packed = num_blocks_packed;
     }
@@ -310,7 +311,7 @@ static int tgv_decode_frame(AVCodecContext *avctx,
         frame->pict_type = AV_PICTURE_TYPE_I;
 
         if (!s->frame_buffer &&
-            !(s->frame_buffer = av_malloc(s->width * s->height)))
+            !(s->frame_buffer = av_mallocz(s->width * s->height)))
             return AVERROR(ENOMEM);
 
         if (unpack(buf, buf_end, s->frame_buffer, s->avctx->width, s->avctx->height) < 0) {

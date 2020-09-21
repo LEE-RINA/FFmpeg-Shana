@@ -33,7 +33,6 @@
 #include "kbdwin.h"
 
 
-#if CONFIG_AC3_ENCODER
 #define AC3ENC_TYPE AC3ENC_TYPE_AC3
 #include "ac3enc_opts_template.c"
 static const AVClass ac3enc_class = {
@@ -42,7 +41,6 @@ static const AVClass ac3enc_class = {
     .option     = ac3_options,
     .version    = LIBAVUTIL_VERSION_INT,
 };
-#endif
 
 #include "ac3enc_template.c"
 
@@ -73,7 +71,7 @@ av_cold int ff_ac3_float_mdct_init(AC3EncodeContext *s)
     n  = 1 << 9;
     n2 = n >> 1;
 
-    window = av_malloc(n * sizeof(*window));
+    window = av_malloc_array(n, sizeof(*window));
     if (!window) {
         av_log(s->avctx, AV_LOG_ERROR, "Cannot allocate memory.\n");
         return AVERROR(ENOMEM);
@@ -84,18 +82,6 @@ av_cold int ff_ac3_float_mdct_init(AC3EncodeContext *s)
     s->mdct_window = window;
 
     return ff_mdct_init(&s->mdct, 9, 0, -2.0 / n);
-}
-
-
-/*
- * Apply KBD window to input samples prior to MDCT.
- */
-static void apply_window(void *dsp, float *output,
-                         const float *input, const float *window,
-                         unsigned int len)
-{
-    AVFloatDSPContext *fdsp = dsp;
-    fdsp->vector_fmul(output, input, window, len);
 }
 
 
@@ -148,15 +134,20 @@ static CoefType calc_cpl_coord(CoefSumType energy_ch, CoefSumType energy_cpl)
     return FFMIN(coord, COEF_MAX);
 }
 
+av_cold int ff_ac3_float_encode_init(AVCodecContext *avctx)
+{
+    AC3EncodeContext *s = avctx->priv_data;
+    avpriv_float_dsp_init(&s->fdsp, avctx->flags & CODEC_FLAG_BITEXACT);
+    return ff_ac3_encode_init(avctx);
+}
 
-#if CONFIG_AC3_ENCODER
 AVCodec ff_ac3_encoder = {
     .name            = "ac3",
     .long_name       = NULL_IF_CONFIG_SMALL("ATSC A/52A (AC-3)"),
     .type            = AVMEDIA_TYPE_AUDIO,
     .id              = AV_CODEC_ID_AC3,
     .priv_data_size  = sizeof(AC3EncodeContext),
-    .init            = ff_ac3_encode_init,
+    .init            = ff_ac3_float_encode_init,
     .encode2         = ff_ac3_float_encode_frame,
     .close           = ff_ac3_encode_close,
     .sample_fmts     = (const enum AVSampleFormat[]){ AV_SAMPLE_FMT_FLTP,
@@ -165,4 +156,3 @@ AVCodec ff_ac3_encoder = {
     .channel_layouts = ff_ac3_channel_layouts,
     .defaults        = ac3_defaults,
 };
-#endif

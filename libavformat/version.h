@@ -27,10 +27,10 @@
  * Libavformat version macros
  */
 
-#include "libavutil/avutil.h"
+#include "libavutil/version.h"
 
 #define LIBAVFORMAT_VERSION_MAJOR 55
-#define LIBAVFORMAT_VERSION_MINOR 21
+#define LIBAVFORMAT_VERSION_MINOR 44
 #define LIBAVFORMAT_VERSION_MICRO 100
 
 #define LIBAVFORMAT_VERSION_INT AV_VERSION_INT(LIBAVFORMAT_VERSION_MAJOR, \
@@ -41,7 +41,7 @@
                                            LIBAVFORMAT_VERSION_MICRO)
 #define LIBAVFORMAT_BUILD       LIBAVFORMAT_VERSION_INT
 
-#define LIBAVFORMAT_IDENT       "ShanaEncoder 2.1"
+#define LIBAVFORMAT_IDENT       "ShanaEncoder"
 #define LIBAVFORMAT_IDENT_LAVF  "Lavf" AV_STRINGIFY(LIBAVFORMAT_VERSION)
 
 /**
@@ -51,6 +51,15 @@
  */
 #ifndef FF_API_REFERENCE_DTS
 #define FF_API_REFERENCE_DTS            (LIBAVFORMAT_VERSION_MAJOR < 56)
+#endif
+#ifndef FF_API_LAVF_BITEXACT
+#define FF_API_LAVF_BITEXACT            (LIBAVFORMAT_VERSION_MAJOR < 56)
+#endif
+#ifndef FF_API_LAVF_FRAC
+#define FF_API_LAVF_FRAC                (LIBAVFORMAT_VERSION_MAJOR < 57)
+#endif
+#ifndef FF_API_LAVF_CODEC_TB
+#define FF_API_LAVF_CODEC_TB            (LIBAVFORMAT_VERSION_MAJOR < 57)
 #endif
 
 #ifndef FF_API_ALLOC_OUTPUT_CONTEXT

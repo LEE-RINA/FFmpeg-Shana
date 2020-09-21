@@ -21,6 +21,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include <inttypes.h>
 #include <math.h>
 #include <stdint.h>
 
@@ -187,7 +188,7 @@ static int metasound_read_bitstream(AVCodecContext *avctx, TwinVQContext *tctx,
 
         sub = mtab->fmode[bits->ftype].sub;
 
-        if (bits->ftype != TWINVQ_FT_SHORT)
+        if (bits->ftype != TWINVQ_FT_SHORT && !tctx->is_6kbps)
             get_bits(&gb, 2);
 
         read_cb_data(tctx, &gb, bits->main_coeffs, bits->ftype);
@@ -283,7 +284,7 @@ static av_cold int metasound_decode_init(AVCodecContext *avctx)
 
     for (;;) {
         if (!props->tag) {
-            av_log(avctx, AV_LOG_ERROR, "Could not find tag %08X\n", tag);
+            av_log(avctx, AV_LOG_ERROR, "Could not find tag %08"PRIX32"\n", tag);
             return AVERROR_INVALIDDATA;
         }
         if (props->tag == tag) {
@@ -307,6 +308,12 @@ static av_cold int metasound_decode_init(AVCodecContext *avctx)
     ibps = avctx->bit_rate / (1000 * avctx->channels);
 
     switch ((avctx->channels << 16) + (isampf << 8) + ibps) {
+    case (1 << 16) + ( 8 << 8) +  6:
+        tctx->mtab = &ff_metasound_mode0806;
+        break;
+    case (2 << 16) + ( 8 << 8) +  6:
+        tctx->mtab = &ff_metasound_mode0806s;
+        break;
     case (1 << 16) + ( 8 << 8) +  8:
         tctx->mtab = &ff_metasound_mode0808;
         break;
@@ -362,6 +369,7 @@ static av_cold int metasound_decode_init(AVCodecContext *avctx)
     tctx->decode_ppc     = decode_ppc;
     tctx->frame_size     = avctx->bit_rate * tctx->mtab->size
                                            / avctx->sample_rate;
+    tctx->is_6kbps       = ibps == 6;
 
     return ff_twinvq_decode_init(avctx);
 }

@@ -19,6 +19,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include <stdint.h>
+
 #include "libavutil/intreadwrite.h"
 #include "libavutil/intfloat.h"
 #include "avformat.h"
@@ -278,9 +280,8 @@ static int ffm2_read_header(AVFormatContext *s)
             codec->flags2 = avio_rb32(pb);
             codec->debug = avio_rb32(pb);
             if (codec->flags & CODEC_FLAG_GLOBAL_HEADER) {
-                if (ff_alloc_extradata(codec, avio_rb32(pb)))
+                if (ff_get_extradata(codec, pb, avio_rb32(pb)) < 0)
                     return AVERROR(ENOMEM);
-                avio_read(pb, codec->extradata, codec->extradata_size);
             }
             avio_seek(pb, next, SEEK_SET);
             id = avio_rb32(pb);
@@ -466,9 +467,8 @@ static int ffm_read_header(AVFormatContext *s)
             goto fail;
         }
         if (codec->flags & CODEC_FLAG_GLOBAL_HEADER) {
-            if (ff_alloc_extradata(codec, avio_rb32(pb)))
+            if (ff_get_extradata(codec, pb, avio_rb32(pb)) < 0)
                 return AVERROR(ENOMEM);
-            avio_read(pb, codec->extradata, codec->extradata_size);
         }
     }
 
@@ -510,7 +510,7 @@ static int ffm_read_packet(AVFormatContext *s, AVPacket *pkt)
             if (ffm_read_data(s, ffm->header+16, 4, 1) != 4)
                 return -1;
         ffm->read_state = READ_DATA;
-        /* fall thru */
+        /* fall through */
     case READ_DATA:
         size = AV_RB24(ffm->header + 2);
         if ((ret = ffm_is_avail_data(s, size)) < 0)

@@ -31,12 +31,14 @@
 #include <stdint.h>
 
 #include "libavutil/float_dsp.h"
+
 #include "ac3.h"
 #include "ac3dsp.h"
 #include "avcodec.h"
 #include "dsputil.h"
-#include "put_bits.h"
 #include "fft.h"
+#include "mathops.h"
+#include "put_bits.h"
 
 #ifndef CONFIG_AC3ENC_FLOAT
 #define CONFIG_AC3ENC_FLOAT 0
@@ -264,6 +266,7 @@ typedef struct AC3EncodeContext {
 extern const uint64_t ff_ac3_channel_layouts[19];
 
 int ff_ac3_encode_init(AVCodecContext *avctx);
+int ff_ac3_float_encode_init(AVCodecContext *avctx);
 
 int ff_ac3_encode_close(AVCodecContext *avctx);
 

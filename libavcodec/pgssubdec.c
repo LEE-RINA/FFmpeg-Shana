@@ -25,9 +25,9 @@
  */
 
 #include "avcodec.h"
-#include "dsputil.h"
 #include "bytestream.h"
 #include "internal.h"
+#include "mathops.h"
 
 #include "libavutil/colorspace.h"
 #include "libavutil/imgutils.h"
@@ -232,7 +232,7 @@ static int parse_picture_segment(AVCodecContext *avctx,
     ctx->pictures[picture_id].w = width;
     ctx->pictures[picture_id].h = height;
 
-    av_fast_malloc(&ctx->pictures[picture_id].rle, &ctx->pictures[picture_id].rle_buffer_size, rle_bitmap_len);
+    av_fast_padded_malloc(&ctx->pictures[picture_id].rle, &ctx->pictures[picture_id].rle_buffer_size, rle_bitmap_len);
 
     if (!ctx->pictures[picture_id].rle)
         return -1;
@@ -260,7 +260,7 @@ static void parse_palette_segment(AVCodecContext *avctx,
     PGSSubContext *ctx = avctx->priv_data;
 
     const uint8_t *buf_end = buf + buf_size;
-    const uint8_t *cm      = ff_cropTbl + MAX_NEG_CROP;
+    const uint8_t *cm      = ff_crop_tab + MAX_NEG_CROP;
     int color_id;
     int y, cb, cr, alpha;
     int r, g, b, r_add, g_add, b_add;
@@ -341,7 +341,7 @@ static int parse_presentation_segment(AVCodecContext *avctx,
     }
 
     av_freep(&ctx->presentation.objects);
-    ctx->presentation.objects = av_malloc(sizeof(PGSSubPictureReference) * ctx->presentation.object_count);
+    ctx->presentation.objects = av_malloc_array(ctx->presentation.object_count, sizeof(PGSSubPictureReference));
     if (!ctx->presentation.objects) {
         ctx->presentation.object_count = 0;
         return AVERROR(ENOMEM);
@@ -417,7 +417,7 @@ static int display_end_segment(AVCodecContext *avctx, void *data,
     sub->format             = 0;
 
     sub->num_rects = ctx->presentation.object_count;
-    sub->rects     = av_mallocz(sizeof(*sub->rects) * sub->num_rects);
+    sub->rects     = av_mallocz_array(sub->num_rects, sizeof(*sub->rects));
 
     for (rect = 0; rect < sub->num_rects; ++rect) {
         uint16_t picture_id    = ctx->presentation.objects[rect].picture_id;

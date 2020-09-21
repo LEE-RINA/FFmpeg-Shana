@@ -36,6 +36,11 @@ int avresample_open(AVAudioResampleContext *avr)
 {
     int ret;
 
+    if (avresample_is_open(avr)) {
+        av_log(avr, AV_LOG_ERROR, "The resampling context is already open.\n");
+        return AVERROR(EINVAL);
+    }
+
     /* set channel mixing parameters */
     avr->in_channels = av_get_channel_layout_nb_channels(avr->in_channel_layout);
     if (avr->in_channels <= 0 || avr->in_channels > AVRESAMPLE_MAX_CHANNELS) {
@@ -184,7 +189,7 @@ int avresample_open(AVAudioResampleContext *avr)
     }
     if (avr->resample_needed) {
         avr->resample_out_buffer = ff_audio_data_alloc(avr->out_channels,
-                                                       0, avr->internal_sample_fmt,
+                                                       1024, avr->internal_sample_fmt,
                                                        "resample_out_buffer");
         if (!avr->resample_out_buffer) {
             ret = AVERROR(EINVAL);
@@ -252,6 +257,11 @@ int avresample_open(AVAudioResampleContext *avr)
 error:
     avresample_close(avr);
     return ret;
+}
+
+int avresample_is_open(AVAudioResampleContext *avr)
+{
+    return !!avr->out_fifo;
 }
 
 void avresample_close(AVAudioResampleContext *avr)
@@ -610,6 +620,25 @@ int avresample_set_channel_mapping(AVAudioResampleContext *avr,
 int avresample_available(AVAudioResampleContext *avr)
 {
     return av_audio_fifo_size(avr->out_fifo);
+}
+
+int avresample_get_out_samples(AVAudioResampleContext *avr, int in_nb_samples)
+{
+    int64_t samples = avresample_get_delay(avr) + (int64_t)in_nb_samples;
+
+    if (avr->resample_needed) {
+        samples = av_rescale_rnd(samples,
+                                 avr->out_sample_rate,
+                                 avr->in_sample_rate,
+                                 AV_ROUND_UP);
+    }
+
+    samples += avresample_available(avr);
+
+    if (samples > INT_MAX)
+        return AVERROR(EINVAL);
+
+    return samples;
 }
 
 int avresample_read(AVAudioResampleContext *avr, uint8_t **output, int nb_samples)

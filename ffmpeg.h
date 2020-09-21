@@ -44,6 +44,7 @@
 #include "libavutil/fifo.h"
 #include "libavutil/pixfmt.h"
 #include "libavutil/rational.h"
+#include "libavutil/threadmessage.h"
 
 #include "libswresample/swresample.h"
 
@@ -55,6 +56,21 @@
 #define VSYNC_DROP        0xff
 
 #define MAX_STREAMS 1024    /* arbitrary sanity check value */
+
+enum HWAccelID {
+    HWACCEL_NONE = 0,
+    HWACCEL_AUTO,
+    HWACCEL_VDPAU,
+    HWACCEL_DXVA2,
+    HWACCEL_VDA,
+};
+
+typedef struct HWAccel {
+    const char *name;
+    int (*init)(AVCodecContext *s);
+    enum HWAccelID id;
+    enum AVPixelFormat pix_fmt;
+} HWAccel;
 
 /* select an input stream for an output stream */
 typedef struct StreamMap {
@@ -100,6 +116,10 @@ typedef struct OptionsContext {
     int        nb_ts_scale;
     SpecifierOpt *dump_attachment;
     int        nb_dump_attachment;
+    SpecifierOpt *hwaccels;
+    int        nb_hwaccels;
+    SpecifierOpt *hwaccel_devices;
+    int        nb_hwaccel_devices;
 
     /* output options */
     StreamMap *stream_maps;
@@ -154,6 +174,8 @@ typedef struct OptionsContext {
     int        nb_intra_matrices;
     SpecifierOpt *inter_matrices;
     int        nb_inter_matrices;
+    SpecifierOpt *chroma_intra_matrices;
+    int        nb_chroma_intra_matrices;
     SpecifierOpt *top_field_first;
     int        nb_top_field_first;
     SpecifierOpt *metadata_map;
@@ -182,6 +204,8 @@ typedef struct OptionsContext {
     int        nb_guess_layout_max;
     SpecifierOpt *apad;
     int        nb_apad;
+    SpecifierOpt *discard;
+    int        nb_discard;
 } OptionsContext;
 
 typedef struct InputFilter {
@@ -218,7 +242,9 @@ typedef struct InputStream {
     int file_index;
     AVStream *st;
     int discard;             /* true if stream data should be discarded */
+    int user_set_discard;
     int decoding_needed;     /* true if the packets must be decoded in 'raw_fifo' */
+    AVCodecContext *dec_ctx;
     AVCodec *dec;
     AVFrame *decoded_frame;
     AVFrame *filter_frame; /* a ref of decoded_frame, to be sent to filters */
@@ -236,10 +262,9 @@ typedef struct InputStream {
     int64_t filter_in_rescale_delta_last;
 
     double ts_scale;
-    int is_start;            /* is 1 at the start and after a discontinuity */
     int saw_first_ts;
     int showed_multi_packet_warning;
-    AVDictionary *opts;
+    AVDictionary *decoder_opts;
     AVRational framerate;               /* framerate forced with -r */
     int top_field_first;
     int guess_layout_max;
@@ -275,6 +300,28 @@ typedef struct InputStream {
     int        nb_filters;
 
     int reinit_filters;
+
+    /* hwaccel options */
+    enum HWAccelID hwaccel_id;
+    char  *hwaccel_device;
+
+    /* hwaccel context */
+    enum HWAccelID active_hwaccel_id;
+    void  *hwaccel_ctx;
+    void (*hwaccel_uninit)(AVCodecContext *s);
+    int  (*hwaccel_get_buffer)(AVCodecContext *s, AVFrame *frame, int flags);
+    int  (*hwaccel_retrieve_data)(AVCodecContext *s, AVFrame *frame);
+    enum AVPixelFormat hwaccel_pix_fmt;
+    enum AVPixelFormat hwaccel_retrieved_pix_fmt;
+
+    /* stats */
+    // combined size of all the packets read
+    uint64_t data_size;
+    /* number of packets successfully read for this stream */
+    uint64_t nb_packets;
+    // number of frames/samples retrieved from the decoder
+    uint64_t frames_decoded;
+    uint64_t samples_decoded;
 } InputStream;
 
 typedef struct InputFile {
@@ -294,12 +341,10 @@ typedef struct InputFile {
     int accurate_seek;
 
 #if HAVE_PTHREADS
+    AVThreadMessageQueue *in_thread_queue;
     pthread_t thread;           /* thread reading from this file */
-    int finished;               /* the thread has exited */
+    int non_blocking;           /* reading packets from the thread should not block */
     int joined;                 /* the thread has been joined */
-    pthread_mutex_t fifo_lock;  /* lock for access to fifo */
-    pthread_cond_t  fifo_cond;  /* the main thread will signal on this cond after reading from fifo */
-    AVFifoBuffer *fifo;         /* demuxed packets are stored here; freed by the main thread */
 #endif
 } InputFile;
 
@@ -313,6 +358,11 @@ enum forced_keyframes_const {
 };
 
 extern const char *const forced_keyframes_const_names[];
+
+typedef enum {
+    ENCODER_FINISHED = 1,
+    MUXER_FINISHED = 2,
+} OSTFinished ;
 
 typedef struct OutputStream {
     int file_index;          /* file index */
@@ -331,6 +381,7 @@ typedef struct OutputStream {
     /* dts of the last packet sent to the muxer */
     int64_t last_mux_dts;
     AVBitStreamFilterContext *bitstream_filters;
+    AVCodecContext *enc_ctx;
     AVCodec *enc;
     int64_t max_frames;
     AVFrame *filtered_frame;
@@ -363,11 +414,11 @@ typedef struct OutputStream {
     char *filters_script;  ///< filtergraph script associated to the -filter_script option
 
     int64_t sws_flags;
-    AVDictionary *opts;
+    AVDictionary *encoder_opts;
     AVDictionary *swr_opts;
     AVDictionary *resample_opts;
     char *apad;
-    int finished;        /* no more packets should be written for this stream */
+    OSTFinished finished;        /* no more packets should be written for this stream */
     int unavailable;                     /* true if the steram is unavailable (possibly temporarily) */
     int stream_copy;
     const char *attachment_filename;
@@ -377,6 +428,15 @@ typedef struct OutputStream {
     int keep_pix_fmt;
 
     AVCodecParserContext *parser;
+
+    /* stats */
+    // combined size of all the packets written
+    uint64_t data_size;
+    // number of packets send to the muxer
+    uint64_t packets_written;
+    // number of frames/samples sent to the encoder
+    uint64_t frames_encoded;
+    uint64_t samples_encoded;
 } OutputStream;
 
 typedef struct OutputFile {
@@ -405,6 +465,7 @@ extern int        nb_filtergraphs;
 
 extern char *vstats_filename;
 extern char *gui_hwnd;
+extern int hide_msg;
 
 extern float audio_drift_threshold;
 extern float dts_delta_threshold;
@@ -432,6 +493,8 @@ extern float max_error_rate;
 extern const AVIOInterruptCB int_cb;
 
 extern const OptionDef options[];
+extern const HWAccel hwaccels[];
+
 
 void term_init(void);
 void term_exit(void);
@@ -445,7 +508,7 @@ void assert_avoptions(AVDictionary *m);
 
 int guess_input_channel_layout(InputStream *ist);
 
-enum AVPixelFormat choose_pixel_fmt(AVStream *st, AVCodec *codec, enum AVPixelFormat target);
+enum AVPixelFormat choose_pixel_fmt(AVStream *st, AVCodecContext *avctx, AVCodec *codec, enum AVPixelFormat target);
 void choose_sample_fmt(AVStream *st, AVCodec *codec);
 
 int configure_filtergraph(FilterGraph *fg);
@@ -454,5 +517,9 @@ int ist_in_filtergraph(FilterGraph *fg, InputStream *ist);
 FilterGraph *init_simple_filtergraph(InputStream *ist, OutputStream *ost);
 
 int ffmpeg_parse_options(int argc, char **argv);
+
+int vdpau_init(AVCodecContext *s);
+int dxva2_init(AVCodecContext *s);
+int vda_init(AVCodecContext *s);
 
 #endif /* FFMPEG_H */
