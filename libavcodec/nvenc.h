@@ -19,16 +19,9 @@
 #ifndef AVCODEC_NVENC_H
 #define AVCODEC_NVENC_H
 
-#include "config.h"
-
-#if CONFIG_D3D11VA
-#define COBJMACROS
-#include "libavutil/hwcontext_d3d11va.h"
-#else
-typedef void ID3D11Device;
-#endif
-
 #include "compat/nvenc/nvEncodeAPI.h"
+
+#include "config.h"
 
 #include "compat/cuda/dynlink_loader.h"
 #include "libavutil/fifo.h"
@@ -114,7 +107,6 @@ typedef struct NvencContext
     NV_ENC_CONFIG encode_config;
     CUcontext cu_context;
     CUcontext cu_context_internal;
-    ID3D11Device *d3d11_device;
 
     int nb_surfaces;
     NvencSurface *surfaces;
@@ -127,8 +119,7 @@ typedef struct NvencContext
     int encoder_flushing;
 
     struct {
-        void *ptr;
-        int ptr_index;
+        CUdeviceptr ptr;
         NV_ENC_REGISTERED_PTR regptr;
         int mapped;
     } registered_frames[MAX_REGISTERED_FRAMES];

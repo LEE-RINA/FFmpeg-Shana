@@ -28,7 +28,7 @@
 #if FF_API_OLD_BSF
 FF_DISABLE_DEPRECATION_WARNINGS
 
-const AVBitStreamFilter *av_bitstream_filter_next(const AVBitStreamFilter *f)
+AVBitStreamFilter *av_bitstream_filter_next(const AVBitStreamFilter *f)
 {
     const AVBitStreamFilter *filter = NULL;
     void *opaque = NULL;
@@ -131,7 +131,7 @@ int av_bitstream_filter_filter(AVBitStreamFilterContext *bsfc,
             return ret;
     }
 
-    pkt.data = (uint8_t *)buf;
+    pkt.data = buf;
     pkt.size = buf_size;
 
     ret = av_bsf_send_packet(priv->ctx, &pkt);

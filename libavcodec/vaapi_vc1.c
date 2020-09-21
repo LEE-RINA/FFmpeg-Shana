@@ -388,7 +388,7 @@ static int vaapi_vc1_decode_slice(AVCodecContext *avctx, const uint8_t *buffer, 
 }
 
 #if CONFIG_WMV3_VAAPI_HWACCEL
-const AVHWAccel ff_wmv3_vaapi_hwaccel = {
+AVHWAccel ff_wmv3_vaapi_hwaccel = {
     .name                 = "wmv3_vaapi",
     .type                 = AVMEDIA_TYPE_VIDEO,
     .id                   = AV_CODEC_ID_WMV3,
@@ -399,13 +399,12 @@ const AVHWAccel ff_wmv3_vaapi_hwaccel = {
     .frame_priv_data_size = sizeof(VAAPIDecodePicture),
     .init                 = &ff_vaapi_decode_init,
     .uninit               = &ff_vaapi_decode_uninit,
-    .frame_params         = &ff_vaapi_common_frame_params,
     .priv_data_size       = sizeof(VAAPIDecodeContext),
     .caps_internal        = HWACCEL_CAP_ASYNC_SAFE,
 };
 #endif
 
-const AVHWAccel ff_vc1_vaapi_hwaccel = {
+AVHWAccel ff_vc1_vaapi_hwaccel = {
     .name                 = "vc1_vaapi",
     .type                 = AVMEDIA_TYPE_VIDEO,
     .id                   = AV_CODEC_ID_VC1,
@@ -416,7 +415,6 @@ const AVHWAccel ff_vc1_vaapi_hwaccel = {
     .frame_priv_data_size = sizeof(VAAPIDecodePicture),
     .init                 = &ff_vaapi_decode_init,
     .uninit               = &ff_vaapi_decode_uninit,
-    .frame_params         = &ff_vaapi_common_frame_params,
     .priv_data_size       = sizeof(VAAPIDecodeContext),
     .caps_internal        = HWACCEL_CAP_ASYNC_SAFE,
 };

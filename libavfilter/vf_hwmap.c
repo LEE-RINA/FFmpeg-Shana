@@ -114,8 +114,7 @@ static int hwmap_config_output(AVFilterLink *outlink)
             err = av_hwframe_ctx_create_derived(&ctx->hwframes_ref,
                                                 outlink->format,
                                                 device,
-                                                inlink->hw_frames_ctx,
-                                                ctx->mode);
+                                                inlink->hw_frames_ctx, 0);
             if (err < 0) {
                 av_log(avctx, AV_LOG_ERROR, "Failed to create derived "
                        "frames context: %d.\n", err);

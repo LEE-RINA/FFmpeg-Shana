@@ -291,9 +291,11 @@ static void add_codec(FFServerStream *stream, AVCodecContext *av,
         }
 
         if (!av_dict_get(recommended, "rc_eq", NULL, 0)) {
+            av->rc_eq = av_strdup("tex^qComp");
             av_dict_set(&recommended, "rc_eq", "tex^qComp", 0);
             WARNING("Setting default value for video rate control equation = "
-                    "tex^qComp. Use NoDefaults to disable it.\n");
+                    "%s. Use NoDefaults to disable it.\n",
+                    av->rc_eq);
         }
         if (!av_dict_get(recommended, "maxrate", NULL, 0)) {
             av->rc_max_rate = av->bit_rate * 2;

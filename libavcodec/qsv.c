@@ -20,7 +20,6 @@
 
 #include <mfx/mfxvideo.h>
 #include <mfx/mfxplugin.h>
-#include <mfx/mfxjpeg.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -57,8 +56,6 @@ int ff_qsv_codec_id_to_mfx(enum AVCodecID codec_id)
     case AV_CODEC_ID_VP8:
         return MFX_CODEC_VP8;
 #endif
-    case AV_CODEC_ID_MJPEG:
-        return MFX_CODEC_JPEG;
     default:
         break;
     }
@@ -592,11 +589,6 @@ int ff_qsv_init_session_device(AVCodecContext *avctx, mfxSession *psession,
             return ff_qsv_print_error(avctx, err,
                                       "Error setting a HW handle");
     }
-
-    err = MFXJoinSession(parent_session, session);
-    if (err != MFX_ERR_NONE)
-        return ff_qsv_print_error(avctx, err,
-                                  "Error joining session");
 
     ret = qsv_load_plugins(session, load_plugins, avctx);
     if (ret < 0) {

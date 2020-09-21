@@ -19,10 +19,10 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "libavutil/atomic.h"
 #include "libavutil/avstring.h"
 #include "libavutil/bprint.h"
 #include "libavutil/opt.h"
-#include "libavutil/thread.h"
 
 #include "avio_internal.h"
 #include "avformat.h"
@@ -58,40 +58,28 @@ AVOutputFormat *av_oformat_next(const AVOutputFormat *f)
         return first_oformat;
 }
 
-static AVMutex iformat_register_mutex = AV_MUTEX_INITIALIZER;
-
 void av_register_input_format(AVInputFormat *format)
 {
-    AVInputFormat **p;
+    AVInputFormat **p = last_iformat;
 
-    ff_mutex_lock(&iformat_register_mutex);
-    p = last_iformat;
-
-    while (*p)
+    // Note, format could be added after the first 2 checks but that implies that *p is no longer NULL
+    while(p != &format->next && !format->next && avpriv_atomic_ptr_cas((void * volatile *)p, NULL, format))
         p = &(*p)->next;
-    *p = format;
-    format->next = NULL;
-    last_iformat = &format->next;
 
-    ff_mutex_unlock(&iformat_register_mutex);
+    if (!format->next)
+        last_iformat = &format->next;
 }
-
-static AVMutex oformat_register_mutex = AV_MUTEX_INITIALIZER;
 
 void av_register_output_format(AVOutputFormat *format)
 {
-    AVOutputFormat **p;
+    AVOutputFormat **p = last_oformat;
 
-    ff_mutex_lock(&oformat_register_mutex);
-    p = last_oformat;
-
-    while (*p)
+    // Note, format could be added after the first 2 checks but that implies that *p is no longer NULL
+    while(p != &format->next && !format->next && avpriv_atomic_ptr_cas((void * volatile *)p, NULL, format))
         p = &(*p)->next;
-    *p = format;
-    format->next = NULL;
-    last_oformat = &format->next;
 
-    ff_mutex_unlock(&oformat_register_mutex);
+    if (!format->next)
+        last_oformat = &format->next;
 }
 
 int av_match_ext(const char *filename, const char *extensions)

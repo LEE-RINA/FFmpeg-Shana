@@ -171,10 +171,9 @@ AVCodec ff_nvenc_encoder = {
     .priv_data_size = sizeof(NvencContext),
     .priv_class     = &nvenc_class,
     .defaults       = defaults,
-    .capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_HARDWARE,
+    .capabilities   = AV_CODEC_CAP_DELAY,
     .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
     .pix_fmts       = ff_nvenc_pix_fmts,
-    .wrapper_name   = "nvenc",
 };
 #endif
 
@@ -200,10 +199,9 @@ AVCodec ff_nvenc_h264_encoder = {
     .priv_data_size = sizeof(NvencContext),
     .priv_class     = &nvenc_h264_class,
     .defaults       = defaults,
-    .capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_HARDWARE,
+    .capabilities   = AV_CODEC_CAP_DELAY,
     .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
     .pix_fmts       = ff_nvenc_pix_fmts,
-    .wrapper_name   = "nvenc",
 };
 #endif
 
@@ -229,8 +227,7 @@ AVCodec ff_h264_nvenc_encoder = {
     .priv_data_size = sizeof(NvencContext),
     .priv_class     = &h264_nvenc_class,
     .defaults       = defaults,
-    .capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_HARDWARE,
+    .capabilities   = AV_CODEC_CAP_DELAY,
     .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
     .pix_fmts       = ff_nvenc_pix_fmts,
-    .wrapper_name   = "nvenc",
 };

@@ -1867,7 +1867,7 @@ static int mjpeg_decode_app(MJpegDecodeContext *s)
 
             // read 0th IFD and store the metadata
             // (return values > 0 indicate the presence of subimage metadata)
-            ret = ff_exif_decode_ifd(s->avctx, &gbytes, le, 0, &s->exif_metadata);
+            ret = avpriv_exif_decode_ifd(s->avctx, &gbytes, le, 0, &s->exif_metadata);
             if (ret < 0) {
                 av_log(s->avctx, AV_LOG_ERROR, "mjpeg: error decoding EXIF data\n");
             }
@@ -2428,10 +2428,7 @@ the_end:
                    avctx->pix_fmt == AV_PIX_FMT_GBRP     ||
                    avctx->pix_fmt == AV_PIX_FMT_GBRAP
                   );
-        ret = av_pix_fmt_get_chroma_sub_sample(s->avctx->pix_fmt, &hshift, &vshift);
-        if (ret)
-            return ret;
-
+        avcodec_get_chroma_sub_sample(s->avctx->pix_fmt, &hshift, &vshift);
         av_assert0(s->nb_components == av_pix_fmt_count_planes(s->picture_ptr->format));
         for (p = 0; p<s->nb_components; p++) {
             uint8_t *line = s->picture_ptr->data[p];
@@ -2490,10 +2487,7 @@ the_end:
                    avctx->pix_fmt == AV_PIX_FMT_GBRP     ||
                    avctx->pix_fmt == AV_PIX_FMT_GBRAP
                    );
-        ret = av_pix_fmt_get_chroma_sub_sample(s->avctx->pix_fmt, &hshift, &vshift);
-        if (ret)
-            return ret;
-
+        avcodec_get_chroma_sub_sample(s->avctx->pix_fmt, &hshift, &vshift);
         av_assert0(s->nb_components == av_pix_fmt_count_planes(s->picture_ptr->format));
         for (p = 0; p < s->nb_components; p++) {
             uint8_t *dst;
@@ -2521,10 +2515,7 @@ the_end:
     }
     if (s->flipped && !s->rgb) {
         int j;
-        ret = av_pix_fmt_get_chroma_sub_sample(s->avctx->pix_fmt, &hshift, &vshift);
-        if (ret)
-            return ret;
-
+        avcodec_get_chroma_sub_sample(s->avctx->pix_fmt, &hshift, &vshift);
         av_assert0(s->nb_components == av_pix_fmt_count_planes(s->picture_ptr->format));
         for (index=0; index<s->nb_components; index++) {
             uint8_t *dst = s->picture_ptr->data[index];

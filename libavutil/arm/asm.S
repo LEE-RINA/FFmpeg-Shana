@@ -46,7 +46,6 @@
 #   define FPU @
 #endif
 
-#if HAVE_AS_ARCH_DIRECTIVE
 #if   HAVE_NEON
         .arch           armv7-a
 #elif HAVE_ARMV6T2
@@ -55,7 +54,6 @@
         .arch           armv6
 #elif HAVE_ARMV5TE
         .arch           armv5te
-#endif
 #endif
 #if   HAVE_AS_OBJECT_ARCH
 ELF     .object_arch    armv4

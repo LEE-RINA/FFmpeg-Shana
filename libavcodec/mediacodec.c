@@ -26,7 +26,7 @@
 
 #include "mediacodec.h"
 
-#if CONFIG_MEDIACODEC
+#if CONFIG_H264_MEDIACODEC_HWACCEL
 
 #include <jni.h>
 

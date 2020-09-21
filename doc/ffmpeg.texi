@@ -289,8 +289,8 @@ see @ref{time duration syntax,,the Time duration section in the ffmpeg-utils(1) 
 
 -to and -t are mutually exclusive and -t has priority.
 
-@item -to @var{position} (@emph{input/output})
-Stop writing the output or reading the input at @var{position}.
+@item -to @var{position} (@emph{output})
+Stop writing the output at @var{position}.
 @var{position} must be a time duration specification,
 see @ref{time duration syntax,,the Time duration section in the ffmpeg-utils(1) manual,ffmpeg-utils}.
 
@@ -470,7 +470,6 @@ the encoding process. It is made of "@var{key}=@var{value}" lines. @var{key}
 consists of only alphanumeric characters. The last key of a sequence of
 progress information is always "progress".
 
-@anchor{stdin option}
 @item -stdin
 Enable interaction on standard input. On by default unless standard input is
 used as an input. To explicitly disable interaction you need to specify
@@ -757,43 +756,6 @@ If not specified, @samp{auto_any} is used.
 platform-appropriate subdevice (@samp{dxva2} or @samp{vaapi}) and then deriving a
 QSV device from that.)
 
-@item opencl
-@var{device} selects the platform and device as @emph{platform_index.device_index}.
-
-The set of devices can also be filtered using the key-value pairs to find only
-devices matching particular platform or device strings.
-
-The strings usable as filters are:
-@table @option
-@item platform_profile
-@item platform_version
-@item platform_name
-@item platform_vendor
-@item platform_extensions
-@item device_name
-@item device_vendor
-@item driver_version
-@item device_version
-@item device_profile
-@item device_extensions
-@item device_type
-@end table
-
-The indices and filters must together uniquely select a device.
-
-Examples:
-@table @emph
-@item -init_hw_device opencl:0.1
-Choose the second device on the first platform.
-
-@item -init_hw_device opencl:,device_name=Foo9000
-Choose the device with a name containing the string @emph{Foo9000}.
-
-@item -init_hw_device opencl:1,device_type=gpu,device_extensions=cl_khr_fp16
-Choose the GPU device on the second platform supporting the @emph{cl_khr_fp16}
-extension.
-@end table
-
 @end table
 
 @item -init_hw_device @var{type}[=@var{name}]@@@var{source}
@@ -823,6 +785,9 @@ Do not use any hardware acceleration (the default).
 
 @item auto
 Automatically select the hardware acceleration method.
+
+@item vda
+Use Apple VDA hardware acceleration.
 
 @item vdpau
 Use VDPAU (Video Decode and Presentation API for Unix) hardware acceleration.
@@ -1288,8 +1253,6 @@ or as a floating point number (e.g. 0.04166, 2.0833e-5)
 
 Default value is 0.
 
-@item -bitexact (@emph{input/output})
-Enable bitexact mode for (de)muxer and (de/en)coder
 @item -shortest (@emph{output})
 Finish encoding when the shortest input stream ends.
 @item -dts_delta_threshold

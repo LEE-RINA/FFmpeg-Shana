@@ -12,6 +12,8 @@ LIBAVFORMAT_MAJOR {
         ffurl_close;
         ffurl_open;
         ffurl_write;
+        #those are deprecated, remove on next bump
+        url_feof;
     local:
         *;
 };

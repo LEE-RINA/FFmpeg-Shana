@@ -257,6 +257,10 @@ end:
     av_frame_free(&padded_frame);
     av_free(extended_frame);
 
+#if FF_API_AUDIOENC_DELAY
+    avctx->delay = avctx->initial_padding;
+#endif
+
     return ret;
 }
 
