@@ -31,6 +31,7 @@
  */
 
 #include "v4l2-common.h"
+#include <dirent.h>
 
 #if CONFIG_LIBV4L2
 #include <libv4l2.h>
@@ -279,14 +280,14 @@ static void list_formats(AVFormatContext *ctx, int type)
         if (!(vfd.flags & V4L2_FMT_FLAG_COMPRESSED) &&
             type & V4L_RAWFORMATS) {
             const char *fmt_name = av_get_pix_fmt_name(pix_fmt);
-            av_log(ctx, AV_LOG_INFO, "Raw       : %9s : %20s :",
+            av_log(ctx, AV_LOG_INFO, "Raw       : %11s : %20s :",
                    fmt_name ? fmt_name : "Unsupported",
                    vfd.description);
         } else if (vfd.flags & V4L2_FMT_FLAG_COMPRESSED &&
                    type & V4L_COMPFORMATS) {
-            AVCodec *codec = avcodec_find_decoder(codec_id);
-            av_log(ctx, AV_LOG_INFO, "Compressed: %9s : %20s :",
-                   codec ? codec->name : "Unsupported",
+            const AVCodecDescriptor *desc = avcodec_descriptor_get(codec_id);
+            av_log(ctx, AV_LOG_INFO, "Compressed: %11s : %20s :",
+                   desc ? desc->name : "Unsupported",
                    vfd.description);
         } else {
             continue;
@@ -356,7 +357,7 @@ static int mmap_init(AVFormatContext *ctx)
     s->buf_len = av_malloc_array(s->buffers, sizeof(unsigned int));
     if (!s->buf_len) {
         av_log(ctx, AV_LOG_ERROR, "Cannot allocate buffer sizes\n");
-        av_free(s->buf_start);
+        av_freep(&s->buf_start);
         return AVERROR(ENOMEM);
     }
 
@@ -498,13 +499,14 @@ static int mmap_read_frame(AVFormatContext *ctx, AVPacket *pkt)
     };
     int res;
 
+    pkt->size = 0;
+
     /* FIXME: Some special treatment might be needed in case of loss of signal... */
     while ((res = v4l2_ioctl(s->fd, VIDIOC_DQBUF, &buf)) < 0 && (errno == EINTR));
     if (res < 0) {
-        if (errno == EAGAIN) {
-            pkt->size = 0;
+        if (errno == EAGAIN)
             return AVERROR(EAGAIN);
-        }
+
         res = AVERROR(errno);
         av_log(ctx, AV_LOG_ERROR, "ioctl(VIDIOC_DQBUF): %s\n",
                av_err2str(res));
@@ -519,18 +521,27 @@ static int mmap_read_frame(AVFormatContext *ctx, AVPacket *pkt)
     // always keep at least one buffer queued
     av_assert0(avpriv_atomic_int_get(&s->buffers_queued) >= 1);
 
-    /* CPIA is a compressed format and we don't know the exact number of bytes
-     * used by a frame, so set it here as the driver announces it.
-     */
-    if (ctx->video_codec_id == AV_CODEC_ID_CPIA)
-        s->frame_size = buf.bytesused;
+#ifdef V4L2_BUF_FLAG_ERROR
+    if (buf.flags & V4L2_BUF_FLAG_ERROR) {
+        av_log(ctx, AV_LOG_WARNING,
+               "Dequeued v4l2 buffer contains corrupted data (%d bytes).\n",
+               buf.bytesused);
+        buf.bytesused = 0;
+    } else
+#endif
+    {
+        /* CPIA is a compressed format and we don't know the exact number of bytes
+         * used by a frame, so set it here as the driver announces it. */
+        if (ctx->video_codec_id == AV_CODEC_ID_CPIA)
+            s->frame_size = buf.bytesused;
 
-    if (s->frame_size > 0 && buf.bytesused != s->frame_size) {
-        av_log(ctx, AV_LOG_ERROR,
-               "The v4l2 frame is %d bytes, but %d bytes are expected\n",
-               buf.bytesused, s->frame_size);
-        enqueue_buffer(s, &buf);
-        return AVERROR_INVALIDDATA;
+        if (s->frame_size > 0 && buf.bytesused != s->frame_size) {
+            av_log(ctx, AV_LOG_ERROR,
+                   "Dequeued v4l2 buffer contains %d bytes, but %d were expected. Flags: 0x%08X.\n",
+                   buf.bytesused, s->frame_size, buf.flags);
+            enqueue_buffer(s, &buf);
+            return AVERROR_INVALIDDATA;
+        }
     }
 
     /* Image is at s->buff_start[buf.index] */
@@ -585,7 +596,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
     pkt->pts = buf.timestamp.tv_sec * INT64_C(1000000) + buf.timestamp.tv_usec;
     convert_timestamp(ctx, &pkt->pts);
 
-    return s->buf_len[buf.index];
+    return pkt->size;
 }
 
 static int mmap_start(AVFormatContext *ctx)
@@ -634,8 +645,8 @@ static void mmap_close(struct video_data *s)
     for (i = 0; i < s->buffers; i++) {
         v4l2_munmap(s->buf_start[i], s->buf_len[i]);
     }
-    av_free(s->buf_start);
-    av_free(s->buf_len);
+    av_freep(&s->buf_start);
+    av_freep(&s->buf_len);
 }
 
 static int v4l2_set_parameters(AVFormatContext *ctx)
@@ -746,7 +757,7 @@ static int v4l2_set_parameters(AVFormatContext *ctx)
             }
         } else {
             av_log(ctx, AV_LOG_WARNING,
-                   "The driver does not allow to change time per frame\n");
+                   "The driver does not permit changing the time per frame\n");
         }
     }
     if (tpf->denominator > 0 && tpf->numerator > 0) {
@@ -1006,6 +1017,81 @@ static int v4l2_read_close(AVFormatContext *ctx)
     return 0;
 }
 
+static int v4l2_is_v4l_dev(const char *name)
+{
+    return !strncmp(name, "video", 5) ||
+           !strncmp(name, "radio", 5) ||
+           !strncmp(name, "vbi", 3) ||
+           !strncmp(name, "v4l-subdev", 10);
+}
+
+static int v4l2_get_device_list(AVFormatContext *ctx, AVDeviceInfoList *device_list)
+{
+    struct video_data *s = ctx->priv_data;
+    DIR *dir;
+    struct dirent *entry;
+    AVDeviceInfo *device = NULL;
+    struct v4l2_capability cap;
+    int ret = 0;
+
+    if (!device_list)
+        return AVERROR(EINVAL);
+
+    dir = opendir("/dev");
+    if (!dir) {
+        ret = AVERROR(errno);
+        av_log(ctx, AV_LOG_ERROR, "Couldn't open the directory: %s\n", av_err2str(ret));
+        return ret;
+    }
+    while ((entry = readdir(dir))) {
+        if (!v4l2_is_v4l_dev(entry->d_name))
+            continue;
+
+        snprintf(ctx->filename, sizeof(ctx->filename), "/dev/%s", entry->d_name);
+        if ((s->fd = device_open(ctx)) < 0)
+            continue;
+
+        if (v4l2_ioctl(s->fd, VIDIOC_QUERYCAP, &cap) < 0) {
+            ret = AVERROR(errno);
+            av_log(ctx, AV_LOG_ERROR, "ioctl(VIDIOC_QUERYCAP): %s\n", av_err2str(ret));
+            goto fail;
+        }
+
+        device = av_mallocz(sizeof(AVDeviceInfo));
+        if (!device) {
+            ret = AVERROR(ENOMEM);
+            goto fail;
+        }
+        device->device_name = av_strdup(ctx->filename);
+        device->device_description = av_strdup(cap.card);
+        if (!device->device_name || !device->device_description) {
+            ret = AVERROR(ENOMEM);
+            goto fail;
+        }
+
+        if ((ret = av_dynarray_add_nofree(&device_list->devices,
+                                          &device_list->nb_devices, device)) < 0)
+            goto fail;
+
+        v4l2_close(s->fd);
+        s->fd = -1;
+        continue;
+
+      fail:
+        if (device) {
+            av_freep(&device->device_name);
+            av_freep(&device->device_description);
+            av_freep(&device);
+        }
+        if (s->fd >= 0)
+            v4l2_close(s->fd);
+        s->fd = -1;
+        break;
+    }
+    closedir(dir);
+    return ret;
+}
+
 #define OFFSET(x) offsetof(struct video_data, x)
 #define DEC AV_OPT_FLAG_DECODING_PARAM
 
@@ -1050,6 +1136,7 @@ AVInputFormat ff_v4l2_demuxer = {
     .read_header    = v4l2_read_header,
     .read_packet    = v4l2_read_packet,
     .read_close     = v4l2_read_close,
+    .get_device_list = v4l2_get_device_list,
     .flags          = AVFMT_NOFILE,
     .priv_class     = &v4l2_class,
 };

@@ -20,7 +20,6 @@ OBJS = allformats.o         \
        os_support.o         \
        riff.o               \
        sdp.o                \
-       seek.o               \
        url.o                \
        utils.o              \
 
@@ -30,8 +29,10 @@ OBJS-$(CONFIG_RIFFENC)                   += riffenc.o
 OBJS-$(CONFIG_RTPDEC)                    += rdt.o                       \
                                             rtp.o                       \
                                             rtpdec.o                    \
+                                            rtpdec_ac3.o                \
                                             rtpdec_amr.o                \
                                             rtpdec_asf.o                \
+                                            rtpdec_dv.o                 \
                                             rtpdec_g726.o               \
                                             rtpdec_h261.o               \
                                             rtpdec_h263.o               \
@@ -41,6 +42,7 @@ OBJS-$(CONFIG_RTPDEC)                    += rdt.o                       \
                                             rtpdec_ilbc.o               \
                                             rtpdec_jpeg.o               \
                                             rtpdec_latm.o               \
+                                            rtpdec_mpa_robust.o         \
                                             rtpdec_mpeg12.o             \
                                             rtpdec_mpeg4.o              \
                                             rtpdec_mpegts.o             \
@@ -49,6 +51,7 @@ OBJS-$(CONFIG_RTPDEC)                    += rdt.o                       \
                                             rtpdec_qt.o                 \
                                             rtpdec_svq3.o               \
                                             rtpdec_vp8.o                \
+                                            rtpdec_vp9.o                \
                                             rtpdec_xiph.o               \
                                             srtp.o
 OBJS-$(CONFIG_RTPENC_CHAIN)              += rtpenc_chain.o rtp.o
@@ -77,6 +80,7 @@ OBJS-$(CONFIG_ANM_DEMUXER)               += anm.o
 OBJS-$(CONFIG_APC_DEMUXER)               += apc.o
 OBJS-$(CONFIG_APE_DEMUXER)               += ape.o apetag.o img2.o
 OBJS-$(CONFIG_APNG_DEMUXER)              += apngdec.o
+OBJS-$(CONFIG_APNG_MUXER)                += apngenc.o
 OBJS-$(CONFIG_AQTITLE_DEMUXER)           += aqtitledec.o subtitles.o
 OBJS-$(CONFIG_ASF_DEMUXER)               += asfdec.o asf.o asfcrypt.o \
                                             avlanguage.o
@@ -87,7 +91,7 @@ OBJS-$(CONFIG_AST_DEMUXER)               += ast.o astdec.o
 OBJS-$(CONFIG_AST_MUXER)                 += ast.o astenc.o
 OBJS-$(CONFIG_AU_DEMUXER)                += au.o pcm.o
 OBJS-$(CONFIG_AU_MUXER)                  += au.o rawenc.o
-OBJS-$(CONFIG_AVI_DEMUXER)               += avidec.o
+OBJS-$(CONFIG_AVI_DEMUXER)               += avidec.o isom.o
 OBJS-$(CONFIG_AVI_MUXER)                 += avienc.o mpegtsenc.o avlanguage.o
 OBJS-$(CONFIG_AVISYNTH)                  += avisynth.o
 OBJS-$(CONFIG_AVM2_MUXER)                += swfenc.o swf.o
@@ -125,11 +129,13 @@ OBJS-$(CONFIG_DNXHD_DEMUXER)             += dnxhddec.o rawdec.o
 OBJS-$(CONFIG_DNXHD_MUXER)               += rawenc.o
 OBJS-$(CONFIG_DSF_DEMUXER)               += dsfdec.o
 OBJS-$(CONFIG_DSICIN_DEMUXER)            += dsicin.o
+OBJS-$(CONFIG_DSS_DEMUXER)               += dss.o
 OBJS-$(CONFIG_DTSHD_DEMUXER)             += dtshddec.o
 OBJS-$(CONFIG_DTS_DEMUXER)               += dtsdec.o rawdec.o
 OBJS-$(CONFIG_DTS_MUXER)                 += rawenc.o
 OBJS-$(CONFIG_DV_DEMUXER)                += dv.o
 OBJS-$(CONFIG_DV_MUXER)                  += dvenc.o
+OBJS-$(CONFIG_DVBSUB_DEMUXER)            += dvbsub.o
 OBJS-$(CONFIG_DXA_DEMUXER)               += dxa.o
 OBJS-$(CONFIG_EA_CDATA_DEMUXER)          += eacdata.o
 OBJS-$(CONFIG_EA_DEMUXER)                += electronicarts.o
@@ -200,6 +206,7 @@ OBJS-$(CONFIG_IMAGE_JPEG_PIPE_DEMUXER)    += img2dec.o img2.o
 OBJS-$(CONFIG_IMAGE_JPEGLS_PIPE_DEMUXER)  += img2dec.o img2.o
 OBJS-$(CONFIG_IMAGE_PICTOR_PIPE_DEMUXER)  += img2dec.o img2.o
 OBJS-$(CONFIG_IMAGE_PNG_PIPE_DEMUXER)     += img2dec.o img2.o
+OBJS-$(CONFIG_IMAGE_QDRAW_PIPE_DEMUXER)   += img2dec.o img2.o
 OBJS-$(CONFIG_IMAGE_SGI_PIPE_DEMUXER)     += img2dec.o img2.o
 OBJS-$(CONFIG_IMAGE_SUNRAST_PIPE_DEMUXER) += img2dec.o img2.o
 OBJS-$(CONFIG_IMAGE_TIFF_PIPE_DEMUXER)    += img2dec.o img2.o
@@ -232,7 +239,7 @@ OBJS-$(CONFIG_MATROSKA_DEMUXER)          += matroskadec.o matroska.o  \
 OBJS-$(CONFIG_MATROSKA_MUXER)            += matroskaenc.o matroska.o \
                                             isom.o avc.o hevc.o \
                                             flacenc_header.o avlanguage.o vorbiscomment.o wv.o \
-                                            webmdashenc.o
+                                            webmdashenc.o webm_chunk.o
 OBJS-$(CONFIG_MD5_MUXER)                 += md5enc.o
 OBJS-$(CONFIG_MGSTS_DEMUXER)             += mgsts.o
 OBJS-$(CONFIG_MICRODVD_DEMUXER)          += microdvddec.o subtitles.o
@@ -264,6 +271,7 @@ OBJS-$(CONFIG_MPEGPS_DEMUXER)            += mpeg.o
 OBJS-$(CONFIG_MPEGTS_DEMUXER)            += mpegts.o isom.o
 OBJS-$(CONFIG_MPEGTS_MUXER)              += mpegtsenc.o
 OBJS-$(CONFIG_MPEGVIDEO_DEMUXER)         += mpegvideodec.o rawdec.o
+OBJS-$(CONFIG_MPJPEG_DEMUXER)            += mpjpegdec.o
 OBJS-$(CONFIG_MPJPEG_MUXER)              += mpjpeg.o
 OBJS-$(CONFIG_MPL2_DEMUXER)              += mpl2dec.o subtitles.o
 OBJS-$(CONFIG_MPSUB_DEMUXER)             += mpsubdec.o subtitles.o
@@ -278,7 +286,7 @@ OBJS-$(CONFIG_NC_DEMUXER)                += ncdec.o
 OBJS-$(CONFIG_NISTSPHERE_DEMUXER)        += nistspheredec.o pcm.o
 OBJS-$(CONFIG_NSV_DEMUXER)               += nsvdec.o
 OBJS-$(CONFIG_NULL_MUXER)                += nullenc.o
-OBJS-$(CONFIG_NUT_DEMUXER)               += nutdec.o nut.o
+OBJS-$(CONFIG_NUT_DEMUXER)               += nutdec.o nut.o isom.o
 OBJS-$(CONFIG_NUT_MUXER)                 += nutenc.o nut.o
 OBJS-$(CONFIG_NUV_DEMUXER)               += nuv.o
 OBJS-$(CONFIG_OGG_DEMUXER)               += oggdec.o         \
@@ -363,6 +371,7 @@ OBJS-$(CONFIG_RSD_DEMUXER)               += rsd.o
 OBJS-$(CONFIG_RSO_DEMUXER)               += rsodec.o rso.o pcm.o
 OBJS-$(CONFIG_RSO_MUXER)                 += rsoenc.o rso.o
 OBJS-$(CONFIG_RPL_DEMUXER)               += rpl.o
+OBJS-$(CONFIG_RTP_MPEGTS_MUXER)          += rtpenc_mpegts.o
 OBJS-$(CONFIG_RTP_MUXER)                 += rtp.o         \
                                             rtpenc_aac.o     \
                                             rtpenc_latm.o    \
@@ -370,14 +379,13 @@ OBJS-$(CONFIG_RTP_MUXER)                 += rtp.o         \
                                             rtpenc_h261.o    \
                                             rtpenc_h263.o    \
                                             rtpenc_h263_rfc2190.o \
-                                            rtpenc_hevc.o    \
+                                            rtpenc_h264_hevc.o    \
                                             rtpenc_jpeg.o \
                                             rtpenc_mpv.o     \
                                             rtpenc.o      \
-                                            rtpenc_h264.o \
                                             rtpenc_vp8.o  \
                                             rtpenc_xiph.o \
-                                            avc.o
+                                            avc.o hevc.o
 OBJS-$(CONFIG_RTSP_DEMUXER)              += rtsp.o rtspdec.o httpauth.o \
                                             urldecode.o
 OBJS-$(CONFIG_RTSP_MUXER)                += rtsp.o rtspenc.o httpauth.o \
@@ -392,6 +400,7 @@ OBJS-$(CONFIG_SEGAFILM_DEMUXER)          += segafilm.o
 OBJS-$(CONFIG_SEGMENT_MUXER)             += segment.o
 OBJS-$(CONFIG_SHORTEN_DEMUXER)           += rawdec.o
 OBJS-$(CONFIG_SIFF_DEMUXER)              += siff.o
+OBJS-$(CONFIG_SINGLEJPEG_MUXER)          += rawenc.o
 OBJS-$(CONFIG_SMACKER_DEMUXER)           += smacker.o
 OBJS-$(CONFIG_SMJPEG_DEMUXER)            += smjpegdec.o smjpeg.o
 OBJS-$(CONFIG_SMJPEG_MUXER)              += smjpegenc.o smjpeg.o
@@ -446,12 +455,13 @@ OBJS-$(CONFIG_WEBM_MUXER)                += matroskaenc.o matroska.o \
                                             isom.o avc.o hevc.o \
                                             flacenc_header.o avlanguage.o \
                                             wv.o vorbiscomment.o \
-                                            webmdashenc.o
+                                            webmdashenc.o webm_chunk.o
 OBJS-$(CONFIG_WEBM_DASH_MANIFEST_DEMUXER)+= matroskadec.o matroska.o  \
                                             isom.o rmsipr.o flac_picture.o \
                                             oggparsevorbis.o vorbiscomment.o \
                                             flac_picture.o replaygain.o
 OBJS-$(CONFIG_WEBM_DASH_MANIFEST_MUXER)  += webmdashenc.o matroska.o
+OBJS-$(CONFIG_WEBM_CHUNK_MUXER)          += webm_chunk.o matroska.o
 OBJS-$(CONFIG_WEBP_MUXER)                += webpenc.o
 OBJS-$(CONFIG_WEBVTT_DEMUXER)            += webvttdec.o subtitles.o
 OBJS-$(CONFIG_WEBVTT_MUXER)              += webvttenc.o
@@ -513,8 +523,11 @@ OBJS-$(CONFIG_SCTP_PROTOCOL)             += sctp.o
 OBJS-$(CONFIG_SRTP_PROTOCOL)             += srtpproto.o srtp.o
 OBJS-$(CONFIG_SUBFILE_PROTOCOL)          += subfile.o
 OBJS-$(CONFIG_TCP_PROTOCOL)              += tcp.o
-OBJS-$(CONFIG_TLS_PROTOCOL)              += tls.o
+OBJS-$(CONFIG_TLS_GNUTLS_PROTOCOL)       += tls_gnutls.o tls.o
+OBJS-$(CONFIG_TLS_OPENSSL_PROTOCOL)      += tls_openssl.o tls.o
+OBJS-$(CONFIG_TLS_SECURETRANSPORT_PROTOCOL) += tls_securetransport.o tls.o
 OBJS-$(CONFIG_UDP_PROTOCOL)              += udp.o
+OBJS-$(CONFIG_UDPLITE_PROTOCOL)          += udp.o
 OBJS-$(CONFIG_UNIX_PROTOCOL)             += unix.o
 
 OBJS-$(HAVE_LIBC_MSVCRT)                 += file_open.o
@@ -533,6 +546,7 @@ TESTPROGS = seek                                                        \
             url                                                         \
 
 TESTPROGS-$(CONFIG_NETWORK)              += noproxy
+TESTPROGS-$(CONFIG_FFRTMPCRYPT_PROTOCOL) += rtmpdh
 
 TOOLS     = aviocat                                                     \
             ismindex                                                    \

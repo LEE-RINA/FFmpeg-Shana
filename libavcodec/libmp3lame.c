@@ -61,7 +61,7 @@ static int realloc_buffer(LAMEContext *s)
     if (!s->buffer || s->buffer_size - s->buffer_index < BUFFER_SIZE) {
         int new_size = s->buffer_index + 2 * BUFFER_SIZE, err;
 
-        av_dlog(s->avctx, "resizing output buffer: %d -> %d\n", s->buffer_size,
+        ff_dlog(s->avctx, "resizing output buffer: %d -> %d\n", s->buffer_size,
                 new_size);
         if ((err = av_reallocp(&s->buffer, new_size)) < 0) {
             s->buffer_size = s->buffer_index = 0;
@@ -204,7 +204,7 @@ static av_cold int mp3lame_encode_init(AVCodecContext *avctx)
     if (avctx->sample_fmt == AV_SAMPLE_FMT_FLTP) {
         int ch;
         for (ch = 0; ch < avctx->channels; ch++) {
-            s->samples_flt[ch] = av_malloc(avctx->frame_size *
+            s->samples_flt[ch] = av_malloc_array(avctx->frame_size,
                                            sizeof(*s->samples_flt[ch]));
             if (!s->samples_flt[ch]) {
                 ret = AVERROR(ENOMEM);
@@ -313,7 +313,7 @@ static int mp3lame_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
         return -1;
     }
     len = hdr.frame_size;
-    av_dlog(avctx, "in:%d packet-len:%d index:%d\n", avctx->frame_size, len,
+    ff_dlog(avctx, "in:%d packet-len:%d index:%d\n", avctx->frame_size, len,
             s->buffer_index);
     if (len <= s->buffer_index) {
         if ((ret = ff_alloc_packet2(avctx, avpkt, len)) < 0)

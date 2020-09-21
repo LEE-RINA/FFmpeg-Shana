@@ -117,7 +117,7 @@ static int open_output_file(const char *filename)
             /* in this example, we choose transcoding to same codec */
             encoder = avcodec_find_encoder(dec_ctx->codec_id);
             if (!encoder) {
-                av_log(NULL, AV_LOG_FATAL, "Neccessary encoder not found\n");
+                av_log(NULL, AV_LOG_FATAL, "Necessary encoder not found\n");
                 return AVERROR_INVALIDDATA;
             }
 
@@ -573,7 +573,7 @@ end:
     av_free(filter_ctx);
     avformat_close_input(&ifmt_ctx);
     if (ofmt_ctx && !(ofmt_ctx->oformat->flags & AVFMT_NOFILE))
-        avio_close(ofmt_ctx->pb);
+        avio_closep(&ofmt_ctx->pb);
     avformat_free_context(ofmt_ctx);
 
     if (ret < 0)

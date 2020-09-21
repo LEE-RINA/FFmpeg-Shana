@@ -41,8 +41,10 @@
 #include "libavutil/avassert.h"
 #include "libavutil/avstring.h"
 #include "libavutil/bprint.h"
+#include "libavutil/display.h"
 #include "libavutil/mathematics.h"
 #include "libavutil/imgutils.h"
+#include "libavutil/libm.h"
 #include "libavutil/parseutils.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/eval.h"
@@ -290,10 +292,14 @@ static int write_option(void *optctx, const OptionDef *po, const char *opt,
     if (po->flags & OPT_SPEC) {
         SpecifierOpt **so = dst;
         char *p = strchr(opt, ':');
+        char *str;
 
         dstcount = (int *)(so + 1);
         *so = grow_array(*so, sizeof(**so), dstcount, *dstcount + 1);
-        (*so)[*dstcount - 1].specifier = av_strdup(p ? p + 1 : "");
+        str = av_strdup(p ? p + 1 : "");
+        if (!str)
+            return AVERROR(ENOMEM);
+        (*so)[*dstcount - 1].specifier = str;
         dst = &(*so)[*dstcount - 1].u;
     }
 
@@ -301,6 +307,8 @@ static int write_option(void *optctx, const OptionDef *po, const char *opt,
         char *str;
         str = av_strdup(arg);
         av_freep(dst);
+        if (!str)
+            return AVERROR(ENOMEM);
         *(char **)dst = str;
     } else if (po->flags & OPT_BOOL || po->flags & OPT_INT) {
         *(int *)dst = parse_number_or_die(opt, arg, OPT_INT64, INT_MIN, INT_MAX);
@@ -464,10 +472,22 @@ static void dump_argument(const char *a)
     fputc('"', report_file);
 }
 
+static void check_options(const OptionDef *po)
+{
+    while (po->name) {
+        if (po->flags & OPT_PERFILE)
+            av_assert0(po->flags & (OPT_INPUT | OPT_OUTPUT));
+        po++;
+    }
+}
+
 void parse_loglevel(int argc, char **argv, const OptionDef *options)
 {
     int idx = locate_option(argc, argv, options, "loglevel");
     const char *env;
+
+    check_options(options);
+
     if (!idx)
         idx = locate_option(argc, argv, options, "v");
     if (idx && argv[idx + 1])
@@ -829,6 +849,7 @@ int opt_loglevel(void *optctx, const char *opt, const char *arg)
         { "info"   , AV_LOG_INFO    },
         { "verbose", AV_LOG_VERBOSE },
         { "debug"  , AV_LOG_DEBUG   },
+        { "trace"  , AV_LOG_TRACE   },
     };
     char *tail;
     int level;
@@ -1065,8 +1086,7 @@ static void print_program_info(int flags, int level)
         av_log(NULL, level, " Copyright (c) %d-%d the FFmpeg developers",
                program_birth_year, CONFIG_THIS_YEAR);
     av_log(NULL, level, "\n");
-    av_log(NULL, level, "%sbuilt on %s %s with %s\n",
-           indent, __DATE__, __TIME__, CC_IDENT);
+    av_log(NULL, level, "%sbuilt with %s\n", indent, CC_IDENT);
 
     av_log(NULL, level, "%sconfiguration: " FFMPEG_CONFIGURATION "\n", indent);
 }
@@ -1203,12 +1223,7 @@ static int is_device(const AVClass *avclass)
 {
     if (!avclass)
         return 0;
-    return avclass->category == AV_CLASS_CATEGORY_DEVICE_VIDEO_OUTPUT ||
-           avclass->category == AV_CLASS_CATEGORY_DEVICE_VIDEO_INPUT ||
-           avclass->category == AV_CLASS_CATEGORY_DEVICE_AUDIO_OUTPUT ||
-           avclass->category == AV_CLASS_CATEGORY_DEVICE_AUDIO_INPUT ||
-           avclass->category == AV_CLASS_CATEGORY_DEVICE_OUTPUT ||
-           avclass->category == AV_CLASS_CATEGORY_DEVICE_INPUT;
+    return AV_IS_INPUT_DEVICE(avclass->category) || AV_IS_OUTPUT_DEVICE(avclass->category);
 }
 
 static int show_formats_devices(void *optctx, const char *opt, const char *arg, int device_only)
@@ -1525,10 +1540,10 @@ int show_protocols(void *optctx, const char *opt, const char *arg)
     printf("Supported file protocols:\n"
            "Input:\n");
     while ((name = avio_enum_protocols(&opaque, 0)))
-        printf("%s\n", name);
+        printf("  %s\n", name);
     printf("Output:\n");
     while ((name = avio_enum_protocols(&opaque, 1)))
-        printf("%s\n", name);
+        printf("  %s\n", name);
     return 0;
 }
 
@@ -1543,7 +1558,7 @@ int show_filters(void *optctx, const char *opt, const char *arg)
     printf("Filters:\n"
            "  T.. = Timeline support\n"
            "  .S. = Slice threading\n"
-           "  ..C = Commmand support\n"
+           "  ..C = Command support\n"
            "  A = Audio input/output\n"
            "  V = Video input/output\n"
            "  N = Dynamic number and/or type of input/output\n"
@@ -1811,6 +1826,8 @@ int show_help(void *optctx, const char *opt, const char *arg)
     av_log_set_callback(log_callback_help);
 
     topic = av_strdup(arg ? arg : "");
+    if (!topic)
+        return AVERROR(ENOMEM);
     par = strchr(topic, '=');
     if (par)
         *par++ = 0;
@@ -1850,7 +1867,7 @@ int read_yesno(void)
 
 int cmdutils_read_file(const char *filename, char **bufptr, size_t *size)
 {
-    int ret;
+    int64_t ret;
     FILE *f = av_fopen_utf8(filename, "rb");
 
     if (!f) {
@@ -1859,20 +1876,31 @@ int cmdutils_read_file(const char *filename, char **bufptr, size_t *size)
                strerror(errno));
         return ret;
     }
-    fseek(f, 0, SEEK_END);
-    *size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (*size == (size_t)-1) {
+
+    ret = fseek(f, 0, SEEK_END);
+    if (ret == -1) {
         ret = AVERROR(errno);
-        av_log(NULL, AV_LOG_ERROR, "IO error: %s\n", strerror(errno));
-        fclose(f);
-        return ret;
+        goto out;
     }
+
+    ret = ftell(f);
+    if (ret < 0) {
+        ret = AVERROR(errno);
+        goto out;
+    }
+    *size = ret;
+
+    ret = fseek(f, 0, SEEK_SET);
+    if (ret == -1) {
+        ret = AVERROR(errno);
+        goto out;
+    }
+
     *bufptr = av_malloc(*size + 1);
     if (!*bufptr) {
         av_log(NULL, AV_LOG_ERROR, "Could not allocate file buffer\n");
-        fclose(f);
-        return AVERROR(ENOMEM);
+        ret = AVERROR(ENOMEM);
+        goto out;
     }
     ret = fread(*bufptr, 1, *size, f);
     if (ret < *size) {
@@ -1888,6 +1916,9 @@ int cmdutils_read_file(const char *filename, char **bufptr, size_t *size)
         (*bufptr)[(*size)++] = '\0';
     }
 
+out:
+    if (ret < 0)
+        av_log(NULL, AV_LOG_ERROR, "IO error: %s\n", av_err2str(ret));
     fclose(f);
     return ret;
 }
@@ -2034,7 +2065,7 @@ void *grow_array(void *array, int elem_size, int *size, int new_size)
         exit_program(1);
     }
     if (*size < new_size) {
-        uint8_t *tmp = av_realloc(array, new_size*elem_size);
+        uint8_t *tmp = av_realloc_array(array, new_size, elem_size);
         if (!tmp) {
             av_log(NULL, AV_LOG_ERROR, "Could not alloc buffer.\n");
             exit_program(1);
@@ -2046,13 +2077,35 @@ void *grow_array(void *array, int elem_size, int *size, int new_size)
     return array;
 }
 
+double get_rotation(AVStream *st)
+{
+    AVDictionaryEntry *rotate_tag = av_dict_get(st->metadata, "rotate", NULL, 0);
+    uint8_t* displaymatrix = av_stream_get_side_data(st,
+                                                     AV_PKT_DATA_DISPLAYMATRIX, NULL);
+    double theta = 0;
+
+    if (rotate_tag && *rotate_tag->value && strcmp(rotate_tag->value, "0")) {
+        char *tail;
+        theta = av_strtod(rotate_tag->value, &tail);
+        if (*tail)
+            theta = 0;
+    }
+    if (displaymatrix && !theta)
+        theta = -av_display_rotation_get((int32_t*) displaymatrix);
+
+    theta -= 360*floor(theta/360 + 0.9/360);
+
+    if (fabs(theta - 90*round(theta/90)) > 2)
+        av_log_ask_for_sample(NULL, "Odd rotation angle\n");
+
+    return theta;
+}
+
 #if CONFIG_AVDEVICE
 static int print_device_sources(AVInputFormat *fmt, AVDictionary *opts)
 {
     int ret, i;
-    AVFormatContext *dev = NULL;
     AVDeviceInfoList *device_list = NULL;
-    AVDictionary *tmp_opts = NULL;
 
     if (!fmt || !fmt->priv_class  || !AV_IS_INPUT_DEVICE(fmt->priv_class->category))
         return AVERROR(EINVAL);
@@ -2064,15 +2117,7 @@ static int print_device_sources(AVInputFormat *fmt, AVDictionary *opts)
         goto fail;
     }
 
-    /* TODO: avformat_open_input calls read_header callback which is not necessary.
-             Function like avformat_alloc_output_context2 for input could be helpful here. */
-    av_dict_copy(&tmp_opts, opts, 0);
-    if ((ret = avformat_open_input(&dev, NULL, fmt, &tmp_opts)) < 0) {
-        printf("Cannot open device: %s.\n", fmt->name);
-        goto fail;
-    }
-
-    if ((ret = avdevice_list_devices(dev, &device_list)) < 0) {
+    if ((ret = avdevice_list_input_sources(fmt, NULL, opts, &device_list)) < 0) {
         printf("Cannot list sources.\n");
         goto fail;
     }
@@ -2083,18 +2128,14 @@ static int print_device_sources(AVInputFormat *fmt, AVDictionary *opts)
     }
 
   fail:
-    av_dict_free(&tmp_opts);
     avdevice_free_list_devices(&device_list);
-    avformat_close_input(&dev);
     return ret;
 }
 
 static int print_device_sinks(AVOutputFormat *fmt, AVDictionary *opts)
 {
     int ret, i;
-    AVFormatContext *dev = NULL;
     AVDeviceInfoList *device_list = NULL;
-    AVDictionary *tmp_opts = NULL;
 
     if (!fmt || !fmt->priv_class  || !AV_IS_OUTPUT_DEVICE(fmt->priv_class->category))
         return AVERROR(EINVAL);
@@ -2106,14 +2147,7 @@ static int print_device_sinks(AVOutputFormat *fmt, AVDictionary *opts)
         goto fail;
     }
 
-    if ((ret = avformat_alloc_output_context2(&dev, fmt, NULL, NULL)) < 0) {
-        printf("Cannot open device: %s.\n", fmt->name);
-        goto fail;
-    }
-    av_dict_copy(&tmp_opts, opts, 0);
-    av_opt_set_dict2(dev, &tmp_opts, AV_OPT_SEARCH_CHILDREN);
-
-    if ((ret = avdevice_list_devices(dev, &device_list)) < 0) {
+    if ((ret = avdevice_list_output_sinks(fmt, NULL, opts, &device_list)) < 0) {
         printf("Cannot list sinks.\n");
         goto fail;
     }
@@ -2124,9 +2158,7 @@ static int print_device_sinks(AVOutputFormat *fmt, AVDictionary *opts)
     }
 
   fail:
-    av_dict_free(&tmp_opts);
     avdevice_free_list_devices(&device_list);
-    avformat_free_context(dev);
     return ret;
 }
 
@@ -2170,7 +2202,7 @@ int show_sources(void *optctx, const char *opt, const char *arg)
         if (fmt) {
             if (!strcmp(fmt->name, "lavfi"))
                 continue; //it's pointless to probe lavfi
-            if (dev && strcmp(fmt->name, dev))
+            if (dev && !av_match_name(dev, fmt->name))
                 continue;
             print_device_sources(fmt, opts);
         }
@@ -2178,7 +2210,7 @@ int show_sources(void *optctx, const char *opt, const char *arg)
     do {
         fmt = av_input_video_device_next(fmt);
         if (fmt) {
-            if (dev && strcmp(fmt->name, dev))
+            if (dev && !av_match_name(dev, fmt->name))
                 continue;
             print_device_sources(fmt, opts);
         }
@@ -2206,7 +2238,7 @@ int show_sinks(void *optctx, const char *opt, const char *arg)
     do {
         fmt = av_output_audio_device_next(fmt);
         if (fmt) {
-            if (dev && strcmp(fmt->name, dev))
+            if (dev && !av_match_name(dev, fmt->name))
                 continue;
             print_device_sinks(fmt, opts);
         }
@@ -2214,7 +2246,7 @@ int show_sinks(void *optctx, const char *opt, const char *arg)
     do {
         fmt = av_output_video_device_next(fmt);
         if (fmt) {
-            if (dev && strcmp(fmt->name, dev))
+            if (dev && !av_match_name(dev, fmt->name))
                 continue;
             print_device_sinks(fmt, opts);
         }
@@ -2225,4 +2257,5 @@ int show_sinks(void *optctx, const char *opt, const char *arg)
     av_log_set_level(error_level);
     return ret;
 }
+
 #endif

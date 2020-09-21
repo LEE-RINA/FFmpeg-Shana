@@ -81,8 +81,10 @@ static int query_formats(AVFilterContext *ctx)
         AV_PIX_FMT_NONE
     };
 
-    ff_set_common_formats(ctx, ff_make_format_list(pix_fmts));
-    return 0;
+    AVFilterFormats *fmts_list = ff_make_format_list(pix_fmts);
+    if (!fmts_list)
+        return AVERROR(ENOMEM);
+    return ff_set_common_formats(ctx, fmts_list);
 }
 
 static void lowpass_line_c(uint8_t *dstp, ptrdiff_t width, const uint8_t *srcp,
@@ -119,6 +121,9 @@ static int config_out_props(AVFilterLink *outlink)
     outlink->w = inlink->w;
     outlink->h = tinterlace->mode == MODE_MERGE || tinterlace->mode == MODE_PAD ?
         inlink->h*2 : inlink->h;
+    if (tinterlace->mode == MODE_MERGE || tinterlace->mode == MODE_PAD)
+        outlink->sample_aspect_ratio = av_mul_q(inlink->sample_aspect_ratio,
+                                                av_make_q(2, 1));
 
     if (tinterlace->mode == MODE_PAD) {
         uint8_t black[4] = { 16, 128, 128, 16 };
@@ -197,19 +202,16 @@ void copy_picture_field(TInterlaceContext *tinterlace,
                         int flags)
 {
     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(format);
+    int hsub = desc->log2_chroma_w;
     int plane, vsub = desc->log2_chroma_h;
     int k = src_field == FIELD_UPPER_AND_LOWER ? 1 : 2;
     int h;
 
     for (plane = 0; plane < desc->nb_components; plane++) {
         int lines = plane == 1 || plane == 2 ? FF_CEIL_RSHIFT(src_h, vsub) : src_h;
-        int cols  = plane == 1 || plane == 2 ? FF_CEIL_RSHIFT(    w, desc->log2_chroma_w) : w;
-        int linesize = av_image_get_linesize(format, w, plane);
+        int cols  = plane == 1 || plane == 2 ? FF_CEIL_RSHIFT(    w, hsub) : w;
         uint8_t *dstp = dst[plane];
         const uint8_t *srcp = src[plane];
-
-        if (linesize < 0)
-            return;
 
         lines = (lines + (src_field == FIELD_UPPER)) / k;
         if (src_field == FIELD_LOWER)
@@ -234,7 +236,7 @@ void copy_picture_field(TInterlaceContext *tinterlace,
             }
         } else {
             av_image_copy_plane(dstp, dst_linesize[plane] * (interleave ? 2 : 1),
-                            srcp, src_linesize[plane]*k, linesize, lines);
+                                srcp, src_linesize[plane]*k, cols, lines);
         }
     }
 }
@@ -267,6 +269,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *picref)
         out->height = outlink->h;
         out->interlaced_frame = 1;
         out->top_field_first = 1;
+        out->sample_aspect_ratio = av_mul_q(cur->sample_aspect_ratio, av_make_q(2, 1));
 
         /* write odd frame lines into the upper field of the new frame */
         copy_picture_field(tinterlace, out->data, out->linesize,
@@ -296,6 +299,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *picref)
             return AVERROR(ENOMEM);
         av_frame_copy_props(out, cur);
         out->height = outlink->h;
+        out->sample_aspect_ratio = av_mul_q(cur->sample_aspect_ratio, av_make_q(2, 1));
 
         field = (1 + tinterlace->frame) & 1 ? FIELD_UPPER : FIELD_LOWER;
         /* copy upper and lower fields */
