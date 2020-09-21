@@ -17,6 +17,17 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#ifndef _WIN32
+#include <dlfcn.h>
+#define LIBNAME "libfdk-aac.so.0"
+#else
+#include <windows.h>
+#define LIBNAME "libfdk-aac-0.dll"
+#define dlopen(fname, f) ((void *) LoadLibraryA(fname))
+#define dlclose(handle) FreeLibrary((HMODULE) handle)
+#define dlsym(handle, name) GetProcAddress((HMODULE) handle, name)
+#endif
+
 #include <fdk-aac/aacdecoder_lib.h>
 
 #include "libavutil/channel_layout.h"
@@ -24,6 +35,35 @@
 #include "libavutil/opt.h"
 #include "avcodec.h"
 #include "internal.h"
+
+typedef LINKSPEC_H HANDLE_AACDECODER (*imp_aacDecoder_Open)(TRANSPORT_TYPE transportFmt, UINT nrOfLayers);
+typedef LINKSPEC_H void (*imp_aacDecoder_Close)(HANDLE_AACDECODER self);
+typedef LINKSPEC_H AAC_DECODER_ERROR (*imp_aacDecoder_Fill)(HANDLE_AACDECODER self, UCHAR *pBuffer[], const UINT bufferSize[], UINT *bytesValid);
+typedef LINKSPEC_H AAC_DECODER_ERROR (*imp_aacDecoder_DecodeFrame)(HANDLE_AACDECODER self, INT_PCM *pTimeData, const INT timeDataSize, const UINT flags);
+typedef LINKSPEC_H CStreamInfo* (*imp_aacDecoder_GetStreamInfo)(HANDLE_AACDECODER self);
+typedef LINKSPEC_H AAC_DECODER_ERROR (*imp_aacDecoder_ConfigRaw)(HANDLE_AACDECODER self, UCHAR *conf[], const UINT length[]);
+typedef LINKSPEC_H AAC_DECODER_ERROR (*imp_aacDecoder_SetParam)(const HANDLE_AACDECODER self, const AACDEC_PARAM param, const INT value);
+
+typedef struct _aacDecLib {
+    imp_aacDecoder_Open aacDecoder_Open;
+    imp_aacDecoder_Close aacDecoder_Close;
+    imp_aacDecoder_Fill aacDecoder_Fill;
+    imp_aacDecoder_DecodeFrame aacDecoder_DecodeFrame;
+    imp_aacDecoder_ConfigRaw aacDecoder_ConfigRaw;
+    imp_aacDecoder_GetStreamInfo aacDecoder_GetStreamInfo;
+    imp_aacDecoder_SetParam aacDecoder_SetParam;
+} aacDecLib;
+
+#define DLSYM(x) \
+    do \
+    { \
+        s->pfn.x = ( imp_##x ) dlsym(s->hLib, AV_STRINGIFY(x)); \
+        if (!s->pfn.x ) \
+        { \
+            av_log(avctx, AV_LOG_ERROR, "Unable to find symbol " AV_STRINGIFY(x) " in dynamic " LIBNAME "\n"); \
+            return -1; \
+        } \
+    } while (0)
 
 enum ConcealMethod {
     CONCEAL_METHOD_SPECTRAL_MUTING      =  0,
@@ -37,6 +77,8 @@ typedef struct FDKAACDecContext {
     HANDLE_AACDECODER handle;
     int initialized;
     enum ConcealMethod conceal_method;
+    void *hLib;
+    aacDecLib pfn;
 } FDKAACDecContext;
 
 #define OFFSET(x) offsetof(FDKAACDecContext, x)
@@ -56,7 +98,7 @@ static const AVClass fdk_aac_dec_class = {
 static int get_stream_info(AVCodecContext *avctx)
 {
     FDKAACDecContext *s   = avctx->priv_data;
-    CStreamInfo *info     = aacDecoder_GetStreamInfo(s->handle);
+    CStreamInfo *info     = s->pfn.aacDecoder_GetStreamInfo(s->handle);
     int channel_counts[9] = { 0 };
     int i, ch_error       = 0;
     uint64_t ch_layout    = 0;
@@ -168,8 +210,10 @@ static av_cold int fdk_aac_decode_close(AVCodecContext *avctx)
 {
     FDKAACDecContext *s = avctx->priv_data;
 
-    if (s->handle)
-        aacDecoder_Close(s->handle);
+    if (s->hLib && s->handle) {
+        s->pfn.aacDecoder_Close(s->handle);
+        dlclose(s->hLib);
+    }
 
     return 0;
 }
@@ -178,6 +222,25 @@ static av_cold int fdk_aac_decode_init(AVCodecContext *avctx)
 {
     FDKAACDecContext *s = avctx->priv_data;
     AAC_DECODER_ERROR err;
+
+    if (!(s->hLib = dlopen(LIBNAME, RTLD_NOW))) {
+        av_log(avctx, AV_LOG_ERROR, "Unable to load " LIBNAME "\n");
+        return -1;
+    }
+
+    DLSYM(aacDecoder_Open);
+#define aacDecoder_Open s->pfn.aacDecoder_Open
+    DLSYM(aacDecoder_Close);
+    DLSYM(aacDecoder_Fill);
+#define aacDecoder_Fill s->pfn.aacDecoder_Fill
+    DLSYM(aacDecoder_DecodeFrame);
+#define aacDecoder_DecodeFrame s->pfn.aacDecoder_DecodeFrame
+    DLSYM(aacDecoder_GetStreamInfo);
+#define aacDecoder_GetStreamInfo s->pfn.aacDecoder_GetStreamInfo
+    DLSYM(aacDecoder_ConfigRaw);
+#define aacDecoder_ConfigRaw s->pfn.aacDecoder_ConfigRaw
+    DLSYM(aacDecoder_SetParam);
+#define aacDecoder_SetParam s->pfn.aacDecoder_SetParam
 
     s->handle = aacDecoder_Open(avctx->extradata_size ? TT_MP4_RAW : TT_MP4_ADTS, 1);
     if (!s->handle) {

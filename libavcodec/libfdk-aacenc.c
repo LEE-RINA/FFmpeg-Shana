@@ -17,6 +17,17 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#ifndef _WIN32
+#include <dlfcn.h>
+#define LIBNAME "libfdk-aac.so.0"
+#else
+#include <windows.h>
+#define LIBNAME "libfdk-aac-0.dll"
+#define dlopen(fname, f) ((void *) LoadLibraryA(fname))
+#define dlclose(handle) FreeLibrary((HMODULE) handle)
+#define dlsym(handle, name) GetProcAddress((HMODULE) handle, name)
+#endif
+
 #include <fdk-aac/aacenc_lib.h>
 
 #include "libavutil/channel_layout.h"
@@ -25,6 +36,31 @@
 #include "avcodec.h"
 #include "audio_frame_queue.h"
 #include "internal.h"
+
+typedef AACENC_ERROR (*imp_aacEncOpen)(HANDLE_AACENCODER *phAacEncoder, const UINT encModules, const UINT maxChannels);
+typedef AACENC_ERROR (*imp_aacEncClose)(HANDLE_AACENCODER *phAacEncoder);
+typedef AACENC_ERROR (*imp_aacEncEncode)(const HANDLE_AACENCODER hAacEncoder, const AACENC_BufDesc *inBufDesc, const AACENC_BufDesc *outBufDesc, const AACENC_InArgs *inargs, AACENC_OutArgs *outargs);
+typedef AACENC_ERROR (*imp_aacEncInfo)(const HANDLE_AACENCODER hAacEncoder, AACENC_InfoStruct *pInfo);
+typedef AACENC_ERROR (*imp_aacEncoder_SetParam)(const HANDLE_AACENCODER hAacEncoder, const AACENC_PARAM param, const UINT value);
+
+typedef struct _aacEncLib {
+    imp_aacEncOpen aacEncOpen;
+    imp_aacEncClose aacEncClose;
+    imp_aacEncEncode aacEncEncode;
+    imp_aacEncInfo aacEncInfo;
+    imp_aacEncoder_SetParam aacEncoder_SetParam;
+} aacEncLib;
+
+#define DLSYM(x) \
+    do \
+    { \
+        s->pfn.x = ( imp_##x ) dlsym(s->hLib, AV_STRINGIFY(x)); \
+        if (!s->pfn.x ) \
+        { \
+            av_log(avctx, AV_LOG_ERROR, "Unable to find symbol " AV_STRINGIFY(x) " in dynamic " LIBNAME "\n"); \
+            return -1; \
+        } \
+    } while (0)
 
 typedef struct AACContext {
     const AVClass *class;
@@ -36,6 +72,8 @@ typedef struct AACContext {
     int header_period;
     int vbr;
 
+    void *hLib;
+    aacEncLib pfn;
     AudioFrameQueue afq;
 } AACContext;
 
@@ -93,8 +131,10 @@ static int aac_encode_close(AVCodecContext *avctx)
 {
     AACContext *s = avctx->priv_data;
 
-    if (s->handle)
-        aacEncClose(&s->handle);
+    if (s->hLib && s->handle) {
+        s->pfn.aacEncClose(&s->handle);
+        dlclose(s->hLib);
+    }
     av_freep(&avctx->extradata);
     ff_af_queue_close(&s->afq);
 
@@ -110,6 +150,21 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
     AACENC_ERROR err;
     int aot = FF_PROFILE_AAC_LOW + 1;
     int sce = 0, cpe = 0;
+
+    if (!(s->hLib = dlopen(LIBNAME, RTLD_NOW))) {
+        av_log(avctx, AV_LOG_ERROR, "Unable to load " LIBNAME "\n");
+        return -1;
+    }
+
+    DLSYM(aacEncOpen);
+#define aacEncOpen s->pfn.aacEncOpen
+    DLSYM(aacEncClose);
+    DLSYM(aacEncEncode);
+#define aacEncEncode s->pfn.aacEncEncode
+    DLSYM(aacEncInfo);
+#define aacEncInfo s->pfn.aacEncInfo
+    DLSYM(aacEncoder_SetParam);
+#define aacEncoder_SetParam s->pfn.aacEncoder_SetParam
 
     if ((err = aacEncOpen(&s->handle, 0, avctx->channels)) != AACENC_OK) {
         av_log(avctx, AV_LOG_ERROR, "Unable to open the encoder: %s\n",
@@ -286,7 +341,6 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
     }
 
     avctx->frame_size = info.frameLength;
-    avctx->delay      = info.encoderDelay;
     ff_af_queue_init(avctx, &s->afq);
 
     if (avctx->flags & CODEC_FLAG_GLOBAL_HEADER) {
