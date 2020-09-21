@@ -372,7 +372,9 @@ static void dump_spherical(void *ctx, AVCodecParameters *par, AVPacketSideData *
         size_t l, t, r, b;
         av_spherical_tile_bounds(spherical, par->width, par->height,
                                  &l, &t, &r, &b);
-        av_log(ctx, AV_LOG_INFO, "[%zu, %zu, %zu, %zu] ", l, t, r, b);
+        av_log(ctx, AV_LOG_INFO,
+               "[%"SIZE_SPECIFIER", %"SIZE_SPECIFIER", %"SIZE_SPECIFIER", %"SIZE_SPECIFIER"] ",
+               l, t, r, b);
     } else if (spherical->projection == AV_SPHERICAL_CUBEMAP) {
         av_log(ctx, AV_LOG_INFO, "[pad %"PRIu32"] ", spherical->padding);
     }
@@ -506,49 +508,53 @@ static void dump_stream_format(AVFormatContext *ic, int i,
                display_aspect_ratio.num, display_aspect_ratio.den);
     }
 
-    if (!hide_msg)
-    {
-        if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-            int fps = st->avg_frame_rate.den && st->avg_frame_rate.num;
-            int tbr = st->r_frame_rate.den && st->r_frame_rate.num;
-            int tbn = st->time_base.den && st->time_base.num;
-            int tbc = st->codec->time_base.den && st->codec->time_base.num;
+	if (!hide_msg) 
+	{
+		if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+			int fps = st->avg_frame_rate.den && st->avg_frame_rate.num;
+			int tbr = st->r_frame_rate.den && st->r_frame_rate.num;
+			int tbn = st->time_base.den && st->time_base.num;
+			int tbc = st->codec->time_base.den && st->codec->time_base.num;
 
-            if (fps || tbr || tbn || tbc)
-                av_log(NULL, AV_LOG_INFO, "%s", separator);
+			if (fps || tbr || tbn || tbc)
+				av_log(NULL, AV_LOG_INFO, "%s", separator);
 
-            if (fps)
-                print_fps(av_q2d(st->avg_frame_rate), tbr || tbn || tbc ? "fps, " : "fps");
-            if (tbr)
-                print_fps(av_q2d(st->r_frame_rate), tbn || tbc ? "tbr, " : "tbr");
-            if (tbn)
-                print_fps(1 / av_q2d(st->time_base), tbc ? "tbn, " : "tbn");
-            if (tbc)
-                print_fps(1 / av_q2d(st->codec->time_base), "tbc");
-        }
+			if (fps)
+				print_fps(av_q2d(st->avg_frame_rate), tbr || tbn || tbc ? "fps, " : "fps");
+			if (tbr)
+				print_fps(av_q2d(st->r_frame_rate), tbn || tbc ? "tbr, " : "tbr");
+			if (tbn)
+				print_fps(1 / av_q2d(st->time_base), tbc ? "tbn, " : "tbn");
+			if (tbc)
+				print_fps(1 / av_q2d(st->codec->time_base), "tbc");
+		}
 
-        if (st->disposition & AV_DISPOSITION_DEFAULT)
-            av_log(NULL, AV_LOG_INFO, " (default)");
-        if (st->disposition & AV_DISPOSITION_DUB)
-            av_log(NULL, AV_LOG_INFO, " (dub)");
-        if (st->disposition & AV_DISPOSITION_ORIGINAL)
-            av_log(NULL, AV_LOG_INFO, " (original)");
-        if (st->disposition & AV_DISPOSITION_COMMENT)
-            av_log(NULL, AV_LOG_INFO, " (comment)");
-        if (st->disposition & AV_DISPOSITION_LYRICS)
-            av_log(NULL, AV_LOG_INFO, " (lyrics)");
-        if (st->disposition & AV_DISPOSITION_KARAOKE)
-            av_log(NULL, AV_LOG_INFO, " (karaoke)");
-        if (st->disposition & AV_DISPOSITION_FORCED)
-            av_log(NULL, AV_LOG_INFO, " (forced)");
-        if (st->disposition & AV_DISPOSITION_HEARING_IMPAIRED)
-            av_log(NULL, AV_LOG_INFO, " (hearing impaired)");
-        if (st->disposition & AV_DISPOSITION_VISUAL_IMPAIRED)
-            av_log(NULL, AV_LOG_INFO, " (visual impaired)");
-        if (st->disposition & AV_DISPOSITION_CLEAN_EFFECTS)
-            av_log(NULL, AV_LOG_INFO, " (clean effects)");
-        av_log(NULL, AV_LOG_INFO, "\n");
-    }
+		if (st->disposition & AV_DISPOSITION_DEFAULT)
+			av_log(NULL, AV_LOG_INFO, " (default)");
+		if (st->disposition & AV_DISPOSITION_DUB)
+			av_log(NULL, AV_LOG_INFO, " (dub)");
+		if (st->disposition & AV_DISPOSITION_ORIGINAL)
+			av_log(NULL, AV_LOG_INFO, " (original)");
+		if (st->disposition & AV_DISPOSITION_COMMENT)
+			av_log(NULL, AV_LOG_INFO, " (comment)");
+		if (st->disposition & AV_DISPOSITION_LYRICS)
+			av_log(NULL, AV_LOG_INFO, " (lyrics)");
+		if (st->disposition & AV_DISPOSITION_KARAOKE)
+			av_log(NULL, AV_LOG_INFO, " (karaoke)");
+		if (st->disposition & AV_DISPOSITION_FORCED)
+			av_log(NULL, AV_LOG_INFO, " (forced)");
+		if (st->disposition & AV_DISPOSITION_HEARING_IMPAIRED)
+			av_log(NULL, AV_LOG_INFO, " (hearing impaired)");
+		if (st->disposition & AV_DISPOSITION_VISUAL_IMPAIRED)
+			av_log(NULL, AV_LOG_INFO, " (visual impaired)");
+		if (st->disposition & AV_DISPOSITION_CLEAN_EFFECTS)
+			av_log(NULL, AV_LOG_INFO, " (clean effects)");
+		if (st->disposition & AV_DISPOSITION_DESCRIPTIONS)
+			av_log(NULL, AV_LOG_INFO, " (descriptions)");
+		if (st->disposition & AV_DISPOSITION_DEPENDENT)
+			av_log(NULL, AV_LOG_INFO, " (dependent)");
+		av_log(NULL, AV_LOG_INFO, "\n");
+	}
     dump_metadata(NULL, st->metadata, "    ", hide_msg);
 
     dump_sidedata(NULL, st, "    ");

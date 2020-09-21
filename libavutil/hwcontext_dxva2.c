@@ -18,10 +18,6 @@
 
 #include <windows.h>
 
-#if !defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0600
-#undef _WIN32_WINNT
-#define _WIN32_WINNT 0x0600
-#endif
 #define DXVA2API_USE_BITFIELDS
 #define COBJMACROS
 
@@ -485,7 +481,12 @@ static int dxva2_device_create9ex(AVHWDeviceContext *ctx, UINT adapter)
     if (FAILED(hr))
         return AVERROR_UNKNOWN;
 
-    IDirect3D9Ex_GetAdapterDisplayModeEx(d3d9ex, adapter, &modeex, NULL);
+    modeex.Size = sizeof(D3DDISPLAYMODEEX);
+    hr = IDirect3D9Ex_GetAdapterDisplayModeEx(d3d9ex, adapter, &modeex, NULL);
+    if (FAILED(hr)) {
+        IDirect3D9Ex_Release(d3d9ex);
+        return AVERROR_UNKNOWN;
+    }
 
     d3dpp.BackBufferFormat = modeex.Format;
 
