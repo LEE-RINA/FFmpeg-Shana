@@ -28,8 +28,9 @@
 #include "internal.h"
 #include "get_bits.h"
 #include "bytestream.h"
-#include "dsputil.h"
+#include "bswapdsp.h"
 #include "hpeldsp.h"
+#include "idctdsp.h"
 #include "thread.h"
 
 #define MIMIC_HEADER_SIZE   20
@@ -54,8 +55,9 @@ typedef struct {
     GetBitContext   gb;
     ScanTable       scantable;
     BlockDSPContext bdsp;
-    DSPContext      dsp;
+    BswapDSPContext bbdsp;
     HpelDSPContext  hdsp;
+    IDCTDSPContext  idsp;
     VLC             vlc;
 
     /* Kept in the context so multithreading can have a constant to read from */
@@ -149,9 +151,10 @@ static av_cold int mimic_decode_init(AVCodecContext *avctx)
         return ret;
     }
     ff_blockdsp_init(&ctx->bdsp, avctx);
-    ff_dsputil_init(&ctx->dsp, avctx);
+    ff_bswapdsp_init(&ctx->bbdsp);
     ff_hpeldsp_init(&ctx->hdsp, avctx->flags);
-    ff_init_scantable(ctx->dsp.idct_permutation, &ctx->scantable, col_zag);
+    ff_idctdsp_init(&ctx->idsp, avctx);
+    ff_init_scantable(ctx->idsp.idct_permutation, &ctx->scantable, col_zag);
 
     for (i = 0; i < FF_ARRAY_ELEMS(ctx->frames); i++) {
         ctx->frames[i].f = av_frame_alloc();
@@ -300,7 +303,7 @@ static int decode(MimicContext *ctx, int quality, int num_coeffs,
                                    "block.\n");
                             return ret;
                         }
-                        ctx->dsp.idct_put(dst, stride, ctx->dct_block);
+                        ctx->idsp.idct_put(dst, stride, ctx->dct_block);
                     } else {
                         unsigned int backref = get_bits(&ctx->gb, 4);
                         int index            = (ctx->cur_index + backref) & 15;
@@ -424,9 +427,9 @@ static int mimic_decode_frame(AVCodecContext *avctx, void *data,
     if (!ctx->swap_buf)
         return AVERROR(ENOMEM);
 
-    ctx->dsp.bswap_buf(ctx->swap_buf,
-                       (const uint32_t*) (buf + MIMIC_HEADER_SIZE),
-                       swap_buf_size >> 2);
+    ctx->bbdsp.bswap_buf(ctx->swap_buf,
+                         (const uint32_t *) (buf + MIMIC_HEADER_SIZE),
+                         swap_buf_size >> 2);
     init_get_bits(&ctx->gb, ctx->swap_buf, swap_buf_size << 3);
 
     res = decode(ctx, quality, num_coeffs, !is_pframe);

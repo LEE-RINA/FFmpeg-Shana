@@ -29,9 +29,11 @@
  */
 
 #include "avcodec.h"
+#include "bswapdsp.h"
 #include "get_bits.h"
 #include "aandcttab.h"
 #include "eaidct.h"
+#include "idctdsp.h"
 #include "internal.h"
 #include "mpeg12.h"
 #include "mpeg12data.h"
@@ -45,7 +47,8 @@
 typedef struct MadContext {
     AVCodecContext *avctx;
     BlockDSPContext bdsp;
-    DSPContext dsp;
+    BswapDSPContext bbdsp;
+    IDCTDSPContext idsp;
     AVFrame *last_frame;
     GetBitContext gb;
     void *bitstream_buf;
@@ -63,9 +66,10 @@ static av_cold int decode_init(AVCodecContext *avctx)
     s->avctx = avctx;
     avctx->pix_fmt = AV_PIX_FMT_YUV420P;
     ff_blockdsp_init(&s->bdsp, avctx);
-    ff_dsputil_init(&s->dsp, avctx);
-    ff_init_scantable_permutation(s->dsp.idct_permutation, FF_NO_IDCT_PERM);
-    ff_init_scantable(s->dsp.idct_permutation, &s->scantable, ff_zigzag_direct);
+    ff_bswapdsp_init(&s->bbdsp);
+    ff_idctdsp_init(&s->idsp, avctx);
+    ff_init_scantable_permutation(s->idsp.idct_permutation, FF_NO_IDCT_PERM);
+    ff_init_scantable(s->idsp.idct_permutation, &s->scantable, ff_zigzag_direct);
     ff_mpeg12_init_vlcs();
 
     s->last_frame = av_frame_alloc();
@@ -297,7 +301,8 @@ static int decode_frame(AVCodecContext *avctx,
                           buf_end - buf);
     if (!s->bitstream_buf)
         return AVERROR(ENOMEM);
-    s->dsp.bswap16_buf(s->bitstream_buf, (const uint16_t*)buf, (buf_end-buf)/2);
+    s->bbdsp.bswap16_buf(s->bitstream_buf, (const uint16_t *) buf,
+                         (buf_end - buf) / 2);
     memset((uint8_t*)s->bitstream_buf + (buf_end-buf), 0, FF_INPUT_BUFFER_PADDING_SIZE);
     init_get_bits(&s->gb, s->bitstream_buf, 8*(buf_end-buf));
 

@@ -66,6 +66,26 @@ void ff_snow_inner_add_yblock(const uint8_t *obmc, const int obmc_stride, uint8_
     }
 }
 
+int ff_snow_get_buffer(SnowContext *s, AVFrame *frame)
+{
+    int ret, i;
+
+    frame->width  = s->avctx->width  + 2 * EDGE_WIDTH;
+    frame->height = s->avctx->height + 2 * EDGE_WIDTH;
+    if ((ret = ff_get_buffer(s->avctx, frame, AV_GET_BUFFER_FLAG_REF)) < 0)
+        return ret;
+    for (i = 0; frame->data[i]; i++) {
+        int offset = (EDGE_WIDTH >> (i ? s->chroma_v_shift : 0)) *
+                        frame->linesize[i] +
+                        (EDGE_WIDTH >> (i ? s->chroma_h_shift : 0));
+        frame->data[i] += offset;
+    }
+    frame->width  = s->avctx->width;
+    frame->height = s->avctx->height;
+
+    return 0;
+}
+
 void ff_snow_reset_contexts(SnowContext *s){ //FIXME better initial contexts
     int plane_index, level, orientation;
 
@@ -413,6 +433,7 @@ av_cold int ff_snow_common_init(AVCodecContext *avctx){
     ff_videodsp_init(&s->vdsp, 8);
     ff_dwt_init(&s->dwt);
     ff_h264qpel_init(&s->h264qpel, 8);
+    ff_mpegvideoencdsp_init(&s->mpvencdsp, avctx);
 
 #define mcf(dx,dy)\
     s->qdsp.put_qpel_pixels_tab       [0][dy+dx/4]=\
@@ -622,16 +643,16 @@ int ff_snow_frame_start(SnowContext *s){
    int h= s->avctx->height;
 
     if (s->current_picture->data[0] && !(s->avctx->flags&CODEC_FLAG_EMU_EDGE)) {
-        s->dsp.draw_edges(s->current_picture->data[0],
-                          s->current_picture->linesize[0], w   , h   ,
-                          EDGE_WIDTH  , EDGE_WIDTH  , EDGE_TOP | EDGE_BOTTOM);
+        s->mpvencdsp.draw_edges(s->current_picture->data[0],
+                                s->current_picture->linesize[0], w   , h   ,
+                                EDGE_WIDTH  , EDGE_WIDTH  , EDGE_TOP | EDGE_BOTTOM);
         if (s->current_picture->data[2]) {
-            s->dsp.draw_edges(s->current_picture->data[1],
-                            s->current_picture->linesize[1], w>>s->chroma_h_shift, h>>s->chroma_v_shift,
-                            EDGE_WIDTH>>s->chroma_h_shift, EDGE_WIDTH>>s->chroma_v_shift, EDGE_TOP | EDGE_BOTTOM);
-            s->dsp.draw_edges(s->current_picture->data[2],
-                            s->current_picture->linesize[2], w>>s->chroma_h_shift, h>>s->chroma_v_shift,
-                            EDGE_WIDTH>>s->chroma_h_shift, EDGE_WIDTH>>s->chroma_v_shift, EDGE_TOP | EDGE_BOTTOM);
+            s->mpvencdsp.draw_edges(s->current_picture->data[1],
+                                    s->current_picture->linesize[1], w>>s->chroma_h_shift, h>>s->chroma_v_shift,
+                                    EDGE_WIDTH>>s->chroma_h_shift, EDGE_WIDTH>>s->chroma_v_shift, EDGE_TOP | EDGE_BOTTOM);
+            s->mpvencdsp.draw_edges(s->current_picture->data[2],
+                                    s->current_picture->linesize[2], w>>s->chroma_h_shift, h>>s->chroma_v_shift,
+                                    EDGE_WIDTH>>s->chroma_h_shift, EDGE_WIDTH>>s->chroma_v_shift, EDGE_TOP | EDGE_BOTTOM);
         }
     }
 
@@ -661,8 +682,7 @@ int ff_snow_frame_start(SnowContext *s){
             return -1;
         }
     }
-
-    if ((ret = ff_get_buffer(s->avctx, s->current_picture, AV_GET_BUFFER_FLAG_REF)) < 0)
+    if ((ret = ff_snow_get_buffer(s, s->current_picture)) < 0)
         return ret;
 
     s->current_picture->key_frame= s->keyframe;

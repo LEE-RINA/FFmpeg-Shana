@@ -28,6 +28,7 @@
 #define UNCHECKED_BITSTREAM_READER 1
 
 #include "libavutil/avassert.h"
+#include "libavutil/display.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/opt.h"
 #include "libavutil/stereo3d.h"
@@ -866,6 +867,20 @@ static void decode_postinit(H264Context *h, int setup_finished)
             stereo->flags = AV_STEREO3D_FLAG_INVERT;
     }
 
+    if (h->sei_display_orientation_present &&
+        (h->sei_anticlockwise_rotation || h->sei_hflip || h->sei_vflip)) {
+        double angle = h->sei_anticlockwise_rotation * 360 / (double) (1 << 16);
+        AVFrameSideData *rotation = av_frame_new_side_data(&cur->f,
+                                                           AV_FRAME_DATA_DISPLAYMATRIX,
+                                                           sizeof(int32_t) * 9);
+        if (!rotation)
+            return;
+
+        av_display_rotation_set((int32_t *)rotation->data, angle);
+        av_display_matrix_flip((int32_t *)rotation->data,
+                               h->sei_vflip, h->sei_hflip);
+    }
+
     cur->mmco_reset = h->mmco_reset;
     h->mmco_reset = 0;
 
@@ -1683,7 +1698,9 @@ again:
                 break;
             case NAL_SEI:
                 init_get_bits(&h->gb, ptr, bit_length);
-                ff_h264_decode_sei(h);
+                ret = ff_h264_decode_sei(h);
+                if (ret < 0 && (h->avctx->err_recognition & AV_EF_EXPLODE))
+                    goto end;
                 break;
             case NAL_SPS:
                 init_get_bits(&h->gb, ptr, bit_length);
@@ -1702,7 +1719,9 @@ again:
                 break;
             case NAL_PPS:
                 init_get_bits(&h->gb, ptr, bit_length);
-                ff_h264_decode_picture_parameter_set(h, bit_length);
+                ret = ff_h264_decode_picture_parameter_set(h, bit_length);
+                if (ret < 0 && (h->avctx->err_recognition & AV_EF_EXPLODE))
+                    goto end;
                 break;
             case NAL_AUD:
             case NAL_END_SEQUENCE:
@@ -1719,7 +1738,9 @@ again:
             }
 
             if (context_count == h->max_contexts) {
-                ff_h264_execute_decode_slices(h, context_count);
+                ret = ff_h264_execute_decode_slices(h, context_count);
+                if (ret < 0 && (h->avctx->err_recognition & AV_EF_EXPLODE))
+                    goto end;
                 context_count = 0;
             }
 
@@ -1739,9 +1760,13 @@ again:
             }
         }
     }
-    if (context_count)
-        ff_h264_execute_decode_slices(h, context_count);
+    if (context_count) {
+        ret = ff_h264_execute_decode_slices(h, context_count);
+        if (ret < 0 && (h->avctx->err_recognition & AV_EF_EXPLODE))
+            goto end;
+    }
 
+    ret = 0;
 end:
     /* clean up */
     if (h->cur_pic_ptr && !h->droppable) {

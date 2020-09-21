@@ -36,18 +36,20 @@ void ff_hevc_ ## DIR ## _loop_filter_chroma_ ## DEPTH ## _ ## OPT(uint8_t *_pix,
 void ff_hevc_ ## DIR ## _loop_filter_luma_ ## DEPTH ## _ ## OPT(uint8_t *_pix, ptrdiff_t stride, int *_beta, int *_tc, \
 uint8_t *_no_p, uint8_t *_no_q);
 
-#define LFC_FUNCS(type, depth) \
-LFC_FUNC(h, depth, sse2)  \
-LFC_FUNC(v, depth, sse2)
+#define LFC_FUNCS(type, depth, opt) \
+LFC_FUNC(h, depth, opt)  \
+LFC_FUNC(v, depth, opt)
 
-#define LFL_FUNCS(type, depth) \
-LFL_FUNC(h, depth, ssse3)  \
-LFL_FUNC(v, depth, ssse3)
+#define LFL_FUNCS(type, depth, opt) \
+LFL_FUNC(h, depth, opt)  \
+LFL_FUNC(v, depth, opt)
 
-LFC_FUNCS(uint8_t,   8)
-LFC_FUNCS(uint8_t,  10)
-LFL_FUNCS(uint8_t,   8)
-LFL_FUNCS(uint8_t,  10)
+LFC_FUNCS(uint8_t,   8, sse2)
+LFC_FUNCS(uint8_t,  10, sse2)
+LFL_FUNCS(uint8_t,   8, sse2)
+LFL_FUNCS(uint8_t,  10, sse2)
+LFL_FUNCS(uint8_t,   8, ssse3)
+LFL_FUNCS(uint8_t,  10, ssse3)
 
 #if HAVE_SSE2_EXTERNAL
 void ff_hevc_idct32_dc_add_8_sse2(uint8_t *dst, int16_t *coeffs, ptrdiff_t stride)
@@ -91,6 +93,17 @@ void ff_hevc_idct32_dc_add_10_avx(uint8_t *dst, int16_t *coeffs, ptrdiff_t strid
     ff_hevc_idct16_dc_add_10_avx(dst+16*stride+32, coeffs, stride);
 }
 #endif //HAVE_AVX_EXTERNAL
+
+#if HAVE_AVX2_EXTERNAL
+
+void ff_hevc_idct32_dc_add_10_avx2(uint8_t *dst, int16_t *coeffs, ptrdiff_t stride)
+{
+    ff_hevc_idct16_dc_add_10_avx2(dst, coeffs, stride);
+    ff_hevc_idct16_dc_add_10_avx2(dst+32, coeffs, stride);
+    ff_hevc_idct16_dc_add_10_avx2(dst+16*stride, coeffs, stride);
+    ff_hevc_idct16_dc_add_10_avx2(dst+16*stride+32, coeffs, stride);
+}
+#endif //HAVE_AVX2_EXTERNAL
 
 #define mc_rep_func(name, bitd, step, W, opt) \
 void ff_hevc_put_hevc_##name##W##_##bitd##_##opt(int16_t *_dst, ptrdiff_t dststride,                            \
@@ -418,6 +431,10 @@ void ff_hevcdsp_init_x86(HEVCDSPContext *c, const int bit_depth)
         if (EXTERNAL_SSE2(mm_flags)) {
                     c->hevc_v_loop_filter_chroma = ff_hevc_v_loop_filter_chroma_8_sse2;
                     c->hevc_h_loop_filter_chroma = ff_hevc_h_loop_filter_chroma_8_sse2;
+                    if (ARCH_X86_64) {
+                        c->hevc_v_loop_filter_luma = ff_hevc_v_loop_filter_luma_8_sse2;
+                        c->hevc_h_loop_filter_luma = ff_hevc_h_loop_filter_luma_8_sse2;
+                    }
 
                     c->transform_dc_add[2]    =  ff_hevc_idct16_dc_add_8_sse2;
                     c->transform_dc_add[3]    =  ff_hevc_idct32_dc_add_8_sse2;
@@ -438,6 +455,9 @@ void ff_hevcdsp_init_x86(HEVCDSPContext *c, const int bit_depth)
             QPEL_LINKS(c->put_hevc_qpel, 1, 0, qpel_v,     8, sse4);
             QPEL_LINKS(c->put_hevc_qpel, 1, 1, qpel_hv,    8, sse4);
         }
+        if (EXTERNAL_AVX2(mm_flags)) {
+            c->transform_dc_add[3]    =  ff_hevc_idct32_dc_add_8_avx2;
+        }
     } else if (bit_depth == 10) {
         if (EXTERNAL_MMXEXT(mm_flags)) {
                 c->transform_dc_add[0]    =  ff_hevc_idct4_dc_add_10_mmxext;
@@ -446,7 +466,10 @@ void ff_hevcdsp_init_x86(HEVCDSPContext *c, const int bit_depth)
         if (EXTERNAL_SSE2(mm_flags)) {
                     c->hevc_v_loop_filter_chroma = ff_hevc_v_loop_filter_chroma_10_sse2;
                     c->hevc_h_loop_filter_chroma = ff_hevc_h_loop_filter_chroma_10_sse2;
-
+                    if (ARCH_X86_64) {
+                        c->hevc_v_loop_filter_luma = ff_hevc_v_loop_filter_luma_10_sse2;
+                        c->hevc_h_loop_filter_luma = ff_hevc_h_loop_filter_luma_10_sse2;
+                    }
 
                     c->transform_dc_add[1]    =  ff_hevc_idct8_dc_add_10_sse2;
                     c->transform_dc_add[2]    =  ff_hevc_idct16_dc_add_10_sse2;
@@ -473,6 +496,10 @@ void ff_hevcdsp_init_x86(HEVCDSPContext *c, const int bit_depth)
             c->transform_dc_add[2]    =  ff_hevc_idct16_dc_add_10_avx;
             c->transform_dc_add[3]    =  ff_hevc_idct32_dc_add_10_avx;
         }
+        if (EXTERNAL_AVX2(mm_flags)) {
+            c->transform_dc_add[2]    =  ff_hevc_idct16_dc_add_10_avx2;
+            c->transform_dc_add[3]    =  ff_hevc_idct32_dc_add_10_avx2;
 
+        }
     }
 }

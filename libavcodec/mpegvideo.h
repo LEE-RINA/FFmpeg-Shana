@@ -32,10 +32,15 @@
 #include "blockdsp.h"
 #include "dsputil.h"
 #include "error_resilience.h"
+#include "fdctdsp.h"
 #include "get_bits.h"
 #include "h264chroma.h"
 #include "h263dsp.h"
 #include "hpeldsp.h"
+#include "idctdsp.h"
+#include "mpegvideodsp.h"
+#include "mpegvideoencdsp.h"
+#include "pixblockdsp.h"
 #include "put_bits.h"
 #include "ratecontrol.h"
 #include "parser.h"
@@ -77,6 +82,8 @@ enum OutputFormat {
 #define MAX_MB_BYTES (30*16*16*3/8 + 120)
 
 #define INPLACE_OFFSET 16
+
+#define EDGE_WIDTH 16
 
 /* Start codes. */
 #define SEQ_END_CODE            0x000001b7
@@ -359,8 +366,13 @@ typedef struct MpegEncContext {
 
     BlockDSPContext bdsp;
     DSPContext dsp;             ///< pointers for accelerated dsp functions
+    FDCTDSPContext fdsp;
     H264ChromaContext h264chroma;
     HpelDSPContext hdsp;
+    IDCTDSPContext idsp;
+    MpegVideoDSPContext mdsp;
+    MpegvideoEncDSPContext mpvencdsp;
+    PixblockDSPContext pdsp;
     QpelDSPContext qdsp;
     VideoDSPContext vdsp;
     H263DSPContext h263dsp;
@@ -753,13 +765,9 @@ void ff_MPV_report_decode_progress(MpegEncContext *s);
 int ff_mpeg_update_thread_context(AVCodecContext *dst, const AVCodecContext *src);
 void ff_set_qscale(MpegEncContext * s, int qscale);
 
-/* Error resilience */
-void ff_mpeg_er_frame_start(MpegEncContext *s);
-void ff_mpeg_set_erpic(ERPicture *dst, Picture *src);
-
 int ff_dct_common_init(MpegEncContext *s);
 int ff_dct_encode_init(MpegEncContext *s);
-void ff_convert_matrix(DSPContext *dsp, int (*qmat)[64], uint16_t (*qmat16)[2][64],
+void ff_convert_matrix(MpegEncContext *s, int (*qmat)[64], uint16_t (*qmat16)[2][64],
                        const uint16_t *quant_matrix, int bias, int qmin, int qmax, int intra);
 int ff_dct_quantize_c(MpegEncContext *s, int16_t *block, int n, int qscale, int *overflow);
 

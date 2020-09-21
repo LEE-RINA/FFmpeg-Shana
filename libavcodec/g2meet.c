@@ -31,7 +31,7 @@
 #include "avcodec.h"
 #include "blockdsp.h"
 #include "bytestream.h"
-#include "dsputil.h"
+#include "idctdsp.h"
 #include "get_bits.h"
 #include "internal.h"
 #include "mjpeg.h"
@@ -74,7 +74,7 @@ static const uint8_t chroma_quant[64] = {
 
 typedef struct JPGContext {
     BlockDSPContext bdsp;
-    DSPContext dsp;
+    IDCTDSPContext idsp;
     ScanTable  scantable;
 
     VLC        dc_vlc[2], ac_vlc[2];
@@ -90,6 +90,7 @@ typedef struct G2MContext {
 
     int        compression;
     int        width, height, bpp;
+    int        orig_width, orig_height;
     int        tile_width, tile_height;
     int        tiles_x, tiles_y, tile_x, tile_y;
 
@@ -153,8 +154,8 @@ static av_cold int jpg_init(AVCodecContext *avctx, JPGContext *c)
         return ret;
 
     ff_blockdsp_init(&c->bdsp, avctx);
-    ff_dsputil_init(&c->dsp, avctx);
-    ff_init_scantable(c->dsp.idct_permutation, &c->scantable,
+    ff_idctdsp_init(&c->idsp, avctx);
+    ff_init_scantable(c->idsp.idct_permutation, &c->scantable,
                       ff_zigzag_direct);
 
     return 0;
@@ -279,13 +280,13 @@ static int jpg_decode_data(JPGContext *c, int width, int height,
                     if ((ret = jpg_decode_block(c, &gb, 0,
                                                 c->block[i + j * 2])) != 0)
                         return ret;
-                    c->dsp.idct(c->block[i + j * 2]);
+                    c->idsp.idct(c->block[i + j * 2]);
                 }
             }
             for (i = 1; i < 3; i++) {
                 if ((ret = jpg_decode_block(c, &gb, i, c->block[i + 3])) != 0)
                     return ret;
-                c->dsp.idct(c->block[i + 3]);
+                c->idsp.idct(c->block[i + 3]);
             }
 
             for (j = 0; j < 16; j++) {
@@ -712,8 +713,8 @@ static int g2m_decode_frame(AVCodecContext *avctx, void *data,
             }
             c->width  = bytestream2_get_be32(&bc);
             c->height = bytestream2_get_be32(&bc);
-            if (c->width  < 16 || c->width  > avctx->width ||
-                c->height < 16 || c->height > avctx->height) {
+            if (c->width  < 16 || c->width  > c->orig_width ||
+                c->height < 16 || c->height > c->orig_height) {
                 av_log(avctx, AV_LOG_ERROR,
                        "Invalid frame dimensions %dx%d\n",
                        c->width, c->height);
@@ -881,6 +882,10 @@ static av_cold int g2m_decode_init(AVCodecContext *avctx)
     }
 
     avctx->pix_fmt = AV_PIX_FMT_RGB24;
+
+    // store original sizes and check against those if resize happens
+    c->orig_width  = avctx->width;
+    c->orig_height = avctx->height;
 
     return 0;
 }

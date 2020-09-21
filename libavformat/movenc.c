@@ -432,6 +432,9 @@ static int mov_write_chan_tag(AVIOContext *pb, MOVTrack *track)
         return 0;
     }
 
+    if (track->multichannel_as_mono)
+        return 0;
+
     avio_wb32(pb, 0);           // Size
     ffio_wfourcc(pb, "chan");   // Type
     avio_w8(pb, 0);             // Version
@@ -807,7 +810,11 @@ static int mov_write_avid_tag(AVIOContext *pb, MOVTrack *track)
     ffio_wfourcc(pb, "ACLR");
     ffio_wfourcc(pb, "ACLR");
     ffio_wfourcc(pb, "0001");
-    avio_wb32(pb, 2); /* yuv range: full 1 / normal 2 */
+    if (track->enc->color_range == AVCOL_RANGE_MPEG) { /* Legal range (16-235) */
+        avio_wb32(pb, 1); /* Corresponds to 709 in official encoder */
+    } else { /* Full range (0-255) */
+        avio_wb32(pb, 2); /* Corresponds to RGB in official encoder */
+    }
     avio_wb32(pb, 0); /* unknown */
 
     avio_wb32(pb, 24); /* size */
@@ -1767,12 +1774,26 @@ static void write_matrix(AVIOContext *pb, int16_t a, int16_t b, int16_t c,
     avio_wb32(pb, 1 << 30);  /* w in 2.30 format */
 }
 
-static int mov_write_tkhd_tag(AVIOContext *pb, MOVTrack *track, AVStream *st)
+static int mov_write_tkhd_tag(AVIOContext *pb, MOVMuxContext *mov,
+                              MOVTrack *track, AVStream *st)
 {
     int64_t duration = av_rescale_rnd(track->track_duration, MOV_TIMESCALE,
                                       track->timescale, AV_ROUND_UP);
     int version = duration < INT32_MAX ? 0 : 1;
+    int flags   = MOV_TKHD_FLAG_IN_MOVIE;
     int rotation = 0;
+    int group   = 0;
+
+
+    if (st) {
+        if (mov->per_stream_grouping)
+            group = st->index;
+        else
+            group = st->codec->codec_type;
+    }
+
+    if (track->flags & MOV_TRACK_ENABLED)
+        flags |= MOV_TKHD_FLAG_ENABLED;
 
     if (track->mode == MODE_ISM)
         version = 1;
@@ -1780,9 +1801,7 @@ static int mov_write_tkhd_tag(AVIOContext *pb, MOVTrack *track, AVStream *st)
     (version == 1) ? avio_wb32(pb, 104) : avio_wb32(pb, 92); /* size */
     ffio_wfourcc(pb, "tkhd");
     avio_w8(pb, version);
-    avio_wb24(pb, (track->flags & MOV_TRACK_ENABLED) ?
-                  MOV_TKHD_FLAG_ENABLED | MOV_TKHD_FLAG_IN_MOVIE :
-                  MOV_TKHD_FLAG_IN_MOVIE);
+    avio_wb24(pb, flags);
     if (version == 1) {
         avio_wb64(pb, track->time);
         avio_wb64(pb, track->time);
@@ -1800,7 +1819,7 @@ static int mov_write_tkhd_tag(AVIOContext *pb, MOVTrack *track, AVStream *st)
     avio_wb32(pb, 0); /* reserved */
     avio_wb32(pb, 0); /* reserved */
     avio_wb16(pb, 0); /* layer */
-    avio_wb16(pb, st ? st->codec->codec_type : 0); /* alternate group) */
+    avio_wb16(pb, group); /* alternate group) */
     /* Volume, only for audio */
     if (track->enc->codec_type == AVMEDIA_TYPE_AUDIO)
         avio_wb16(pb, 0x0100);
@@ -1981,7 +2000,7 @@ static int mov_write_trak_tag(AVIOContext *pb, MOVMuxContext *mov,
     int64_t pos = avio_tell(pb);
     avio_wb32(pb, 0); /* size */
     ffio_wfourcc(pb, "trak");
-    mov_write_tkhd_tag(pb, track, st);
+    mov_write_tkhd_tag(pb, mov, track, st);
     if (supports_edts(mov))
         mov_write_edts_tag(pb, track);  // PSP Movies and several other cases require edts box
     if (track->tref_tag)
@@ -3738,7 +3757,7 @@ static void enable_tracks(AVFormatContext *s)
 {
     MOVMuxContext *mov = s->priv_data;
     int i;
-    uint8_t enabled[AVMEDIA_TYPE_NB];
+    int enabled[AVMEDIA_TYPE_NB];
     int first[AVMEDIA_TYPE_NB];
 
     for (i = 0; i < AVMEDIA_TYPE_NB; i++) {
@@ -3757,7 +3776,7 @@ static void enable_tracks(AVFormatContext *s)
             first[st->codec->codec_type] = i;
         if (st->disposition & AV_DISPOSITION_DEFAULT) {
             mov->tracks[i].flags |= MOV_TRACK_ENABLED;
-            enabled[st->codec->codec_type] = 1;
+            enabled[st->codec->codec_type]++;
         }
     }
 
@@ -3766,6 +3785,8 @@ static void enable_tracks(AVFormatContext *s)
         case AVMEDIA_TYPE_VIDEO:
         case AVMEDIA_TYPE_AUDIO:
         case AVMEDIA_TYPE_SUBTITLE:
+            if (enabled[i] > 1)
+                mov->per_stream_grouping = 1;
             if (!enabled[i] && first[i] >= 0)
                 mov->tracks[first[i]].flags |= MOV_TRACK_ENABLED;
             break;
@@ -4033,6 +4054,11 @@ static int mov_write_header(AVFormatContext *s)
                 while(track->timescale < 10000)
                     track->timescale *= 2;
             }
+            if (st->codec->width > 65535 || st->codec->height > 65535) {
+                av_log(s, AV_LOG_ERROR, "Resolution %dx%d too large for mov/mp4\n", st->codec->width, st->codec->height);
+                ret = AVERROR(EINVAL);
+                goto error;
+            }
             if (track->mode == MODE_MOV && track->timescale > 100000)
                 av_log(s, AV_LOG_WARNING,
                        "WARNING codec timebase is very high. If duration is too long,\n"
@@ -4093,6 +4119,31 @@ static int mov_write_header(AVFormatContext *s)
                 track->vos_data = av_malloc(track->vos_len);
                 memcpy(track->vos_data, st->codec->extradata, track->vos_len);
             }
+        }
+    }
+
+    for (i = 0; i < s->nb_streams; i++) {
+        int j;
+        AVStream *st= s->streams[i];
+        MOVTrack *track= &mov->tracks[i];
+
+        if (st->codec->codec_type != AVMEDIA_TYPE_AUDIO ||
+            track->enc->channel_layout != AV_CH_LAYOUT_MONO)
+            continue;
+
+        for (j = 0; j < s->nb_streams; j++) {
+            AVStream *stj= s->streams[j];
+            MOVTrack *trackj= &mov->tracks[j];
+            if (j == i)
+                continue;
+
+            if (stj->codec->codec_type != AVMEDIA_TYPE_AUDIO ||
+                trackj->enc->channel_layout != AV_CH_LAYOUT_MONO ||
+                trackj->language != track->language ||
+                trackj->tag != track->tag
+            )
+                continue;
+            track->multichannel_as_mono++;
         }
     }
 

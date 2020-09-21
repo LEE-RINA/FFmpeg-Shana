@@ -77,7 +77,7 @@ static void svq1_write_header(SVQ1EncContext *s, int frame_type)
 #define THRESHOLD_MULTIPLIER 0.6
 
 static int ssd_int8_vs_int16_c(const int8_t *pix1, const int16_t *pix2,
-                               int size)
+                               intptr_t size)
 {
     int score = 0, i;
 
@@ -517,6 +517,7 @@ static av_cold int svq1_encode_init(AVCodecContext *avctx)
 
     ff_dsputil_init(&s->dsp, avctx);
     ff_hpeldsp_init(&s->hdsp, avctx->flags);
+    ff_mpegvideoencdsp_init(&s->m.mpvencdsp, avctx);
 
     avctx->coded_frame = av_frame_alloc();
     s->current_picture = av_frame_alloc();

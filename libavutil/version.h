@@ -24,7 +24,7 @@
 #include "macros.h"
 
 /**
- * @defgroup version_utils Library Version Macros
+ * @addtogroup version_utils
  *
  * Useful to check and match library version in order to maintain
  * backward compatibility.
@@ -56,7 +56,7 @@
  */
 
 #define LIBAVUTIL_VERSION_MAJOR  52
-#define LIBAVUTIL_VERSION_MINOR  90
+#define LIBAVUTIL_VERSION_MINOR  92
 #define LIBAVUTIL_VERSION_MICRO 100
 
 #define LIBAVUTIL_VERSION_INT   AV_VERSION_INT(LIBAVUTIL_VERSION_MAJOR, \

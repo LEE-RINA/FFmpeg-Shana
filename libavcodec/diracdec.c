@@ -27,13 +27,14 @@
  */
 
 #include "avcodec.h"
-#include "dsputil.h"
 #include "get_bits.h"
 #include "bytestream.h"
 #include "internal.h"
 #include "golomb.h"
 #include "dirac_arith.h"
 #include "mpeg12data.h"
+#include "libavcodec/mpegvideo.h"
+#include "mpegvideoencdsp.h"
 #include "dirac_dwt.h"
 #include "dirac.h"
 #include "diracdsp.h"
@@ -136,7 +137,7 @@ typedef struct Plane {
 
 typedef struct DiracContext {
     AVCodecContext *avctx;
-    DSPContext dsp;
+    MpegvideoEncDSPContext mpvencdsp;
     DiracDSPContext diracdsp;
     GetBitContext gb;
     dirac_source_params source;
@@ -422,8 +423,8 @@ static av_cold int dirac_decode_init(AVCodecContext *avctx)
     s->avctx = avctx;
     s->frame_number = -1;
 
-    ff_dsputil_init(&s->dsp, avctx);
     ff_diracdsp_init(&s->diracdsp);
+    ff_mpegvideoencdsp_init(&s->mpvencdsp, avctx);
 
     for (i = 0; i < MAX_FRAMES; i++) {
         s->all_frames[i].avframe = av_frame_alloc();
@@ -1556,7 +1557,7 @@ static void interpolate_refplane(DiracContext *s, DiracFrame *ref, int plane, in
     int i, edge = EDGE_WIDTH/2;
 
     ref->hpel[plane][0] = ref->avframe->data[plane];
-    s->dsp.draw_edges(ref->hpel[plane][0], ref->avframe->linesize[plane], width, height, edge, edge, EDGE_TOP | EDGE_BOTTOM); /* EDGE_TOP | EDGE_BOTTOM values just copied to make it build, this needs to be ensured */
+    s->mpvencdsp.draw_edges(ref->hpel[plane][0], ref->avframe->linesize[plane], width, height, edge, edge, EDGE_TOP | EDGE_BOTTOM); /* EDGE_TOP | EDGE_BOTTOM values just copied to make it build, this needs to be ensured */
 
     /* no need for hpel if we only have fpel vectors */
     if (!s->mv_precision)
@@ -1573,9 +1574,9 @@ static void interpolate_refplane(DiracContext *s, DiracFrame *ref, int plane, in
         s->diracdsp.dirac_hpel_filter(ref->hpel[plane][1], ref->hpel[plane][2],
                                       ref->hpel[plane][3], ref->hpel[plane][0],
                                       ref->avframe->linesize[plane], width, height);
-        s->dsp.draw_edges(ref->hpel[plane][1], ref->avframe->linesize[plane], width, height, edge, edge, EDGE_TOP | EDGE_BOTTOM);
-        s->dsp.draw_edges(ref->hpel[plane][2], ref->avframe->linesize[plane], width, height, edge, edge, EDGE_TOP | EDGE_BOTTOM);
-        s->dsp.draw_edges(ref->hpel[plane][3], ref->avframe->linesize[plane], width, height, edge, edge, EDGE_TOP | EDGE_BOTTOM);
+        s->mpvencdsp.draw_edges(ref->hpel[plane][1], ref->avframe->linesize[plane], width, height, edge, edge, EDGE_TOP | EDGE_BOTTOM);
+        s->mpvencdsp.draw_edges(ref->hpel[plane][2], ref->avframe->linesize[plane], width, height, edge, edge, EDGE_TOP | EDGE_BOTTOM);
+        s->mpvencdsp.draw_edges(ref->hpel[plane][3], ref->avframe->linesize[plane], width, height, edge, edge, EDGE_TOP | EDGE_BOTTOM);
     }
     ref->interpolated[plane] = 1;
 }

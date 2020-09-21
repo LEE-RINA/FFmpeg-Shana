@@ -87,6 +87,7 @@ void avfilter_register_all(void)
     REGISTER_FILTER(EARWAX,         earwax,         af);
     REGISTER_FILTER(EBUR128,        ebur128,        af);
     REGISTER_FILTER(EQUALIZER,      equalizer,      af);
+    REGISTER_FILTER(FLANGER,        flanger,        af);
     REGISTER_FILTER(HIGHPASS,       highpass,       af);
     REGISTER_FILTER(JOIN,           join,           af);
     REGISTER_FILTER(LADSPA,         ladspa,         af);
@@ -148,6 +149,7 @@ void avfilter_register_all(void)
     REGISTER_FILTER(HISTEQ,         histeq,         vf);
     REGISTER_FILTER(HISTOGRAM,      histogram,      vf);
     REGISTER_FILTER(HQDN3D,         hqdn3d,         vf);
+    REGISTER_FILTER(HQX,            hqx,            vf);
     REGISTER_FILTER(HUE,            hue,            vf);
     REGISTER_FILTER(IDET,           idet,           vf);
     REGISTER_FILTER(IL,             il,             vf);

@@ -194,7 +194,7 @@
  *   the @ref AVStream.codec "stream codec context" information, such as the
  *   codec @ref AVCodecContext.codec_type "type", @ref AVCodecContext.codec_id
  *   "id" and other parameters (e.g. width / height, the pixel or sample format,
- *   etc.) as known. The @ref AVCodecContext.time_base "codec timebase" should
+ *   etc.) as known. The @ref AVStream.time_base "stream timebase" should
  *   be set to the timebase that the caller desires to use for this stream (note
  *   that the timebase actually used by the muxer can be different, as will be
  *   described later).
@@ -218,8 +218,8 @@
  * a single muxing context, they should not be mixed). Do note that the timing
  * information on the packets sent to the muxer must be in the corresponding
  * AVStream's timebase. That timebase is set by the muxer (in the
- * avformat_write_header() step) and may be different from the timebase the
- * caller set on the codec context.
+ * avformat_write_header() step) and may be different from the timebase
+ * requested by the caller.
  *
  * Once all the data has been written, the caller must call av_write_trailer()
  * to flush any buffered packets and finalize the output file, then close the IO
@@ -1069,6 +1069,7 @@ typedef struct AVStream {
 
 AVRational av_stream_get_r_frame_rate(const AVStream *s);
 void       av_stream_set_r_frame_rate(AVStream *s, AVRational r);
+struct AVCodecParserContext *av_stream_get_parser(const AVStream *s);
 
 /**
  * Returns the pts of the last muxed packet + its duration
@@ -2511,12 +2512,16 @@ void av_url_split(char *proto,         int proto_size,
                   char *path,          int path_size,
                   const char *url);
 
+
 /**
- * log a nice Dump of input format context or output format context
- * @param ic already initialized Format Context, must not be NULL.
- * @param index index of the stream to dump information about
- * @param url name of file or URL of stream to print information about
- * @param is_output Select whether specified context is of input(0) or output(1)
+ * Print detailed information about the input or output format, such as
+ * duration, bitrate, streams, container, programs, metadata, side data,
+ * codec and time base.
+ *
+ * @param ic        the context to analyze
+ * @param index     index of the stream to dump information about
+ * @param url       the URL to print, such as source or destination file
+ * @param is_output Select whether the specified context is an input(0) or output(1)
  */
 void av_dump_format(AVFormatContext *ic,
                     int index,

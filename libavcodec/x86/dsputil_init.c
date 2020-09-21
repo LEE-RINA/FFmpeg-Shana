@@ -1,6 +1,9 @@
 /*
+ * MMX optimized DSP utils
  * Copyright (c) 2000, 2001 Fabrice Bellard
  * Copyright (c) 2002-2004 Michael Niedermayer <michaelni@gmx.at>
+ *
+ * MMX optimization by Nick Kurshev <nickols_k@mail.ru>
  *
  * This file is part of FFmpeg.
  *
@@ -19,165 +22,382 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "config.h"
 #include "libavutil/attributes.h"
 #include "libavutil/cpu.h"
+#include "libavutil/x86/asm.h"
 #include "libavutil/x86/cpu.h"
-#include "libavcodec/avcodec.h"
 #include "libavcodec/dsputil.h"
-#include "libavcodec/simple_idct.h"
+#include "libavcodec/mpegvideo.h"
 #include "dsputil_x86.h"
-#include "idct_xvid.h"
 
-int32_t ff_scalarproduct_int16_mmxext(const int16_t *v1, const int16_t *v2,
-                                      int order);
-int32_t ff_scalarproduct_int16_sse2(const int16_t *v1, const int16_t *v2,
-                                    int order);
+int ff_sum_abs_dctelem_mmx(int16_t *block);
+int ff_sum_abs_dctelem_mmxext(int16_t *block);
+int ff_sum_abs_dctelem_sse2(int16_t *block);
+int ff_sum_abs_dctelem_ssse3(int16_t *block);
+int ff_sse8_mmx(MpegEncContext *v, uint8_t *pix1, uint8_t *pix2,
+                int line_size, int h);
+int ff_sse16_mmx(MpegEncContext *v, uint8_t *pix1, uint8_t *pix2,
+                 int line_size, int h);
+int ff_sse16_sse2(MpegEncContext *v, uint8_t *pix1, uint8_t *pix2,
+                  int line_size, int h);
+int ff_hf_noise8_mmx(uint8_t *pix1, int lsize, int h);
+int ff_hf_noise16_mmx(uint8_t *pix1, int lsize, int h);
 
-void ff_bswap32_buf_ssse3(uint32_t *dst, const uint32_t *src, int w);
-void ff_bswap32_buf_sse2(uint32_t *dst, const uint32_t *src, int w);
+#define hadamard_func(cpu)                                              \
+    int ff_hadamard8_diff_ ## cpu(MpegEncContext *s, uint8_t *src1,     \
+                                  uint8_t *src2, int stride, int h);    \
+    int ff_hadamard8_diff16_ ## cpu(MpegEncContext *s, uint8_t *src1,   \
+                                    uint8_t *src2, int stride, int h);
 
-void ff_vector_clip_int32_mmx(int32_t *dst, const int32_t *src,
-                              int32_t min, int32_t max, unsigned int len);
-void ff_vector_clip_int32_sse2(int32_t *dst, const int32_t *src,
-                               int32_t min, int32_t max, unsigned int len);
-void ff_vector_clip_int32_int_sse2(int32_t *dst, const int32_t *src,
-                                   int32_t min, int32_t max, unsigned int len);
-void ff_vector_clip_int32_sse4(int32_t *dst, const int32_t *src,
-                               int32_t min, int32_t max, unsigned int len);
+hadamard_func(mmx)
+hadamard_func(mmxext)
+hadamard_func(sse2)
+hadamard_func(ssse3)
 
-static av_cold void dsputil_init_mmx(DSPContext *c, AVCodecContext *avctx,
-                                     int cpu_flags, unsigned high_bit_depth)
-{
-#if HAVE_MMX_INLINE
-    c->put_pixels_clamped        = ff_put_pixels_clamped_mmx;
-    c->add_pixels_clamped        = ff_add_pixels_clamped_mmx;
-
-    if (!high_bit_depth) {
-        c->draw_edges   = ff_draw_edges_mmx;
-    }
-
-    if (avctx->lowres == 0 && !high_bit_depth) {
-        switch (avctx->idct_algo) {
-        case FF_IDCT_AUTO:
-        case FF_IDCT_SIMPLEAUTO:
-        case FF_IDCT_SIMPLEMMX:
-            c->idct_put              = ff_simple_idct_put_mmx;
-            c->idct_add              = ff_simple_idct_add_mmx;
-            c->idct                  = ff_simple_idct_mmx;
-            c->idct_permutation_type = FF_SIMPLE_IDCT_PERM;
-            break;
-        case FF_IDCT_XVIDMMX:
-            c->idct_put              = ff_idct_xvid_mmx_put;
-            c->idct_add              = ff_idct_xvid_mmx_add;
-            c->idct                  = ff_idct_xvid_mmx;
-            break;
-        }
-    }
-
-#if CONFIG_VIDEODSP && (ARCH_X86_32 || !HAVE_YASM)
-    c->gmc = ff_gmc_mmx;
-#endif
-#endif /* HAVE_MMX_INLINE */
-
-#if HAVE_MMX_EXTERNAL
-    c->vector_clip_int32 = ff_vector_clip_int32_mmx;
-    c->put_signed_pixels_clamped = ff_put_signed_pixels_clamped_mmx;
-#endif /* HAVE_MMX_EXTERNAL */
-}
-
-static av_cold void dsputil_init_mmxext(DSPContext *c, AVCodecContext *avctx,
-                                        int cpu_flags, unsigned high_bit_depth)
-{
-#if HAVE_MMXEXT_INLINE
-    if (!high_bit_depth && avctx->idct_algo == FF_IDCT_XVIDMMX && avctx->lowres == 0) {
-        c->idct_put = ff_idct_xvid_mmxext_put;
-        c->idct_add = ff_idct_xvid_mmxext_add;
-        c->idct     = ff_idct_xvid_mmxext;
-    }
-#endif /* HAVE_MMXEXT_INLINE */
-
-#if HAVE_MMXEXT_EXTERNAL
-    c->scalarproduct_int16          = ff_scalarproduct_int16_mmxext;
-#endif /* HAVE_MMXEXT_EXTERNAL */
-}
-
-static av_cold void dsputil_init_sse(DSPContext *c, AVCodecContext *avctx,
-                                     int cpu_flags, unsigned high_bit_depth)
-{
 #if HAVE_YASM
-#if HAVE_SSE_EXTERNAL
-    c->vector_clipf = ff_vector_clipf_sse;
-#endif
-#if HAVE_INLINE_ASM && CONFIG_VIDEODSP
-    c->gmc = ff_gmc_sse;
-#endif
+static int nsse16_mmx(MpegEncContext *c, uint8_t *pix1, uint8_t *pix2,
+                      int line_size, int h)
+{
+    int score1, score2;
+
+    if (c)
+        score1 = c->dsp.sse[0](c, pix1, pix2, line_size, h);
+    else
+        score1 = ff_sse16_mmx(c, pix1, pix2, line_size, h);
+    score2 = ff_hf_noise16_mmx(pix1, line_size, h) + ff_hf_noise8_mmx(pix1+8, line_size, h)
+           - ff_hf_noise16_mmx(pix2, line_size, h) - ff_hf_noise8_mmx(pix2+8, line_size, h);
+
+    if (c)
+        return score1 + FFABS(score2) * c->avctx->nsse_weight;
+    else
+        return score1 + FFABS(score2) * 8;
+}
+
+static int nsse8_mmx(MpegEncContext *c, uint8_t *pix1, uint8_t *pix2,
+                     int line_size, int h)
+{
+    int score1 = ff_sse8_mmx(c, pix1, pix2, line_size, h);
+    int score2 = ff_hf_noise8_mmx(pix1, line_size, h) -
+                 ff_hf_noise8_mmx(pix2, line_size, h);
+
+    if (c)
+        return score1 + FFABS(score2) * c->avctx->nsse_weight;
+    else
+        return score1 + FFABS(score2) * 8;
+}
+
 #endif /* HAVE_YASM */
-}
 
-static av_cold void dsputil_init_sse2(DSPContext *c, AVCodecContext *avctx,
-                                      int cpu_flags, unsigned high_bit_depth)
+#if HAVE_INLINE_ASM
+
+static int vsad_intra16_mmx(MpegEncContext *v, uint8_t *pix, uint8_t *dummy,
+                            int line_size, int h)
 {
-#if HAVE_SSE2_INLINE
-    if (!high_bit_depth && avctx->idct_algo == FF_IDCT_XVIDMMX && avctx->lowres == 0) {
-        c->idct_put              = ff_idct_xvid_sse2_put;
-        c->idct_add              = ff_idct_xvid_sse2_add;
-        c->idct                  = ff_idct_xvid_sse2;
-        c->idct_permutation_type = FF_SSE2_IDCT_PERM;
-    }
-#endif /* HAVE_SSE2_INLINE */
+    int tmp;
 
-#if HAVE_SSE2_EXTERNAL
-    c->scalarproduct_int16          = ff_scalarproduct_int16_sse2;
-    if (cpu_flags & AV_CPU_FLAG_ATOM) {
-        c->vector_clip_int32 = ff_vector_clip_int32_int_sse2;
-    } else {
-        c->vector_clip_int32 = ff_vector_clip_int32_sse2;
-    }
-    c->bswap_buf = ff_bswap32_buf_sse2;
-    c->put_signed_pixels_clamped = ff_put_signed_pixels_clamped_sse2;
-#endif /* HAVE_SSE2_EXTERNAL */
+    av_assert2((((int) pix) & 7) == 0);
+    av_assert2((line_size & 7) == 0);
+
+#define SUM(in0, in1, out0, out1)               \
+    "movq (%0), %%mm2\n"                        \
+    "movq 8(%0), %%mm3\n"                       \
+    "add %2,%0\n"                               \
+    "movq %%mm2, " #out0 "\n"                   \
+    "movq %%mm3, " #out1 "\n"                   \
+    "psubusb " #in0 ", %%mm2\n"                 \
+    "psubusb " #in1 ", %%mm3\n"                 \
+    "psubusb " #out0 ", " #in0 "\n"             \
+    "psubusb " #out1 ", " #in1 "\n"             \
+    "por %%mm2, " #in0 "\n"                     \
+    "por %%mm3, " #in1 "\n"                     \
+    "movq " #in0 ", %%mm2\n"                    \
+    "movq " #in1 ", %%mm3\n"                    \
+    "punpcklbw %%mm7, " #in0 "\n"               \
+    "punpcklbw %%mm7, " #in1 "\n"               \
+    "punpckhbw %%mm7, %%mm2\n"                  \
+    "punpckhbw %%mm7, %%mm3\n"                  \
+    "paddw " #in1 ", " #in0 "\n"                \
+    "paddw %%mm3, %%mm2\n"                      \
+    "paddw %%mm2, " #in0 "\n"                   \
+    "paddw " #in0 ", %%mm6\n"
+
+
+    __asm__ volatile (
+        "movl    %3, %%ecx\n"
+        "pxor %%mm6, %%mm6\n"
+        "pxor %%mm7, %%mm7\n"
+        "movq  (%0), %%mm0\n"
+        "movq 8(%0), %%mm1\n"
+        "add %2, %0\n"
+        "jmp 2f\n"
+        "1:\n"
+
+        SUM(%%mm4, %%mm5, %%mm0, %%mm1)
+        "2:\n"
+        SUM(%%mm0, %%mm1, %%mm4, %%mm5)
+
+        "subl $2, %%ecx\n"
+        "jnz 1b\n"
+
+        "movq  %%mm6, %%mm0\n"
+        "psrlq $32,   %%mm6\n"
+        "paddw %%mm6, %%mm0\n"
+        "movq  %%mm0, %%mm6\n"
+        "psrlq $16,   %%mm0\n"
+        "paddw %%mm6, %%mm0\n"
+        "movd  %%mm0, %1\n"
+        : "+r" (pix), "=r" (tmp)
+        : "r" ((x86_reg) line_size), "m" (h)
+        : "%ecx");
+
+    return tmp & 0xFFFF;
 }
+#undef SUM
 
-static av_cold void dsputil_init_ssse3(DSPContext *c, AVCodecContext *avctx,
-                                       int cpu_flags, unsigned high_bit_depth)
+static int vsad_intra16_mmxext(MpegEncContext *v, uint8_t *pix, uint8_t *dummy,
+                               int line_size, int h)
 {
-#if HAVE_SSSE3_EXTERNAL
-    c->bswap_buf = ff_bswap32_buf_ssse3;
-#endif /* HAVE_SSSE3_EXTERNAL */
-}
+    int tmp;
 
-static av_cold void dsputil_init_sse4(DSPContext *c, AVCodecContext *avctx,
-                                      int cpu_flags, unsigned high_bit_depth)
+    av_assert2((((int) pix) & 7) == 0);
+    av_assert2((line_size & 7) == 0);
+
+#define SUM(in0, in1, out0, out1)               \
+    "movq (%0), " #out0 "\n"                    \
+    "movq 8(%0), " #out1 "\n"                   \
+    "add %2, %0\n"                              \
+    "psadbw " #out0 ", " #in0 "\n"              \
+    "psadbw " #out1 ", " #in1 "\n"              \
+    "paddw " #in1 ", " #in0 "\n"                \
+    "paddw " #in0 ", %%mm6\n"
+
+    __asm__ volatile (
+        "movl %3, %%ecx\n"
+        "pxor %%mm6, %%mm6\n"
+        "pxor %%mm7, %%mm7\n"
+        "movq (%0), %%mm0\n"
+        "movq 8(%0), %%mm1\n"
+        "add %2, %0\n"
+        "jmp 2f\n"
+        "1:\n"
+
+        SUM(%%mm4, %%mm5, %%mm0, %%mm1)
+        "2:\n"
+        SUM(%%mm0, %%mm1, %%mm4, %%mm5)
+
+        "subl $2, %%ecx\n"
+        "jnz 1b\n"
+
+        "movd %%mm6, %1\n"
+        : "+r" (pix), "=r" (tmp)
+        : "r" ((x86_reg) line_size), "m" (h)
+        : "%ecx");
+
+    return tmp;
+}
+#undef SUM
+
+static int vsad16_mmx(MpegEncContext *v, uint8_t *pix1, uint8_t *pix2,
+                      int line_size, int h)
 {
-#if HAVE_SSE4_EXTERNAL
-    c->vector_clip_int32 = ff_vector_clip_int32_sse4;
-#endif /* HAVE_SSE4_EXTERNAL */
-}
+    int tmp;
 
-av_cold void ff_dsputil_init_x86(DSPContext *c, AVCodecContext *avctx,
-                                 unsigned high_bit_depth)
+    av_assert2((((int) pix1) & 7) == 0);
+    av_assert2((((int) pix2) & 7) == 0);
+    av_assert2((line_size & 7) == 0);
+
+#define SUM(in0, in1, out0, out1)       \
+    "movq (%0), %%mm2\n"                \
+    "movq (%1), " #out0 "\n"            \
+    "movq 8(%0), %%mm3\n"               \
+    "movq 8(%1), " #out1 "\n"           \
+    "add %3, %0\n"                      \
+    "add %3, %1\n"                      \
+    "psubb " #out0 ", %%mm2\n"          \
+    "psubb " #out1 ", %%mm3\n"          \
+    "pxor %%mm7, %%mm2\n"               \
+    "pxor %%mm7, %%mm3\n"               \
+    "movq %%mm2, " #out0 "\n"           \
+    "movq %%mm3, " #out1 "\n"           \
+    "psubusb " #in0 ", %%mm2\n"         \
+    "psubusb " #in1 ", %%mm3\n"         \
+    "psubusb " #out0 ", " #in0 "\n"     \
+    "psubusb " #out1 ", " #in1 "\n"     \
+    "por %%mm2, " #in0 "\n"             \
+    "por %%mm3, " #in1 "\n"             \
+    "movq " #in0 ", %%mm2\n"            \
+    "movq " #in1 ", %%mm3\n"            \
+    "punpcklbw %%mm7, " #in0 "\n"       \
+    "punpcklbw %%mm7, " #in1 "\n"       \
+    "punpckhbw %%mm7, %%mm2\n"          \
+    "punpckhbw %%mm7, %%mm3\n"          \
+    "paddw " #in1 ", " #in0 "\n"        \
+    "paddw %%mm3, %%mm2\n"              \
+    "paddw %%mm2, " #in0 "\n"           \
+    "paddw " #in0 ", %%mm6\n"
+
+
+    __asm__ volatile (
+        "movl %4, %%ecx\n"
+        "pxor %%mm6, %%mm6\n"
+        "pcmpeqw %%mm7, %%mm7\n"
+        "psllw $15, %%mm7\n"
+        "packsswb %%mm7, %%mm7\n"
+        "movq (%0), %%mm0\n"
+        "movq (%1), %%mm2\n"
+        "movq 8(%0), %%mm1\n"
+        "movq 8(%1), %%mm3\n"
+        "add %3, %0\n"
+        "add %3, %1\n"
+        "psubb %%mm2, %%mm0\n"
+        "psubb %%mm3, %%mm1\n"
+        "pxor %%mm7, %%mm0\n"
+        "pxor %%mm7, %%mm1\n"
+        "jmp 2f\n"
+        "1:\n"
+
+        SUM(%%mm4, %%mm5, %%mm0, %%mm1)
+        "2:\n"
+        SUM(%%mm0, %%mm1, %%mm4, %%mm5)
+
+        "subl $2, %%ecx\n"
+        "jnz 1b\n"
+
+        "movq %%mm6, %%mm0\n"
+        "psrlq $32, %%mm6\n"
+        "paddw %%mm6, %%mm0\n"
+        "movq %%mm0, %%mm6\n"
+        "psrlq $16, %%mm0\n"
+        "paddw %%mm6, %%mm0\n"
+        "movd %%mm0, %2\n"
+        : "+r" (pix1), "+r" (pix2), "=r" (tmp)
+        : "r" ((x86_reg) line_size), "m" (h)
+        : "%ecx");
+
+    return tmp & 0x7FFF;
+}
+#undef SUM
+
+static int vsad16_mmxext(MpegEncContext *v, uint8_t *pix1, uint8_t *pix2,
+                         int line_size, int h)
+{
+    int tmp;
+
+    av_assert2((((int) pix1) & 7) == 0);
+    av_assert2((((int) pix2) & 7) == 0);
+    av_assert2((line_size & 7) == 0);
+
+#define SUM(in0, in1, out0, out1)               \
+    "movq (%0), " #out0 "\n"                    \
+    "movq (%1), %%mm2\n"                        \
+    "movq 8(%0), " #out1 "\n"                   \
+    "movq 8(%1), %%mm3\n"                       \
+    "add %3, %0\n"                              \
+    "add %3, %1\n"                              \
+    "psubb %%mm2, " #out0 "\n"                  \
+    "psubb %%mm3, " #out1 "\n"                  \
+    "pxor %%mm7, " #out0 "\n"                   \
+    "pxor %%mm7, " #out1 "\n"                   \
+    "psadbw " #out0 ", " #in0 "\n"              \
+    "psadbw " #out1 ", " #in1 "\n"              \
+    "paddw " #in1 ", " #in0 "\n"                \
+    "paddw " #in0 ", %%mm6\n    "
+
+    __asm__ volatile (
+        "movl %4, %%ecx\n"
+        "pxor %%mm6, %%mm6\n"
+        "pcmpeqw %%mm7, %%mm7\n"
+        "psllw $15, %%mm7\n"
+        "packsswb %%mm7, %%mm7\n"
+        "movq (%0), %%mm0\n"
+        "movq (%1), %%mm2\n"
+        "movq 8(%0), %%mm1\n"
+        "movq 8(%1), %%mm3\n"
+        "add %3, %0\n"
+        "add %3, %1\n"
+        "psubb %%mm2, %%mm0\n"
+        "psubb %%mm3, %%mm1\n"
+        "pxor %%mm7, %%mm0\n"
+        "pxor %%mm7, %%mm1\n"
+        "jmp 2f\n"
+        "1:\n"
+
+        SUM(%%mm4, %%mm5, %%mm0, %%mm1)
+        "2:\n"
+        SUM(%%mm0, %%mm1, %%mm4, %%mm5)
+
+        "subl $2, %%ecx\n"
+        "jnz 1b\n"
+
+        "movd %%mm6, %2\n"
+        : "+r" (pix1), "+r" (pix2), "=r" (tmp)
+        : "r" ((x86_reg) line_size), "m" (h)
+        : "%ecx");
+
+    return tmp;
+}
+#undef SUM
+
+
+#endif /* HAVE_INLINE_ASM */
+
+av_cold void ff_dsputil_init_x86(DSPContext *c, AVCodecContext *avctx)
 {
     int cpu_flags = av_get_cpu_flags();
 
-    if (X86_MMX(cpu_flags))
-        dsputil_init_mmx(c, avctx, cpu_flags, high_bit_depth);
+#if HAVE_INLINE_ASM
+    if (INLINE_MMX(cpu_flags)) {
+        c->vsad[4] = vsad_intra16_mmx;
 
-    if (X86_MMXEXT(cpu_flags))
-        dsputil_init_mmxext(c, avctx, cpu_flags, high_bit_depth);
+        if (!(avctx->flags & CODEC_FLAG_BITEXACT)) {
+            c->vsad[0]      = vsad16_mmx;
+        }
+    }
 
-    if (X86_SSE(cpu_flags))
-        dsputil_init_sse(c, avctx, cpu_flags, high_bit_depth);
+    if (INLINE_MMXEXT(cpu_flags)) {
+        c->vsad[4]         = vsad_intra16_mmxext;
 
-    if (X86_SSE2(cpu_flags))
-        dsputil_init_sse2(c, avctx, cpu_flags, high_bit_depth);
+        if (!(avctx->flags & CODEC_FLAG_BITEXACT)) {
+            c->vsad[0] = vsad16_mmxext;
+        }
+    }
+#endif /* HAVE_INLINE_ASM */
 
-    if (EXTERNAL_SSSE3(cpu_flags))
-        dsputil_init_ssse3(c, avctx, cpu_flags, high_bit_depth);
+    if (EXTERNAL_MMX(cpu_flags)) {
+        c->hadamard8_diff[0] = ff_hadamard8_diff16_mmx;
+        c->hadamard8_diff[1] = ff_hadamard8_diff_mmx;
+        c->sum_abs_dctelem   = ff_sum_abs_dctelem_mmx;
+        c->sse[0]            = ff_sse16_mmx;
+        c->sse[1]            = ff_sse8_mmx;
+#if HAVE_YASM
+        c->nsse[0]           = nsse16_mmx;
+        c->nsse[1]           = nsse8_mmx;
+#endif
+    }
 
-    if (EXTERNAL_SSE4(cpu_flags))
-        dsputil_init_sse4(c, avctx, cpu_flags, high_bit_depth);
+    if (EXTERNAL_MMXEXT(cpu_flags)) {
+        c->hadamard8_diff[0] = ff_hadamard8_diff16_mmxext;
+        c->hadamard8_diff[1] = ff_hadamard8_diff_mmxext;
+        c->sum_abs_dctelem   = ff_sum_abs_dctelem_mmxext;
+    }
 
-    if (CONFIG_ENCODERS)
-        ff_dsputilenc_init_mmx(c, avctx, high_bit_depth);
+    if (EXTERNAL_SSE2(cpu_flags)) {
+        c->sse[0] = ff_sse16_sse2;
+        c->sum_abs_dctelem   = ff_sum_abs_dctelem_sse2;
+
+#if HAVE_ALIGNED_STACK
+        c->hadamard8_diff[0] = ff_hadamard8_diff16_sse2;
+        c->hadamard8_diff[1] = ff_hadamard8_diff_sse2;
+#endif
+    }
+
+    if (EXTERNAL_SSSE3(cpu_flags)) {
+        c->sum_abs_dctelem   = ff_sum_abs_dctelem_ssse3;
+#if HAVE_ALIGNED_STACK
+        c->hadamard8_diff[0] = ff_hadamard8_diff16_ssse3;
+        c->hadamard8_diff[1] = ff_hadamard8_diff_ssse3;
+#endif
+    }
+
+    ff_dsputil_init_pix_mmx(c, avctx);
 }

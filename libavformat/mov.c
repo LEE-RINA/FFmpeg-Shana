@@ -227,7 +227,7 @@ static int mov_metadata_loci(MOVContext *c, AVIOContext *pb, unsigned len)
     char language[4] = { 0 };
     char buf[100];
     uint16_t langcode = 0;
-    av_unused double longitude, latitude, altitude;
+    double longitude, latitude;
     const char *key = "location";
 
     if (len < 4 + 2 + 1 + 1 + 4 + 4 + 4)
@@ -248,7 +248,6 @@ static int mov_metadata_loci(MOVContext *c, AVIOContext *pb, unsigned len)
         return AVERROR_INVALIDDATA;
     longitude = ((int32_t) avio_rb32(pb)) / (float) (1 << 16);
     latitude  = ((int32_t) avio_rb32(pb)) / (float) (1 << 16);
-    altitude  = ((int32_t) avio_rb32(pb)) / (float) (1 << 16);
 
     // Try to output in the same format as the ?xyz field
     snprintf(buf, sizeof(buf), "%+08.4f%+09.4f/", latitude, longitude);
@@ -779,7 +778,7 @@ static int mov_read_moov(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 
 static int mov_read_moof(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 {
-    c->fragment.moof_offset = avio_tell(pb) - 8;
+    c->fragment.moof_offset = c->fragment.implicit_offset = avio_tell(pb) - 8;
     av_dlog(c->fc, "moof offset %"PRIx64"\n", c->fragment.moof_offset);
     return mov_read_default(c, pb, atom);
 }
@@ -2730,7 +2729,8 @@ static int mov_read_tfhd(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     }
 
     frag->base_data_offset = flags & MOV_TFHD_BASE_DATA_OFFSET ?
-                             avio_rb64(pb) : frag->moof_offset;
+                             avio_rb64(pb) : flags & MOV_TFHD_DEFAULT_BASE_IS_MOOF ?
+                             frag->moof_offset : frag->implicit_offset;
     frag->stsd_id  = flags & MOV_TFHD_STSD_ID ? avio_rb32(pb) : trex->stsd_id;
 
     frag->duration = flags & MOV_TFHD_DEFAULT_DURATION ?
@@ -2872,7 +2872,7 @@ static int mov_read_trun(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     if (pb->eof_reached)
         return AVERROR_EOF;
 
-    frag->moof_offset = offset;
+    frag->implicit_offset = offset;
     st->duration = sc->track_end = dts + sc->time_offset;
     return 0;
 }
@@ -3263,7 +3263,6 @@ static int mov_probe(AVProbeData *p)
         /* check for obvious tags */
         case MKTAG('m','o','o','v'):
             moov_offset = offset + 4;
-        case MKTAG('j','P',' ',' '): /* jpeg 2000 signature */
         case MKTAG('m','d','a','t'):
         case MKTAG('p','n','o','t'): /* detect movs with preview pics like ew.mov and april.mov */
         case MKTAG('u','d','t','a'): /* Packet Video PVAuthor adds this and a lot of more junk */
@@ -3273,6 +3272,9 @@ static int mov_probe(AVProbeData *p)
                  offset + 12 > (unsigned int)p->buf_size ||
                  AV_RB64(p->buf+offset + 8) == 0)) {
                 score = FFMAX(score, AVPROBE_SCORE_EXTENSION);
+            } else if (tag == MKTAG('f','t','y','p') &&
+                       AV_RL32(p->buf + offset + 8) == MKTAG('j','p','2',' ')) {
+                score = FFMAX(score, 5);
             } else {
                 score = AVPROBE_SCORE_MAX;
             }
@@ -3475,12 +3477,8 @@ static int mov_read_close(AVFormatContext *s)
     }
 
     if (mov->dv_demux) {
-        for (i = 0; i < mov->dv_fctx->nb_streams; i++) {
-            av_freep(&mov->dv_fctx->streams[i]->codec);
-            av_freep(&mov->dv_fctx->streams[i]);
-        }
-        av_freep(&mov->dv_fctx);
-        av_freep(&mov->dv_demux);
+        avformat_free_context(mov->dv_fctx);
+        mov->dv_fctx = NULL;
     }
 
     av_freep(&mov->trex_data);

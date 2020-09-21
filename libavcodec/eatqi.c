@@ -28,15 +28,18 @@
 
 #include "avcodec.h"
 #include "blockdsp.h"
+#include "bswapdsp.h"
 #include "get_bits.h"
 #include "aandcttab.h"
 #include "eaidct.h"
+#include "idctdsp.h"
 #include "internal.h"
 #include "mpeg12.h"
 #include "mpegvideo.h"
 
 typedef struct TqiContext {
     MpegEncContext s;
+    BswapDSPContext bsdsp;
     void *bitstream_buf;
     unsigned int bitstream_buf_size;
     DECLARE_ALIGNED(16, int16_t, block)[6][64];
@@ -48,9 +51,10 @@ static av_cold int tqi_decode_init(AVCodecContext *avctx)
     MpegEncContext *s = &t->s;
     s->avctx = avctx;
     ff_blockdsp_init(&s->bdsp, avctx);
-    ff_dsputil_init(&s->dsp, avctx);
-    ff_init_scantable_permutation(s->dsp.idct_permutation, FF_NO_IDCT_PERM);
-    ff_init_scantable(s->dsp.idct_permutation, &s->intra_scantable, ff_zigzag_direct);
+    ff_bswapdsp_init(&t->bsdsp);
+    ff_idctdsp_init(&s->idsp, avctx);
+    ff_init_scantable_permutation(s->idsp.idct_permutation, FF_NO_IDCT_PERM);
+    ff_init_scantable(s->idsp.idct_permutation, &s->intra_scantable, ff_zigzag_direct);
     s->qscale = 1;
     avctx->time_base = (AVRational){1, 15};
     avctx->pix_fmt = AV_PIX_FMT_YUV420P;
@@ -124,7 +128,8 @@ static int tqi_decode_frame(AVCodecContext *avctx,
                           buf_end - buf);
     if (!t->bitstream_buf)
         return AVERROR(ENOMEM);
-    s->dsp.bswap_buf(t->bitstream_buf, (const uint32_t*)buf, (buf_end-buf)/4);
+    t->bsdsp.bswap_buf(t->bitstream_buf, (const uint32_t *) buf,
+                       (buf_end - buf) / 4);
     init_get_bits(&s->gb, t->bitstream_buf, 8*(buf_end-buf));
 
     s->last_dc[0] = s->last_dc[1] = s->last_dc[2] = 0;

@@ -239,6 +239,7 @@ static int mp3lame_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
     MPADecodeHeader hdr;
     int len, ret, ch;
     int lame_result;
+    uint32_t h;
 
     if (frame) {
         switch (avctx->sample_fmt) {
@@ -296,7 +297,12 @@ static int mp3lame_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
        determine the frame size. */
     if (s->buffer_index < 4)
         return 0;
-    if (avpriv_mpegaudio_decode_header(&hdr, AV_RB32(s->buffer))) {
+    h = AV_RB32(s->buffer);
+    if (ff_mpa_check_header(h) < 0) {
+        av_log(avctx, AV_LOG_ERROR, "Invalid mp3 header at start of buffer\n");
+        return AVERROR_BUG;
+    }
+    if (avpriv_mpegaudio_decode_header(&hdr, h)) {
         av_log(avctx, AV_LOG_ERROR, "free format output not supported\n");
         return -1;
     }
@@ -323,7 +329,7 @@ static int mp3lame_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
 #define OFFSET(x) offsetof(LAMEContext, x)
 #define AE AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM
 static const AVOption options[] = {
-    { "reservoir",    "use bit reservoir", OFFSET(reservoir),    AV_OPT_TYPE_INT, { .i64 = 1 }, 0, 1, AE },
+    { "reservoir",    "use bit reservoir", OFFSET(reservoir),    AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, AE },
     { "lamebtmode", "Set bitrate mode", OFFSET(lamebtmode), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 5, AE, "lamebtmode"},
     { "auto",         NULL,         0, AV_OPT_TYPE_CONST, { .i64 = -1 },                      INT_MIN, INT_MAX, AE, "lamebtmode" },
     { "cbr",          NULL,         0, AV_OPT_TYPE_CONST, { .i64 = 0 },                       INT_MIN, INT_MAX, AE, "lamebtmode" },

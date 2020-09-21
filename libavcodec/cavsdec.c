@@ -52,13 +52,6 @@ static const uint8_t cbp_tab[64][2] = {
 
 static const uint8_t scan3x3[4] = { 4, 5, 7, 8 };
 
-static const uint8_t cavs_chroma_qp[64] = {
-   0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15,
-  16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
-  32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 42, 43, 43, 44, 44,
-  45, 45, 46, 46, 47, 47, 48, 48, 48, 49, 49, 49, 50, 50, 50, 51
-};
-
 static const uint8_t dequant_shift[64] = {
   14, 14, 14, 14, 14, 14, 14, 14,
   13, 13, 13, 13, 13, 13, 13, 13,
@@ -598,10 +591,10 @@ static inline void decode_residual_chroma(AVSContext *h)
 {
     if (h->cbp & (1 << 4))
         decode_residual_block(h, &h->gb, chroma_dec, 0,
-                              cavs_chroma_qp[h->qp], h->cu, h->c_stride);
+                              ff_cavs_chroma_qp[h->qp], h->cu, h->c_stride);
     if (h->cbp & (1 << 5))
         decode_residual_block(h, &h->gb, chroma_dec, 0,
-                              cavs_chroma_qp[h->qp], h->cv, h->c_stride);
+                              ff_cavs_chroma_qp[h->qp], h->cv, h->c_stride);
 }
 
 static inline int decode_residual_inter(AVSContext *h)
@@ -805,6 +798,8 @@ static int decode_mb_b(AVSContext *h, enum cavs_mb mb_type)
         ff_cavs_mv(h, MV_BWD_X0, MV_BWD_C2, MV_PRED_MEDIAN, BLK_16X16, 0);
         break;
     case B_8X8:
+#define TMP_UNUSED_INX  7
+        flags = 0;
         for (block = 0; block < 4; block++)
             sub_type[block] = get_bits(&h->gb, 2);
         for (block = 0; block < 4; block++) {
@@ -812,11 +807,30 @@ static int decode_mb_b(AVSContext *h, enum cavs_mb mb_type)
             case B_SUB_DIRECT:
                 if (!h->col_type_base[h->mbidx]) {
                     /* intra MB at co-location, do in-plane prediction */
-                    ff_cavs_mv(h, mv_scan[block], mv_scan[block] - 3,
-                               MV_PRED_BSKIP, BLK_8X8, 1);
-                    ff_cavs_mv(h, mv_scan[block] + MV_BWD_OFFS,
-                               mv_scan[block] - 3 + MV_BWD_OFFS,
-                               MV_PRED_BSKIP, BLK_8X8, 0);
+                    if(flags==0) {
+                        // if col-MB is a Intra MB, current Block size is 16x16.
+                        // AVS standard section 9.9.1
+                        if(block>0){
+                            h->mv[TMP_UNUSED_INX              ] = h->mv[MV_FWD_X0              ];
+                            h->mv[TMP_UNUSED_INX + MV_BWD_OFFS] = h->mv[MV_FWD_X0 + MV_BWD_OFFS];
+                        }
+                        ff_cavs_mv(h, MV_FWD_X0, MV_FWD_C2,
+                                   MV_PRED_BSKIP, BLK_8X8, 1);
+                        ff_cavs_mv(h, MV_FWD_X0+MV_BWD_OFFS,
+                                   MV_FWD_C2+MV_BWD_OFFS,
+                                   MV_PRED_BSKIP, BLK_8X8, 0);
+                        if(block>0) {
+                            flags = mv_scan[block];
+                            h->mv[flags              ] = h->mv[MV_FWD_X0              ];
+                            h->mv[flags + MV_BWD_OFFS] = h->mv[MV_FWD_X0 + MV_BWD_OFFS];
+                            h->mv[MV_FWD_X0              ] = h->mv[TMP_UNUSED_INX              ];
+                            h->mv[MV_FWD_X0 + MV_BWD_OFFS] = h->mv[TMP_UNUSED_INX + MV_BWD_OFFS];
+                        } else
+                            flags = MV_FWD_X0;
+                    } else {
+                        h->mv[mv_scan[block]              ] = h->mv[flags              ];
+                        h->mv[mv_scan[block] + MV_BWD_OFFS] = h->mv[flags + MV_BWD_OFFS];
+                    }
                 } else
                     mv_pred_direct(h, &h->mv[mv_scan[block]],
                                    &h->col_mv[h->mbidx * 4 + block]);
@@ -832,6 +846,7 @@ static int decode_mb_b(AVSContext *h, enum cavs_mb mb_type)
                 break;
             }
         }
+#undef TMP_UNUSED_INX
         for (block = 0; block < 4; block++) {
             if (sub_type[block] == B_SUB_BWD)
                 ff_cavs_mv(h, mv_scan[block] + MV_BWD_OFFS,

@@ -28,14 +28,21 @@
 #include "libavutil/pixdesc.h"
 #include "config.h"
 #include "avcodec.h"
+#include "dsputil.h"
+#include "fdctdsp.h"
 #include "internal.h"
+#include "pixblockdsp.h"
 #include "put_bits.h"
 #include "dv.h"
 #include "dv_tablegen.h"
+#include "dv_profile_internal.h"
 
 static av_cold int dvvideo_encode_init(AVCodecContext *avctx)
 {
     DVVideoContext *s = avctx->priv_data;
+    DSPContext dsp;
+    FDCTDSPContext fdsp;
+    PixblockDSPContext pdsp;
     int ret;
 
     s->sys = avpriv_dv_codec_profile(avctx);
@@ -61,6 +68,18 @@ static av_cold int dvvideo_encode_init(AVCodecContext *avctx)
         return AVERROR(ENOMEM);
 
     dv_vlc_map_tableinit();
+
+    memset(&dsp,0, sizeof(dsp));
+    ff_dsputil_init(&dsp, avctx);
+    ff_fdctdsp_init(&fdsp, avctx);
+    ff_pixblockdsp_init(&pdsp, avctx);
+    ff_set_cmp(&dsp, dsp.ildct_cmp, avctx->ildct_cmp);
+
+    s->get_pixels = pdsp.get_pixels;
+    s->ildct_cmp  = dsp.ildct_cmp[5];
+
+    s->fdct[0]    = fdsp.fdct;
+    s->fdct[1]    = fdsp.fdct248;
 
     return ff_dvvideo_init(avctx);
 }

@@ -209,6 +209,7 @@ External library support:
   --enable-libfdk-aac      enable AAC de/encoding via libfdk-aac [no]
   --enable-libflite        enable flite (voice synthesis) support via libflite [no]
   --enable-libfreetype     enable libfreetype [no]
+  --enable-libfribidi      enable libfribidi [no]
   --enable-libgme          enable Game Music Emu via libgme [no]
   --enable-libgsm          enable GSM de/encoding via libgsm [no]
   --enable-libiec61883     enable iec61883 via libiec61883 [no]
@@ -227,6 +228,7 @@ External library support:
   --enable-librtmp         enable RTMP[E] support via librtmp [no]
   --enable-libschroedinger enable Dirac de/encoding via libschroedinger [no]
   --enable-libshine        enable fixed-point MP3 encoding via libshine [no]
+  --enable-libsmbclient    enable Samba protocol via libsmbclient [no]
   --enable-libsoxr         enable Include libsoxr resampling [no]
   --enable-libspeex        enable Speex de/encoding via libspeex [no]
   --enable-libssh          enable SFTP protocol via libssh [no]
@@ -286,6 +288,7 @@ Toolchain options:
   --pkg-config=PKGCONFIG   use pkg-config tool PKGCONFIG [$pkg_config_default]
   --pkg-config-flags=FLAGS pass additional flags to pkgconf []
   --ranlib=RANLIB          use ranlib RANLIB [$ranlib_default]
+  --doxygen=DOXYGEN        use DOXYGEN to generate API doc [$doxygen_default]
   --host-cc=HOSTCC         use host C compiler HOSTCC
   --host-cflags=HCFLAGS    use HCFLAGS when compiling for host
   --host-cppflags=HCPPFLAGS use HCPPFLAGS when compiling for host
@@ -316,7 +319,7 @@ Advanced options (experts only):
   --sws-max-filter-size=N  the max filter size swscale uses [$sws_max_filter_size_default]
 
 Optimization options (experts only):
-  --disable-asm            disable all assembler optimizations
+  --disable-asm            disable all assembly optimizations
   --disable-altivec        disable AltiVec optimizations
   --disable-amd3dnow       disable 3DNow! optimizations
   --disable-amd3dnowext    disable 3DNow! extended optimizations
@@ -338,8 +341,8 @@ Optimization options (experts only):
   --disable-armv6t2        disable armv6t2 optimizations
   --disable-vfp            disable VFP optimizations
   --disable-neon           disable NEON optimizations
-  --disable-inline-asm     disable use of inline assembler
-  --disable-yasm           disable use of yasm assembler
+  --disable-inline-asm     disable use of inline assembly
+  --disable-yasm           disable use of nasm/yasm assembly
   --disable-mips32r2       disable MIPS32R2 optimizations
   --disable-mipsdspr1      disable MIPS DSP ASE R1 optimizations
   --disable-mipsdspr2      disable MIPS DSP ASE R2 optimizations
@@ -1331,6 +1334,7 @@ EXTERNAL_LIBRARY_LIST="
     libflite
     libfontconfig
     libfreetype
+    libfribidi
     libgme
     libgsm
     libiec61883
@@ -1348,6 +1352,7 @@ EXTERNAL_LIBRARY_LIST="
     librtmp
     libschroedinger
     libshine
+    libsmbclient
     libsoxr
     libspeex
     libssh
@@ -1795,10 +1800,14 @@ CONFIG_EXTRA="
     aandcttables
     ac3dsp
     audio_frame_queue
+    audiodsp
     blockdsp
+    bswapdsp
     cabac
     dsputil
+    dvprofile
     exif
+    fdctdsp
     frame_thread_encoder
     gcrypt
     golomb
@@ -1812,16 +1821,19 @@ CONFIG_EXTRA="
     huffman
     huffyuvdsp
     huffyuvencdsp
+    idctdsp
     intrax8
     lgplv3
     llauddsp
     llviddsp
     lpc
+    mpeg_er
     mpegaudio
     mpegaudiodsp
     mpegvideo
     mpegvideoenc
     nettle
+    pixblockdsp
     qpeldsp
     rangecoder
     riffdec
@@ -1873,6 +1885,7 @@ CMDLINE_SET="
     cross_prefix
     cxx
     dep_cc
+    doxygen
     extra_version
     gas
     host_cc
@@ -1989,35 +2002,38 @@ threads_if_any="$THREADS_LIST"
 
 # subsystems
 dct_select="rdft"
+dsputil_select="fdctdsp idctdsp pixblockdsp"
 error_resilience_select="dsputil"
 frame_thread_encoder_deps="encoders threads"
+intrax8_select="error_resilience"
 mdct_select="fft"
 rdft_select="fft"
+mpeg_er_select="error_resilience"
 mpegaudio_select="mpegaudiodsp"
 mpegaudiodsp_select="dct"
-mpegvideo_select="blockdsp dsputil h264chroma hpeldsp videodsp"
-mpegvideoenc_select="dsputil mpegvideo qpeldsp"
+mpegvideo_select="blockdsp dsputil h264chroma hpeldsp idctdsp videodsp"
+mpegvideoenc_select="dsputil mpegvideo pixblockdsp qpeldsp"
 
 # decoders / encoders
 aac_decoder_select="mdct sinewin"
 aac_encoder_select="audio_frame_queue mdct sinewin"
 aac_latm_decoder_select="aac_decoder aac_latm_parser"
-ac3_decoder_select="mdct ac3dsp ac3_parser dsputil"
-ac3_fixed_decoder_select="mdct ac3dsp ac3_parser dsputil"
-ac3_encoder_select="mdct ac3dsp dsputil"
-ac3_fixed_encoder_select="mdct ac3dsp dsputil"
-aic_decoder_select="dsputil golomb"
+ac3_decoder_select="ac3_parser ac3dsp bswapdsp mdct"
+ac3_fixed_decoder_select="ac3_parser ac3dsp bswapdsp mdct"
+ac3_encoder_select="ac3dsp audiodsp dsputil mdct"
+ac3_fixed_encoder_select="ac3dsp audiodsp dsputil mdct"
+aic_decoder_select="golomb idctdsp"
 alac_encoder_select="lpc"
-als_decoder_select="dsputil"
+als_decoder_select="bswapdsp"
 amrnb_decoder_select="lsp"
 amrwb_decoder_select="lsp"
 amv_decoder_select="sp5x_decoder exif"
-amv_encoder_select="aandcttables"
-ape_decoder_select="dsputil llauddsp"
-asv1_decoder_select="blockdsp dsputil"
-asv1_encoder_select="dsputil"
-asv2_decoder_select="blockdsp dsputil"
-asv2_encoder_select="dsputil"
+amv_encoder_select="aandcttables mpegvideoenc"
+ape_decoder_select="bswapdsp llauddsp"
+asv1_decoder_select="blockdsp bswapdsp idctdsp"
+asv1_encoder_select="bswapdsp fdctdsp pixblockdsp"
+asv2_decoder_select="blockdsp bswapdsp idctdsp"
+asv2_encoder_select="bswapdsp fdctdsp pixblockdsp"
 atrac1_decoder_select="mdct sinewin"
 atrac3_decoder_select="mdct"
 atrac3p_decoder_select="mdct sinewin"
@@ -2025,24 +2041,24 @@ avrn_decoder_select="exif"
 bink_decoder_select="blockdsp hpeldsp"
 binkaudio_dct_decoder_select="mdct rdft dct sinewin"
 binkaudio_rdft_decoder_select="mdct rdft sinewin"
-cavs_decoder_select="blockdsp dsputil golomb h264chroma qpeldsp videodsp"
-cllc_decoder_select="dsputil"
+cavs_decoder_select="blockdsp golomb h264chroma idctdsp qpeldsp videodsp"
+cllc_decoder_select="bswapdsp"
 comfortnoise_encoder_select="lpc"
-cook_decoder_select="dsputil mdct sinewin"
+cook_decoder_select="audiodsp mdct sinewin"
 cscd_decoder_select="lzo"
 cscd_decoder_suggest="zlib"
 dca_decoder_select="mdct"
-dirac_decoder_select="dsputil dwt golomb videodsp"
-dnxhd_decoder_select="blockdsp dsputil"
-dnxhd_encoder_select="aandcttables blockdsp dsputil mpegvideoenc"
-dvvideo_decoder_select="dsputil"
-dvvideo_encoder_select="dsputil"
+dirac_decoder_select="dsputil dwt golomb videodsp mpegvideoenc"
+dnxhd_decoder_select="blockdsp idctdsp"
+dnxhd_encoder_select="aandcttables blockdsp fdctdsp idctdsp mpegvideoenc pixblockdsp"
+dvvideo_decoder_select="dvprofile idctdsp"
+dvvideo_encoder_select="dsputil dvprofile fdctdsp pixblockdsp"
 dxa_decoder_select="zlib"
 eac3_decoder_select="ac3_decoder"
 eac3_encoder_select="ac3_encoder"
-eamad_decoder_select="aandcttables blockdsp dsputil mpegvideo"
+eamad_decoder_select="aandcttables blockdsp bswapdsp idctdsp mpegvideo"
 eatgq_decoder_select="aandcttables"
-eatqi_decoder_select="aandcttables blockdsp dsputil error_resilience mpegvideo"
+eatqi_decoder_select="aandcttables blockdsp bswapdsp idctdsp mpeg1video_decoder"
 exr_decoder_select="zlib"
 ffv1_decoder_select="golomb rangecoder"
 ffv1_encoder_select="rangecoder"
@@ -2050,46 +2066,46 @@ ffvhuff_decoder_select="huffyuv_decoder"
 ffvhuff_encoder_select="huffyuv_encoder"
 fic_decoder_select="golomb"
 flac_decoder_select="golomb"
-flac_encoder_select="dsputil golomb lpc"
+flac_encoder_select="bswapdsp golomb lpc"
 flashsv_decoder_select="zlib"
 flashsv_encoder_select="zlib"
 flashsv2_encoder_select="zlib"
 flashsv2_decoder_select="zlib"
 flv_decoder_select="h263_decoder"
 flv_encoder_select="h263_encoder"
-fourxm_decoder_select="blockdsp dsputil"
-fraps_decoder_select="dsputil huffman"
-g2m_decoder_select="blockdsp dsputil zlib"
-g729_decoder_select="dsputil"
-h261_decoder_select="error_resilience mpegvideo"
+fourxm_decoder_select="blockdsp bswapdsp"
+fraps_decoder_select="bswapdsp huffman"
+g2m_decoder_select="blockdsp idctdsp zlib"
+g729_decoder_select="audiodsp"
+h261_decoder_select="mpeg_er mpegvideo"
 h261_encoder_select="aandcttables mpegvideoenc"
-h263_decoder_select="error_resilience h263_parser h263dsp mpegvideo qpeldsp"
+h263_decoder_select="error_resilience h263_parser h263dsp mpeg_er mpegvideo qpeldsp"
 h263_encoder_select="aandcttables h263dsp mpegvideoenc"
 h263i_decoder_select="h263_decoder"
 h263p_encoder_select="h263_encoder"
 h264_decoder_select="cabac golomb h264chroma h264dsp h264pred h264qpel videodsp"
 h264_decoder_suggest="error_resilience"
-hevc_decoder_select="cabac dsputil golomb videodsp"
-huffyuv_decoder_select="dsputil huffyuvdsp llviddsp"
-huffyuv_encoder_select="dsputil huffman huffyuvencdsp llviddsp"
+hevc_decoder_select="bswapdsp cabac golomb videodsp"
+huffyuv_decoder_select="bswapdsp huffyuvdsp llviddsp"
+huffyuv_encoder_select="bswapdsp huffman huffyuvencdsp llviddsp"
 iac_decoder_select="imc_decoder"
-imc_decoder_select="dsputil fft mdct sinewin"
+imc_decoder_select="bswapdsp fft mdct sinewin"
 indeo3_decoder_select="hpeldsp"
 interplay_video_decoder_select="hpeldsp"
 jpegls_decoder_select="golomb mjpeg_decoder"
 jpegls_encoder_select="golomb"
 jv_decoder_select="blockdsp"
 lagarith_decoder_select="huffyuvdsp"
-ljpeg_encoder_select="aandcttables mpegvideoenc"
+ljpeg_encoder_select="aandcttables idctdsp"
 loco_decoder_select="golomb"
-mdec_decoder_select="blockdsp dsputil error_resilience mpegvideo"
+mdec_decoder_select="blockdsp idctdsp mpegvideo"
 metasound_decoder_select="lsp mdct sinewin"
-mimic_decoder_select="blockdsp dsputil hpeldsp"
-mjpeg_decoder_select="blockdsp dsputil hpeldsp exif"
+mimic_decoder_select="blockdsp bswapdsp hpeldsp idctdsp"
+mjpeg_decoder_select="blockdsp hpeldsp exif idctdsp"
 mjpeg_encoder_select="aandcttables mpegvideoenc"
 mjpegb_decoder_select="mjpeg_decoder"
 mlp_decoder_select="mlp_parser"
-motionpixels_decoder_select="dsputil"
+motionpixels_decoder_select="bswapdsp"
 mp1_decoder_select="mpegaudio"
 mp1float_decoder_select="mpegaudio"
 mp2_decoder_select="mpegaudio"
@@ -2100,13 +2116,13 @@ mp3adufloat_decoder_select="mpegaudio"
 mp3float_decoder_select="mpegaudio"
 mp3on4_decoder_select="mpegaudio"
 mp3on4float_decoder_select="mpegaudio"
-mpc7_decoder_select="dsputil mpegaudiodsp"
+mpc7_decoder_select="bswapdsp mpegaudiodsp"
 mpc8_decoder_select="mpegaudiodsp"
 mpeg_xvmc_decoder_deps="X11_extensions_XvMClib_h"
 mpeg_xvmc_decoder_select="mpeg2video_decoder"
-mpeg1video_decoder_select="error_resilience mpegvideo"
+mpeg1video_decoder_select="error_resilience mpeg_er mpegvideo"
 mpeg1video_encoder_select="aandcttables mpegvideoenc h263dsp"
-mpeg2video_decoder_select="error_resilience mpegvideo"
+mpeg2video_decoder_select="error_resilience mpeg_er mpegvideo"
 mpeg2video_encoder_select="aandcttables mpegvideoenc h263dsp"
 mpeg4_decoder_select="h263_decoder mpeg4video_parser"
 mpeg4_encoder_select="h263_encoder"
@@ -2115,32 +2131,33 @@ msmpeg4v2_decoder_select="h263_decoder"
 msmpeg4v2_encoder_select="h263_encoder"
 msmpeg4v3_decoder_select="h263_decoder"
 msmpeg4v3_encoder_select="h263_encoder"
-mss2_decoder_select="error_resilience qpeldsp vc1_decoder"
+mss2_decoder_select="error_resilience mpeg_er qpeldsp vc1_decoder"
 mxpeg_decoder_select="mjpeg_decoder"
 nellymoser_decoder_select="mdct sinewin"
 nellymoser_encoder_select="audio_frame_queue mdct sinewin"
-nuv_decoder_select="dsputil lzo"
+nuv_decoder_select="idctdsp lzo"
 on2avc_decoder_select="mdct"
 opus_decoder_deps="swresample"
 png_decoder_select="zlib"
 png_encoder_select="huffyuvencdsp zlib"
-prores_decoder_select="blockdsp dsputil"
-prores_encoder_select="dsputil"
+prores_decoder_select="blockdsp idctdsp"
+prores_encoder_select="fdctdsp"
 qcelp_decoder_select="lsp"
 qdm2_decoder_select="mdct rdft mpegaudiodsp"
-ra_144_encoder_select="audio_frame_queue lpc"
+ra_144_encoder_select="audio_frame_queue lpc audiodsp"
+ra_144_decoder_select="audiodsp"
 ralf_decoder_select="golomb"
-rawvideo_decoder_select="dsputil"
+rawvideo_decoder_select="dsputil bswapdsp"
 rtjpeg_decoder_select="dsputil"
-rv10_decoder_select="error_resilience h263_decoder h263dsp"
+rv10_decoder_select="error_resilience h263_decoder h263dsp mpeg_er"
 rv10_encoder_select="h263_encoder"
-rv20_decoder_select="error_resilience h263_decoder h263dsp"
+rv20_decoder_select="error_resilience h263_decoder h263dsp mpeg_er"
 rv20_encoder_select="h263_encoder"
-rv30_decoder_select="error_resilience golomb h264chroma h264pred h264qpel mpegvideo videodsp"
-rv40_decoder_select="error_resilience golomb h264chroma h264pred h264qpel mpegvideo videodsp"
+rv30_decoder_select="error_resilience golomb h264chroma h264pred h264qpel mpeg_er mpegvideo videodsp"
+rv40_decoder_select="error_resilience golomb h264chroma h264pred h264qpel mpeg_er mpegvideo videodsp"
 shorten_decoder_select="golomb"
 sipr_decoder_select="lsp"
-snow_decoder_select="dsputil dwt h264qpel hpeldsp rangecoder"
+snow_decoder_select="dsputil dwt h264qpel hpeldsp rangecoder mpegvideoenc"
 snow_encoder_select="aandcttables dsputil dwt h264qpel hpeldsp mpegvideoenc rangecoder"
 sonic_decoder_select="golomb rangecoder"
 sonic_encoder_select="golomb rangecoder"
@@ -2150,20 +2167,20 @@ svq1_decoder_select="hpeldsp"
 svq1_encoder_select="aandcttables dsputil hpeldsp mpegvideoenc"
 svq3_decoder_select="h264_decoder hpeldsp tpeldsp"
 svq3_decoder_suggest="zlib"
-tak_decoder_select="dsputil"
+tak_decoder_select="audiodsp"
 theora_decoder_select="vp3_decoder"
 thp_decoder_select="mjpeg_decoder"
 tiff_decoder_suggest="zlib"
 tiff_encoder_suggest="zlib"
 truehd_decoder_select="mlp_parser"
-truemotion2_decoder_select="dsputil"
-truespeech_decoder_select="dsputil"
+truemotion2_decoder_select="bswapdsp"
+truespeech_decoder_select="bswapdsp"
 tscc_decoder_select="zlib"
 twinvq_decoder_select="mdct lsp sinewin"
-utvideo_decoder_select="dsputil"
-utvideo_encoder_select="dsputil huffman huffyuvencdsp"
+utvideo_decoder_select="bswapdsp"
+utvideo_encoder_select="bswapdsp huffman huffyuvencdsp"
 vble_decoder_select="huffyuvdsp"
-vc1_decoder_select="blockdsp error_resilience h263_decoder h264chroma h264qpel intrax8 qpeldsp"
+vc1_decoder_select="blockdsp error_resilience h263_decoder h264chroma h264qpel intrax8 mpeg_er qpeldsp"
 vc1image_decoder_select="vc1_decoder"
 vorbis_decoder_select="mdct"
 vorbis_encoder_select="mdct"
@@ -2185,7 +2202,7 @@ wmav2_encoder_select="mdct sinewin"
 wmavoice_decoder_select="lsp rdft dct mdct sinewin"
 wmv1_decoder_select="h263_decoder"
 wmv1_encoder_select="h263_encoder"
-wmv2_decoder_select="blockdsp h263_decoder intrax8 videodsp"
+wmv2_decoder_select="blockdsp h263_decoder idctdsp intrax8 videodsp"
 wmv2_encoder_select="h263_encoder"
 wmv3_decoder_select="vc1_decoder"
 wmv3image_decoder_select="wmv3_decoder"
@@ -2268,8 +2285,8 @@ wmv3_vdpau_hwaccel_select="vc1_vdpau_hwaccel"
 # parsers
 h264_parser_select="h264_decoder"
 hevc_parser_select="hevc_decoder"
-mpegvideo_parser_select="error_resilience mpegvideo"
-mpeg4video_parser_select="error_resilience h263dsp mpegvideo qpeldsp"
+mpegvideo_parser_select="mpegvideo"
+mpeg4video_parser_select="error_resilience h263dsp mpeg_er mpegvideo qpeldsp"
 vc1_parser_select="mpegvideo vc1_decoder"
 
 # external libraries
@@ -2344,6 +2361,8 @@ caf_demuxer_select="riffdec"
 dirac_demuxer_select="dirac_parser"
 dts_demuxer_select="dca_parser"
 dtshd_demuxer_select="dca_parser"
+dv_demuxer_select="dvprofile"
+dv_muxer_select="dvprofile"
 dxa_demuxer_select="riffdec"
 eac3_demuxer_select="ac3_parser"
 f4v_muxer_select="mov_muxer"
@@ -2457,6 +2476,7 @@ librtmpe_protocol_deps="librtmp"
 librtmps_protocol_deps="librtmp"
 librtmpt_protocol_deps="librtmp"
 librtmpte_protocol_deps="librtmp"
+libsmbclient_protocol_deps="libsmbclient gplv3"
 libssh_protocol_deps="libssh"
 mmsh_protocol_select="http_protocol"
 mmst_protocol_select="network"
@@ -2516,6 +2536,7 @@ mcdeint_filter_deps="avcodec gpl"
 movie_filter_deps="avcodec avformat"
 mp_filter_deps="gpl avcodec swscale inline_asm"
 mpdecimate_filter_deps="gpl avcodec"
+mpdecimate_filter_select="dsputil pixblockdsp"
 mptestsrc_filter_deps="gpl"
 negate_filter_deps="lut_filter"
 perspective_filter_deps="gpl"
@@ -2533,7 +2554,7 @@ smartblur_filter_deps="gpl swscale"
 showspectrum_filter_deps="avcodec"
 showspectrum_filter_select="rdft"
 spp_filter_deps="gpl avcodec"
-spp_filter_select="fft"
+spp_filter_select="dsputil fft idctdsp fdctdsp pixblockdsp"
 stereo3d_filter_deps="gpl"
 subtitles_filter_deps="avformat avcodec libass"
 super2xsai_filter_deps="gpl"
@@ -2610,6 +2631,7 @@ cc_default="gcc"
 cxx_default="g++"
 host_cc_default="gcc"
 cp_f="cp -f"
+doxygen_default="doxygen"
 install="install"
 ln_s="ln -s -f"
 nm_default="nm -g"
@@ -2986,13 +3008,19 @@ case "$toolchain" in
     ;;
 esac
 
-set_default arch cc cxx pkg_config ranlib strip sysinclude target_exec target_os yasmexe
+set_default arch cc cxx doxygen pkg_config ranlib strip sysinclude \
+    target_exec target_os yasmexe
 enabled cross_compile || host_cc_default=$cc
 set_default host_cc
 
 if ! $pkg_config --version >/dev/null 2>&1; then
     warn "$pkg_config not found, library detection may fail."
     pkg_config=false
+fi
+
+if test $doxygen != $doxygen_default && \
+  ! $doxygen --version >/dev/null 2>&1; then
+    warn "Specified doxygen \"$doxygen\" not found, API documentation will fail to build."
 fi
 
 exesuf() {
@@ -3136,6 +3164,7 @@ icl_flags(){
             # on Windows, does enable remarks so disable them here.
             -Wall)                echo $flag -Qdiag-disable:remark ;;
             -std=c99)             echo -Qstd=c99 ;;
+            -flto)                echo -ipo ;;
         esac
     done
 }
@@ -4216,6 +4245,7 @@ die_license_disabled_gpl() {
 
 die_license_disabled gpl frei0r
 die_license_disabled gpl libcdio
+die_license_disabled gpl libsmbclient
 die_license_disabled gpl libutvideo
 die_license_disabled gpl libvidstab
 die_license_disabled gpl libx264
@@ -4231,6 +4261,7 @@ enabled gpl && die_license_disabled_gpl nonfree openssl
 
 die_license_disabled version3 libopencore_amrnb
 die_license_disabled version3 libopencore_amrwb
+die_license_disabled version3 libsmbclient
 die_license_disabled version3 libvo_aacenc
 die_license_disabled version3 libvo_amrwbenc
 
@@ -4453,8 +4484,7 @@ EOF
     check_inline_asm inline_asm_direct_symbol_refs '"movl '$extern_prefix'test, %eax"' ||
         check_inline_asm inline_asm_direct_symbol_refs '"movl '$extern_prefix'test(%rip), %eax"'
 
-    # check whether binutils is new enough to compile AVX/SSSE3/MMXEXT
-    enabled avx    && check_inline_asm avx_inline    '"vextractf128 $1, %ymm0, %xmm1"'
+    # check whether binutils is new enough to compile SSSE3/MMXEXT
     enabled ssse3  && check_inline_asm ssse3_inline  '"pabsw %xmm0, %xmm0"'
     enabled mmxext && check_inline_asm mmxext_inline '"pmaxub %mm0, %mm1"'
 
@@ -4700,6 +4730,7 @@ enabled libflite          && require2 libflite "flite/flite.h" flite_init $flite
 enabled fontconfig        && enable libfontconfig
 enabled libfontconfig     && require_pkg_config fontconfig "fontconfig/fontconfig.h" FcInit
 enabled libfreetype       && require_libfreetype
+enabled libfribidi        && require_pkg_config fribidi fribidi.h fribidi_version_info
 enabled libgme            && require  libgme gme/gme.h gme_new_emu -lgme -lstdc++
 enabled libgsm            && { for gsm_hdr in "gsm.h" "gsm/gsm.h"; do
                                    check_lib "${gsm_hdr}" gsm_create -lgsm && break;
@@ -4723,6 +4754,9 @@ enabled librtmp           && { check_lib librtmp/rtmp.h RTMP_Socket -lrtmp -lpol
                                die "ERROR: librtmp not found or RTMP_Socket() missing, librtmp version must be >= 2.2.f"; }
 enabled libschroedinger   && require_pkg_config schroedinger-1.0 schroedinger/schro.h schro_init
 enabled libshine          && require_pkg_config shine shine/layer3.h shine_encode_buffer
+enabled libsmbclient      && { { check_pkg_config smbclient libsmbclient.h smbc_init &&
+                                 require_pkg_config smbclient libsmbclient.h smbc_init; } ||
+                                 require smbclient libsmbclient.h smbc_init -lsmbclient; }
 enabled libsoxr           && require libsoxr soxr.h soxr_create -lsoxr
 enabled libssh            && require_pkg_config libssh libssh/sftp.h sftp_init
 enabled libspeex          && require libspeex speex/speex.h speex_decoder_init -lspeex
@@ -5045,10 +5079,12 @@ elif enabled ccc; then
     add_cflags -msg_disable unsupieee
 elif enabled gcc; then
     check_optflags -fno-tree-vectorize
+    check_cflags -Werror=format-security
     check_cflags -Werror=implicit-function-declaration
     check_cflags -Werror=missing-prototypes
     check_cflags -Werror=return-type
     check_cflags -Werror=vla
+    check_cflags -Wformat
     enabled extra_warnings || check_disable_warning -Wno-maybe-uninitialized
 elif enabled llvm_gcc; then
     check_cflags -mllvm -stack-alignment=16
@@ -5064,7 +5100,7 @@ elif enabled cparser; then
 elif enabled armcc; then
     add_cflags -W${armcc_opt},--diag_suppress=4343 # hardfp compat
     add_cflags -W${armcc_opt},--diag_suppress=3036 # using . as system include dir
-    # 2523: use of inline assembler is deprecated
+    # 2523: use of inline assembly is deprecated
     add_cflags -W${armcc_opt},--diag_suppress=2523
     add_cflags -W${armcc_opt},--diag_suppress=1207
     add_cflags -W${armcc_opt},--diag_suppress=1293 # assignment in condition
@@ -5289,7 +5325,6 @@ echo "threading support         ${thread_type-no}"
 echo "safe bitstream reader     ${safe_bitstream_reader-no}"
 echo "SDL support               ${sdl-no}"
 echo "opencl enabled            ${opencl-no}"
-echo "libzvbi enabled           ${libzvbi-no}"
 echo "texi2html enabled         ${texi2html-no}"
 echo "perl enabled              ${perl-no}"
 echo "pod2man enabled           ${pod2man-no}"
@@ -5383,6 +5418,7 @@ LD_PATH=$LD_PATH
 DLLTOOL=$dlltool
 WINDRES=$windres
 DEPWINDRES=$dep_cc
+DOXYGEN=$doxygen
 LDFLAGS=$LDFLAGS
 SHFLAGS=$(echo $($ldflags_filter $SHFLAGS))
 ASMSTRIPFLAGS=$ASMSTRIPFLAGS

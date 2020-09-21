@@ -40,6 +40,7 @@
 #include "libavutil/imgutils.h"
 #include "libavutil/pixdesc.h"
 #include "avcodec.h"
+#include "idctdsp.h"
 #include "internal.h"
 #include "get_bits.h"
 #include "put_bits.h"
@@ -58,6 +59,32 @@ typedef struct BlockInfo {
 } BlockInfo;
 
 static const int dv_iweight_bits = 14;
+
+static av_cold int dvvideo_decode_init(AVCodecContext *avctx)
+{
+    DVVideoContext *s = avctx->priv_data;
+    IDCTDSPContext idsp;
+    int i;
+
+    memset(&idsp,0, sizeof(idsp));
+    ff_idctdsp_init(&idsp, avctx);
+
+    for (i = 0; i < 64; i++)
+       s->dv_zigzag[0][i] = idsp.idct_permutation[ff_zigzag_direct[i]];
+
+    if (avctx->lowres){
+        for (i = 0; i < 64; i++){
+            int j = ff_dv_zigzag248_direct[i];
+            s->dv_zigzag[1][i] = idsp.idct_permutation[(j & 7) + (j & 8) * 4 + (j & 48) / 2];
+        }
+    }else
+        memcpy(s->dv_zigzag[1], ff_dv_zigzag248_direct, sizeof(s->dv_zigzag[1]));
+
+    s->idct_put[0] = idsp.idct_put;
+    s->idct_put[1] = ff_simple_idct248_put;
+
+    return ff_dvvideo_init(avctx);
+}
 
 /* decode AC coefficients */
 static void dv_decode_ac(GetBitContext *gb, BlockInfo *mb, int16_t *block)
@@ -322,7 +349,7 @@ static int dvvideo_decode_frame(AVCodecContext *avctx,
     DVVideoContext *s = avctx->priv_data;
     const uint8_t* vsc_pack;
     int apt, is16_9, ret;
-    const DVprofile *sys;
+    const AVDVProfile *sys;
 
     sys = avpriv_dv_frame_profile2(avctx, s->sys, buf, buf_size);
     if (!sys || buf_size < sys->frame_size) {
@@ -353,7 +380,7 @@ static int dvvideo_decode_frame(AVCodecContext *avctx,
     vsc_pack = buf + 80*5 + 48 + 5;
     if ( *vsc_pack == dv_video_control ) {
         apt = buf[4] & 0x07;
-        is16_9 = (vsc_pack && ((vsc_pack[2] & 0x07) == 0x02 || (!apt && (vsc_pack[2] & 0x07) == 0x07)));
+        is16_9 = (vsc_pack[2] & 0x07) == 0x02 || (!apt && (vsc_pack[2] & 0x07) == 0x07);
         ff_set_sar(avctx, s->sys->sar[is16_9]);
     }
 
@@ -385,7 +412,7 @@ AVCodec ff_dvvideo_decoder = {
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_DVVIDEO,
     .priv_data_size = sizeof(DVVideoContext),
-    .init           = ff_dvvideo_init,
+    .init           = dvvideo_decode_init,
     .decode         = dvvideo_decode_frame,
     .capabilities   = CODEC_CAP_DR1 | CODEC_CAP_SLICE_THREADS,
     .max_lowres     = 3,

@@ -132,6 +132,7 @@ Generic Parts:
     tableprint.c, tableprint.h          Reimar Doeffinger
   fixed point FFT:
     fft*                                Zeljko Lukac
+  Text Subtitles                        Clément Bœsch
 
 Codecs:
   4xm.c                                 Michael Niedermayer
@@ -165,6 +166,7 @@ Codecs:
   dnxhd*                                Baptiste Coudurier
   dpcm.c                                Mike Melanson
   dv.c                                  Roman Shaposhnik
+  dvbsubdec.c                           Anshul Maheshwari
   dxa.c                                 Kostya Shishkov
   eacmv*, eaidct*, eat*                 Peter Ross
   exif.c, exif.h                        Thilo Borgmann
@@ -350,6 +352,7 @@ Filters:
   vf_drawbox.c/drawgrid                 Andrey Utkin
   vf_extractplanes.c                    Paul B Mahol
   vf_histogram.c                        Paul B Mahol
+  vf_hqx.c                              Clément Bœsch
   vf_il.c                               Paul B Mahol
   vf_mergeplanes.c                      Paul B Mahol
   vf_psnr.c                             Paul B Mahol
@@ -525,8 +528,8 @@ x86                                     Michael Niedermayer
 Releases
 ========
 
+2.3                                     Michael Niedermayer
 2.2                                     Michael Niedermayer
-2.1                                     Michael Niedermayer
 1.2                                     Michael Niedermayer
 
 If you want to maintain an older release, please contact us

@@ -1439,6 +1439,42 @@ equalizer=f=1000:width_type=q:width=1:g=2,equalizer=f=100:width_type=q:width=2:g
 @end example
 @end itemize
 
+@section flanger
+Apply a flanging effect to the audio.
+
+The filter accepts the following options:
+
+@table @option
+@item delay
+Set base delay in milliseconds. Range from 0 to 30. Default value is 0.
+
+@item depth
+Set added swep delay in milliseconds. Range from 0 to 10. Default value is 2.
+
+@item regen
+Set percentage regeneneration (delayed signal feedback). Range from -95 to 95.
+Default value is 0.
+
+@item width
+Set percentage of delayed signal mixed with original. Range from 0 to 100.
+Default valu is 71.
+
+@item speed
+Set sweeps per second (Hz). Range from 0.1 to 10. Default value is 0.5.
+
+@item shape
+Set swept wave shape, can be @var{triangular} or @var{sinusoidal}.
+Default value is @var{sinusoidal}.
+
+@item phase
+Set swept wave percentage-shift for multi channel. Range from 0 to 100.
+Default value is 25.
+
+@item interp
+Set delay-line interpolation, @var{linear} or @var{quadratic}.
+Default is @var{linear}.
+@end table
+
 @section highpass
 
 Apply a high-pass filter with 3dB point frequency.
@@ -3288,7 +3324,7 @@ The option available in this filter is:
 @item cycle
 Specify the length of the window over which the judder repeats.
 
-Accepts any interger greater than 1. Useful values are:
+Accepts any integer greater than 1. Useful values are:
 @table @samp
 
 @item 4
@@ -3617,6 +3653,8 @@ To enable compilation of this filter, you need to configure FFmpeg with
 @code{--enable-libfreetype}.
 To enable default font fallback and the @var{font} option you need to
 configure FFmpeg with @code{--enable-libfontconfig}.
+To enable the @var{text_shaping} option, you need to configure FFmpeg with
+@code{--enable-libfribidi}.
 
 @subsection Syntax
 
@@ -3670,6 +3708,12 @@ This parameter is mandatory if the fontconfig support is disabled.
 @item fontsize
 The font size to be used for drawing text.
 The default value of @var{fontsize} is 16.
+
+@item text_shaping
+If set to 1, attempt to shape the text (for example, reverse the order of
+right-to-left text and join Arabic characters) before drawing it.
+Otherwise, just draw the text exactly as given.
+By default 1 (if supported).
 
 @item ft_load_flags
 The flags to be used for loading the fonts.
@@ -3973,6 +4017,9 @@ For more information about libfreetype, check:
 
 For more information about fontconfig, check:
 @url{http://freedesktop.org/software/fontconfig/fontconfig-user.html}.
+
+For more information about libfribidi, check:
+@url{http://fribidi.org/}.
 
 @section edgedetect
 
@@ -5201,6 +5248,20 @@ A floating point number which specifies luma temporal strength. It defaults to
 @item chroma_tmp
 A floating point number which specifies chroma temporal strength. It defaults to
 @var{luma_tmp}*@var{chroma_spatial}/@var{luma_spatial}.
+@end table
+
+@section hqx
+
+Apply a high-quality magnification filter designed for pixel art. This filter
+was originally created by Maxim Stepin.
+
+It accepts the following option:
+
+@table @option
+@item n
+Set the scaling dimension: @code{2} for @code{hq2x}, @code{3} for
+@code{hq3x} and @code{4} for @code{hq4x}.
+Default is @code{3}.
 @end table
 
 @section hue
@@ -7694,7 +7755,23 @@ ffprobe -f lavfi movie=example.mov,signalstats -show_entries frame_tags=lavfi.si
 @item
 Playback video while highlighting pixels that are outside of broadcast range in red.
 @example
-ffplay example.mov -vf values="out=brng:color=red"
+ffplay example.mov -vf signalstats="out=brng:color=red"
+@end example
+
+@item
+Playback video with signalstats metadata drawn over the frame.
+@example
+ffplay example.mov -vf signalstats=stat=brng+vrep+tout,drawtext=fontfile=FreeSerif.ttf:textfile=signalstat_drawtext.txt
+@end example
+
+The contents of signalstat_drawtext.txt used in the command are:
+@example
+time %@{pts:hms@}
+Y (%@{metadata:lavfi.signalstats.YMIN@}-%@{metadata:lavfi.signalstats.YMAX@})
+U (%@{metadata:lavfi.signalstats.UMIN@}-%@{metadata:lavfi.signalstats.UMAX@})
+V (%@{metadata:lavfi.signalstats.VMIN@}-%@{metadata:lavfi.signalstats.VMAX@})
+saturation maximum: %@{metadata:lavfi.signalstats.SATMAX@}
+
 @end example
 @end itemize
 
@@ -10388,7 +10465,7 @@ settb=AVTB
 @end itemize
 
 @section showcqt
-+Convert input audio to a video output representing
+Convert input audio to a video output representing
 frequency spectrum logarithmically (using constant Q transform with
 Brown-Puckette algorithm), with musical tone scale, from E0 to D#10 (10 octaves).
 
@@ -10416,6 +10493,9 @@ Specify gamma. Lower gamma makes the spectrum more contrast, higher gamma
 makes the spectrum having more range. Acceptable value is [1.0, 7.0].
 Default value is @code{3.0}.
 
+@item fontfile
+Specify font file for use with freetype. If not specified, use embedded font.
+
 @item fullhd
 If set to 1 (the default), the video size is 1920x1080 (full HD),
 if set to 0, the video size is 960x540. Use this option to make CPU usage lower.
@@ -10425,7 +10505,7 @@ Specify video fps. Default value is @code{25}.
 
 @item count
 Specify number of transform per frame, so there are fps*count transforms
-per second. Note tha audio data rate must be divisible by fps*count.
+per second. Note that audio data rate must be divisible by fps*count.
 Default value is @code{6}.
 
 @end table
