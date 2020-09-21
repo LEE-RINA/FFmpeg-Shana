@@ -93,7 +93,7 @@ static int flac_write_picture(struct AVFormatContext *s, AVPacket *pkt)
     AVDictionaryEntry *e;
     const char *mimetype = NULL, *desc = "";
     const AVStream *st = s->streams[pkt->stream_index];
-    int i, mimelen, desclen, type = 0;
+    int i, mimelen, desclen, type = 0, blocklen;
 
     if (!pkt->data)
         return 0;
@@ -140,8 +140,14 @@ static int flac_write_picture(struct AVFormatContext *s, AVPacket *pkt)
         desc = e->value;
     desclen = strlen(desc);
 
+    blocklen = 4 + 4 + mimelen + 4 + desclen + 4 + 4 + 4 + 4 + 4 + pkt->size;
+    if (blocklen >= 1<<24) {
+        av_log(s, AV_LOG_ERROR, "Picture block too big %d >= %d\n", blocklen, 1<<24);
+        return AVERROR(EINVAL);
+    }
+
     avio_w8(pb, 0x06);
-    avio_wb24(pb, 4 + 4 + mimelen + 4 + desclen + 4 + 4 + 4 + 4 + 4 + pkt->size);
+    avio_wb24(pb, blocklen);
 
     avio_wb32(pb, type);
 
@@ -348,9 +354,15 @@ static int flac_write_trailer(struct AVFormatContext *s)
         av_log(s, AV_LOG_WARNING, "unable to rewrite FLAC header.\n");
     }
 
-    av_freep(&c->streaminfo);
-
     return 0;
+}
+
+static void flac_deinit(struct AVFormatContext *s)
+{
+    FlacMuxerContext *c = s->priv_data;
+
+    ff_packet_list_free(&c->queue, &c->queue_end);
+    av_freep(&c->streaminfo);
 }
 
 static int flac_write_packet(struct AVFormatContext *s, AVPacket *pkt)
@@ -425,6 +437,7 @@ AVOutputFormat ff_flac_muxer = {
     .write_header      = flac_write_header,
     .write_packet      = flac_write_packet,
     .write_trailer     = flac_write_trailer,
+    .deinit            = flac_deinit,
     .flags             = AVFMT_NOTIMESTAMPS,
     .priv_class        = &flac_muxer_class,
 };

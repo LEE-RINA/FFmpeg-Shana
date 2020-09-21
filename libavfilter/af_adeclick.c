@@ -585,14 +585,14 @@ static int filter_frame(AVFilterLink *inlink)
         out->nb_samples = FFMIN(s->hop_size, s->samples_left);
 
     out->pts = s->pts;
-    s->pts += s->hop_size;
+    s->pts += av_rescale_q(s->hop_size, (AVRational){1, outlink->sample_rate}, outlink->time_base);
 
     s->detected_errors += detected_errors;
     s->nb_samples += out->nb_samples * inlink->channels;
 
     ret = ff_filter_frame(outlink, out);
     if (ret < 0)
-        goto fail;
+        return ret;
 
     if (s->samples_left > 0) {
         s->samples_left -= s->hop_size;

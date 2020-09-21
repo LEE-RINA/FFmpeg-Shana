@@ -124,9 +124,6 @@ static inline int parse_gradient(ATRAC9Context *s, ATRAC9BlockData *b,
     if (grad_range[0] >= grad_range[1] || grad_range[1] > 31)
         return AVERROR_INVALIDDATA;
 
-    if (grad_value[0] > 31 || grad_value[1] > 31)
-        return AVERROR_INVALIDDATA;
-
     if (b->grad_boundary > b->q_unit_cnt)
         return AVERROR_INVALIDDATA;
 
@@ -190,7 +187,7 @@ static inline void calc_precision(ATRAC9Context *s, ATRAC9BlockData *b,
     for (int i = 0; i < b->q_unit_cnt; i++) {
         c->precision_fine[i] = 0;
         if (c->precision_coarse[i] > 15) {
-            c->precision_fine[i] = c->precision_coarse[i] - 15;
+            c->precision_fine[i] = FFMIN(c->precision_coarse[i], 30) - 15;
             c->precision_coarse[i] = 15;
         }
     }
@@ -876,6 +873,7 @@ static av_cold int atrac9_decode_init(AVCodecContext *avctx)
     s->block_config = &at9_block_layout[block_config_idx];
 
     avctx->channel_layout = s->block_config->channel_layout;
+    avctx->channels       = av_get_channel_layout_nb_channels(avctx->channel_layout);
     avctx->sample_fmt     = AV_SAMPLE_FMT_FLTP;
 
     if (get_bits1(&gb)) {

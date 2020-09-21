@@ -224,6 +224,10 @@ Insert or remove AUD NAL units in all access units of the stream.
 @item sample_aspect_ratio
 Set the sample aspect ratio of the stream in the VUI parameters.
 
+@item overscan_appropriate_flag
+Set whether the stream is suitable for display using overscan
+or not (see H.264 section E.2.1).
+
 @item video_format
 @item video_full_range_flag
 Set the video format in the stream (see H.264 section E.2.1 and
@@ -594,7 +598,7 @@ Available values are:
 
 @table @samp
 @item auto
-Keep the same transfer characteristics property (default).
+Keep the same colorspace property (default).
 
 @item unknown
 @item bt709
@@ -659,7 +663,9 @@ Modify metadata embedded in a VP9 stream.
 
 @table @option
 @item color_space
-Set the color space value in the frame header.
+Set the color space value in the frame header.  Note that any frame
+set to RGB will be implicitly set to PC range and that RGB is
+incompatible with profiles 0 and 2.
 @table @samp
 @item unknown
 @item bt601
@@ -671,8 +677,8 @@ Set the color space value in the frame header.
 @end table
 
 @item color_range
-Set the color range value in the frame header.  Note that this cannot
-be set in RGB streams.
+Set the color range value in the frame header.  Note that any value
+imposed by the color space will take precedence over this value.
 @table @samp
 @item tv
 @item pc

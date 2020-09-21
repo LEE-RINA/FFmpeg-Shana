@@ -118,7 +118,6 @@ static int nokeepaspect;
 static int volume_s = SDL_MIX_MAXVOLUME;
 static double speed_s = 1.0;
 static int64_t start_time_s;
-static int is_move_s = 0;
 
 typedef struct MyAVPacketList {
     AVPacket pkt;
@@ -1008,8 +1007,6 @@ static void s_input_window(VideoState *is)
         }
         if (window_hwnd != NULL && hWnd != NULL) 
         {
-            int w, h;
-            RECT s_rect;
             HWND win_hWnd = (HWND)(LONG_PTR)atol(window_hwnd);
             
             // 자식으로 바꾸고 부모 지정
@@ -1018,43 +1015,10 @@ static void s_input_window(VideoState *is)
             ws |= WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
             SetWindowLong(hWnd, GWL_STYLE, ws);
             SetParent(hWnd, win_hWnd);
-            
-            // 리사이즈
-            is_move_s = 1;
-            GetWindowRect(win_hWnd, &s_rect);
-            w = s_rect.right - s_rect.left;
-            h = s_rect.bottom - s_rect.top;
-            SetWindowPos(hWnd, 0, 0, 0, w, h, SWP_NOACTIVATE);
-            
-            is->width = w;
-            is->height = h;
         }
     }
 #endif
     return;
-}
-
-static void s_resize_event(VideoState *is, int swidth, int sheight)
-{
-#ifdef _WIN32
-    if (SDL_hwnd != NULL)
-    {
-        HWND hWnd = SDL_hwnd;
-        if (window_hwnd != NULL && hWnd != NULL) 
-        {
-            HWND win_hWnd = (HWND)(LONG_PTR)atol(window_hwnd);
-            RECT s_rect;
-            GetWindowRect(win_hWnd, &s_rect);
-            swidth = s_rect.right - s_rect.left;
-            sheight = s_rect.bottom - s_rect.top;
-            SetWindowPos(hWnd, 0, 0, 0, swidth, sheight, 0);
-        }
-    }
-#endif
-    if (is->vis_texture) {
-        SDL_DestroyTexture(is->vis_texture);
-        is->vis_texture = NULL;
-    }
 }
 
 static void video_image_display(VideoState *is)
@@ -1172,8 +1136,8 @@ static void video_audio_display(VideoState *s)
     if (frame_text_hwnd != NULL)
     {
         char lbuf[128];
-        memset(lbuf, 0, sizeof(lbuf));
         HWND frametext_hWnd = (HWND)(LONG_PTR)atol(frame_text_hwnd);
+        memset(lbuf, 0, sizeof(lbuf));
         SendMessage(frametext_hWnd, 0x000C, 0, (LPARAM) lbuf);
     }
 #endif
@@ -3503,6 +3467,27 @@ static void gui_message(int int_keycode)
 #endif
 }
 
+static void s_window_resize(VideoState *is)
+{
+#ifdef _WIN32
+    if (window_hwnd != NULL)
+    {
+        int w, h;
+        RECT s_rect;
+        HWND win_hWnd = (HWND)(LONG_PTR)atol(window_hwnd);
+
+        // 리사이즈
+        GetWindowRect(win_hWnd, &s_rect);
+        w = s_rect.right - s_rect.left;
+        h = s_rect.bottom - s_rect.top;
+        SetWindowPos(SDL_hwnd, 0, 0, 0, w, h, SWP_NOACTIVATE);
+
+        is->width = w;
+        is->height = h;
+    }
+#endif
+}
+
 /* handle an event sent by the GUI */
 static void event_loop(VideoState *cur_stream)
 {
@@ -3596,13 +3581,13 @@ static void event_loop(VideoState *cur_stream)
                             case 83: // s
                                 step_to_next_frame(cur_stream);
                                 break;
-                            case 84: // t 
+                            case 84: // t
                                 stream_cycle_channel(cur_stream, AVMEDIA_TYPE_SUBTITLE);
                                 break;
-                            case 86: // v 
+                            case 86: // v
                                 stream_cycle_channel(cur_stream, AVMEDIA_TYPE_VIDEO);
                                 break;
-                            case 87: // w 
+                            case 87: // w
                                 #if CONFIG_AVFILTER
                                     if (cur_stream->show_mode == SHOW_MODE_VIDEO && cur_stream->vfilter_idx < nb_vfilters - 1) {
                                         if (++cur_stream->vfilter_idx >= nb_vfilters)
@@ -3614,6 +3599,9 @@ static void event_loop(VideoState *cur_stream)
                                 #else
                                     toggle_audio_display(cur_stream);
                                 #endif
+                                break;
+                            case 90: // z
+                                s_window_resize(cur_stream);
                                 break;
                             case 112: // F1
                                 gui_message(12);
@@ -3737,18 +3725,18 @@ static void event_loop(VideoState *cur_stream)
             }
             break;
         case SDL_WINDOWEVENT:
-            switch (event.window.event)
-            {
-                case SDL_WINDOWEVENT_EXPOSED:
-                    cur_stream->force_refresh = 1;
-                    break;
+            switch (event.window.event) {
                 case SDL_WINDOWEVENT_SIZE_CHANGED:
                     screen_width  = cur_stream->width  = event.window.data1;
                     screen_height = cur_stream->height = event.window.data2;
-                    if (is_move_s == 0) s_resize_event(cur_stream, screen_width, screen_height);
-                    break;
-            } 
-            break; 
+                    if (cur_stream->vis_texture) {
+                        SDL_DestroyTexture(cur_stream->vis_texture);
+                        cur_stream->vis_texture = NULL;
+                    }
+                case SDL_WINDOWEVENT_EXPOSED:
+                    cur_stream->force_refresh = 1;
+            }
+            break;
         case SDL_MOUSEWHEEL:
             if (event.wheel.y < 0)
             {
@@ -4025,7 +4013,7 @@ int main(int argc, char **argv)
     if (!display_disable) {
         if (window_hwnd != NULL) 
         {
-            int flags = SDL_WINDOW_OPENGL | SDL_WINDOW_BORDERLESS | SDL_WINDOW_HIDDEN | SDL_WINDOW_ALLOW_HIGHDPI;
+            int flags = SDL_WINDOW_BORDERLESS | SDL_WINDOW_HIDDEN | SDL_WINDOW_ALLOW_HIGHDPI;
             window = SDL_CreateWindow(window_title, 0, 0, 0, 0, flags);
         }
         else

@@ -211,8 +211,8 @@ static int cbs_av1_read_ns(CodedBitstreamContext *ctx, GetBitContext *gbc,
                            uint32_t n, const char *name,
                            const int *subscripts, uint32_t *write_to)
 {
-    uint32_t w, m, v, extra_bit, value;
-    int position;
+    uint32_t m, v, extra_bit, value;
+    int position, w;
 
     av_assert0(n > 0);
 
@@ -574,7 +574,7 @@ static size_t cbs_av1_get_payload_bytes_left(GetBitContext *gbc)
 #define RWContext GetBitContext
 
 #define xf(width, name, var, range_min, range_max, subs, ...) do { \
-        uint32_t value = range_min; \
+        uint32_t value; \
         CHECK(ff_cbs_read_unsigned(ctx, rw, width, #name, \
                                    SUBSCRIPTS(subs, __VA_ARGS__), \
                                    &value, range_min, range_max)); \
@@ -582,7 +582,7 @@ static size_t cbs_av1_get_payload_bytes_left(GetBitContext *gbc)
     } while (0)
 
 #define xsu(width, name, var, subs, ...) do { \
-        int32_t value = 0; \
+        int32_t value; \
         CHECK(ff_cbs_read_signed(ctx, rw, width, #name, \
                                  SUBSCRIPTS(subs, __VA_ARGS__), &value, \
                                  MIN_INT_BITS(width), \
@@ -591,27 +591,27 @@ static size_t cbs_av1_get_payload_bytes_left(GetBitContext *gbc)
     } while (0)
 
 #define uvlc(name, range_min, range_max) do { \
-        uint32_t value = range_min; \
+        uint32_t value; \
         CHECK(cbs_av1_read_uvlc(ctx, rw, #name, \
                                 &value, range_min, range_max)); \
         current->name = value; \
     } while (0)
 
 #define ns(max_value, name, subs, ...) do { \
-        uint32_t value = 0; \
+        uint32_t value; \
         CHECK(cbs_av1_read_ns(ctx, rw, max_value, #name, \
                               SUBSCRIPTS(subs, __VA_ARGS__), &value)); \
         current->name = value; \
     } while (0)
 
 #define increment(name, min, max) do { \
-        uint32_t value = 0; \
+        uint32_t value; \
         CHECK(cbs_av1_read_increment(ctx, rw, min, max, #name, &value)); \
         current->name = value; \
     } while (0)
 
 #define subexp(name, max, subs, ...) do { \
-        uint32_t value = 0; \
+        uint32_t value; \
         CHECK(cbs_av1_read_subexp(ctx, rw, max, #name, \
                                   SUBSCRIPTS(subs, __VA_ARGS__), &value)); \
         current->name = value; \
@@ -629,7 +629,7 @@ static size_t cbs_av1_get_payload_bytes_left(GetBitContext *gbc)
     } while (0)
 
 #define leb128(name) do { \
-        uint64_t value = 0; \
+        uint64_t value; \
         CHECK(cbs_av1_read_leb128(ctx, rw, #name, &value)); \
         current->name = value; \
     } while (0)
@@ -768,14 +768,13 @@ static int cbs_av1_split_fragment(CodedBitstreamContext *ctx,
         if (err < 0)
             goto fail;
 
-        if (get_bits_left(&gbc) < 8) {
-            av_log(ctx->log_ctx, AV_LOG_ERROR, "Invalid OBU: fragment "
-                   "too short (%"SIZE_SPECIFIER" bytes).\n", size);
-            err = AVERROR_INVALIDDATA;
-            goto fail;
-        }
-
         if (header.obu_has_size_field) {
+            if (get_bits_left(&gbc) < 8) {
+                av_log(ctx->log_ctx, AV_LOG_ERROR, "Invalid OBU: fragment "
+                       "too short (%"SIZE_SPECIFIER" bytes).\n", size);
+                err = AVERROR_INVALIDDATA;
+                goto fail;
+            }
             err = cbs_av1_read_leb128(ctx, &gbc, "obu_size", &obu_size);
             if (err < 0)
                 goto fail;
@@ -829,7 +828,7 @@ static void cbs_av1_free_metadata(AV1RawMetadata *md)
     }
 }
 
-static void cbs_av1_free_obu(void *unit, uint8_t *content)
+static void cbs_av1_free_obu(void *opaque, uint8_t *content)
 {
     AV1RawOBU *obu = (AV1RawOBU*)content;
 
@@ -939,6 +938,8 @@ static int cbs_av1_read_unit(CodedBitstreamContext *ctx,
         priv->temporal_id = 0;
         priv->spatial_id  = 0;
     }
+
+    priv->ref = (AV1ReferenceFrameState *)&priv->read_ref;
 
     switch (obu->header.obu_type) {
     case AV1_OBU_SEQUENCE_HEADER:
@@ -1082,6 +1083,8 @@ static int cbs_av1_write_obu(CodedBitstreamContext *ctx,
     td = NULL;
     start_pos = put_bits_count(pbc);
 
+    priv->ref = (AV1ReferenceFrameState *)&priv->write_ref;
+
     switch (obu->header.obu_type) {
     case AV1_OBU_SEQUENCE_HEADER:
         {
@@ -1200,66 +1203,19 @@ static int cbs_av1_write_obu(CodedBitstreamContext *ctx,
         return AVERROR(ENOSPC);
 
     if (obu->obu_size > 0) {
-        memmove(priv->write_buffer + data_pos,
-                priv->write_buffer + start_pos, header_size);
+        memmove(pbc->buf + data_pos,
+                pbc->buf + start_pos, header_size);
         skip_put_bytes(pbc, header_size);
 
         if (td) {
-            memcpy(priv->write_buffer + data_pos + header_size,
+            memcpy(pbc->buf + data_pos + header_size,
                    td->data, td->data_size);
             skip_put_bytes(pbc, td->data_size);
         }
     }
 
-    return 0;
-}
-
-static int cbs_av1_write_unit(CodedBitstreamContext *ctx,
-                              CodedBitstreamUnit *unit)
-{
-    CodedBitstreamAV1Context *priv = ctx->priv_data;
-    PutBitContext pbc;
-    int err;
-
-    if (!priv->write_buffer) {
-        // Initial write buffer size is 1MB.
-        priv->write_buffer_size = 1024 * 1024;
-
-    reallocate_and_try_again:
-        err = av_reallocp(&priv->write_buffer, priv->write_buffer_size);
-        if (err < 0) {
-            av_log(ctx->log_ctx, AV_LOG_ERROR, "Unable to allocate a "
-                   "sufficiently large write buffer (last attempt "
-                   "%"SIZE_SPECIFIER" bytes).\n", priv->write_buffer_size);
-            return err;
-        }
-    }
-
-    init_put_bits(&pbc, priv->write_buffer, priv->write_buffer_size);
-
-    err = cbs_av1_write_obu(ctx, unit, &pbc);
-    if (err == AVERROR(ENOSPC)) {
-        // Overflow.
-        priv->write_buffer_size *= 2;
-        goto reallocate_and_try_again;
-    }
-    if (err < 0)
-        return err;
-
-    // Overflow but we didn't notice.
-    av_assert0(put_bits_count(&pbc) <= 8 * priv->write_buffer_size);
-
     // OBU data must be byte-aligned.
-    av_assert0(put_bits_count(&pbc) % 8 == 0);
-
-    unit->data_size = put_bits_count(&pbc) / 8;
-    flush_put_bits(&pbc);
-
-    err = ff_cbs_alloc_unit_data(ctx, unit, unit->data_size);
-    if (err < 0)
-        return err;
-
-    memcpy(unit->data, priv->write_buffer, unit->data_size);
+    av_assert0(put_bits_count(pbc) % 8 == 0);
 
     return 0;
 }
@@ -1298,8 +1254,6 @@ static void cbs_av1_close(CodedBitstreamContext *ctx)
 
     av_buffer_unref(&priv->sequence_header_ref);
     av_buffer_unref(&priv->frame_header_ref);
-
-    av_freep(&priv->write_buffer);
 }
 
 const CodedBitstreamType ff_cbs_type_av1 = {
@@ -1309,7 +1263,7 @@ const CodedBitstreamType ff_cbs_type_av1 = {
 
     .split_fragment    = &cbs_av1_split_fragment,
     .read_unit         = &cbs_av1_read_unit,
-    .write_unit        = &cbs_av1_write_unit,
+    .write_unit        = &cbs_av1_write_obu,
     .assemble_fragment = &cbs_av1_assemble_fragment,
 
     .close             = &cbs_av1_close,

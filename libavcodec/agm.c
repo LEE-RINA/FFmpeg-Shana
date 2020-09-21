@@ -827,7 +827,7 @@ static int decode_intra(AVCodecContext *avctx, GetBitContext *gb, AVFrame *frame
 static int decode_motion_vectors(AVCodecContext *avctx, GetBitContext *gb)
 {
     AGMContext *s = avctx->priv_data;
-    int nb_mvs = ((avctx->height + 15) >> 4) * ((avctx->width + 15) >> 4);
+    int nb_mvs = ((avctx->coded_height + 15) >> 4) * ((avctx->coded_width + 15) >> 4);
     int ret, skip = 0, value, map;
 
     av_fast_padded_malloc(&s->mvectors, &s->mvectors_size,
@@ -1117,6 +1117,13 @@ static int decode_frame(AVCodecContext *avctx, void *data,
     frame->key_frame = s->key_frame;
     frame->pict_type = s->key_frame ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_P;
 
+    if (!s->key_frame) {
+        if (!s->prev_frame->data[0]) {
+            av_log(avctx, AV_LOG_ERROR, "Missing reference frame.\n");
+            return AVERROR_INVALIDDATA;
+        }
+    }
+
     if (header) {
         if (avctx->codec_tag == MKTAG('A', 'G', 'M', '0') ||
             avctx->codec_tag == MKTAG('A', 'G', 'M', '1'))
@@ -1186,10 +1193,6 @@ static int decode_frame(AVCodecContext *avctx, void *data,
         else
             ret = decode_intra(avctx, gb, frame);
     } else {
-        if (!s->prev_frame->data[0]) {
-            av_log(avctx, AV_LOG_ERROR, "Missing reference frame.\n");
-            return AVERROR_INVALIDDATA;
-        }
         if (s->prev_frame-> width != frame->width ||
             s->prev_frame->height != frame->height)
             return AVERROR_INVALIDDATA;

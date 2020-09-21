@@ -87,7 +87,7 @@ int ff_av1_parse_seq_header(AV1SequenceParameters *seq, const uint8_t *buf, int 
  * Writes AV1 extradata (Sequence Header and Metadata OBUs) to the provided
  * AVIOContext.
  *
- * @param pb pointer to the AVIOContext where the hvcC shall be written
+ * @param pb pointer to the AVIOContext where the av1C box shall be written
  * @param buf input data buffer
  * @param size size in bytes of the input data buffer
  *

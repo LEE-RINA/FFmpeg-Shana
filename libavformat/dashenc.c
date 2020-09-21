@@ -69,6 +69,7 @@ typedef struct Segment {
 
 typedef struct AdaptationSet {
     char id[10];
+    char *descriptor;
     enum AVMediaType media_type;
     AVDictionary *metadata;
     AVRational min_frame_rate, max_frame_rate;
@@ -568,8 +569,10 @@ static void dash_free(AVFormatContext *s)
     int i, j;
 
     if (c->as) {
-        for (i = 0; i < c->nb_as; i++)
+        for (i = 0; i < c->nb_as; i++) {
             av_dict_free(&c->as[i].metadata);
+            av_freep(&c->as[i].descriptor);
+        }
         av_freep(&c->as);
         c->nb_as = 0;
     }
@@ -585,8 +588,7 @@ static void dash_free(AVFormatContext *s)
                 avio_close(os->ctx->pb);
         }
         ff_format_io_close(s, &os->out);
-        if (os->ctx)
-            avformat_free_context(os->ctx);
+        avformat_free_context(os->ctx);
         for (j = 0; j < os->nb_segments; j++)
             av_free(os->segments[j]);
         av_free(os->segments);
@@ -764,7 +766,8 @@ static int write_adaptation_set(AVFormatContext *s, AVIOContext *out, int as_ind
     role = av_dict_get(as->metadata, "role", NULL, 0);
     if (role)
         avio_printf(out, "\t\t\t<Role schemeIdUri=\"urn:mpeg:dash:role:2011\" value=\"%s\"/>\n", role->value);
-
+    if (as->descriptor)
+        avio_printf(out, "\t\t\t%s\n", as->descriptor);
     for (i = 0; i < s->nb_streams; i++) {
         OutputStream *os = &c->streams[i];
         char bandwidth_str[64] = {'\0'};
@@ -836,7 +839,7 @@ static int parse_adaptation_sets(AVFormatContext *s)
 {
     DASHContext *c = s->priv_data;
     const char *p = c->adaptation_sets;
-    enum { new_set, parse_id, parsing_streams } state;
+    enum { new_set, parse_id, parsing_streams, parse_descriptor } state;
     AdaptationSet *as;
     int i, n, ret;
 
@@ -853,6 +856,9 @@ static int parse_adaptation_sets(AVFormatContext *s)
     }
 
     // syntax id=0,streams=0,1,2 id=1,streams=3,4 and so on
+    // option id=0,descriptor=descriptor_str,streams=0,1,2 and so on
+    // descriptor is useful to the scheme defined by ISO/IEC 23009-1:2014/Amd.2:2015
+    // descriptor_str should be a self-closing xml tag.
     state = new_set;
     while (*p) {
         if (*p == ' ') {
@@ -870,7 +876,19 @@ static int parse_adaptation_sets(AVFormatContext *s)
             if (*p)
                 p++;
             state = parse_id;
-        } else if (state == parse_id && av_strstart(p, "streams=", &p)) {
+        } else if (state == parse_id && av_strstart(p, "descriptor=", &p)) {
+            n = strcspn(p, ">") + 1; //followed by one comma, so plus 1
+            if (n < strlen(p)) {
+                as->descriptor = av_strndup(p, n);
+            } else {
+                av_log(s, AV_LOG_ERROR, "Parse error, descriptor string should be a self-closing xml tag\n");
+                return AVERROR(EINVAL);
+            }
+            p += n;
+            if (*p)
+                p++;
+            state = parse_descriptor;
+        } else if ((state == parse_id || state == parse_descriptor) && av_strstart(p, "streams=", &p)) { //descriptor is optional
             state = parsing_streams;
         } else if (state == parsing_streams) {
             AdaptationSet *as = &c->as[c->nb_as - 1];

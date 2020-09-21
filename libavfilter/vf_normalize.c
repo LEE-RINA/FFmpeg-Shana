@@ -81,6 +81,17 @@
 #include "internal.h"
 #include "video.h"
 
+typedef struct NormalizeHistory {
+    uint8_t *history;       // History entries.
+    uint32_t history_sum;   // Sum of history entries.
+} NormalizeHistory;
+
+typedef struct NormalizeLocal {
+    uint8_t in;     // Original input byte value for this frame.
+    float smoothed; // Smoothed input value [0,255].
+    float out;      // Output value [0,255]
+} NormalizeLocal;
+
 typedef struct NormalizeContext {
     const AVClass *class;
 
@@ -98,23 +109,21 @@ typedef struct NormalizeContext {
     int frame_num;      // Increments on each frame, starting from 0.
 
     // Per-extremum, per-channel history, for temporal smoothing.
-    struct {
-        uint8_t *history;       // History entries.
-        uint32_t history_sum;   // Sum of history entries.
-    } min[3], max[3];           // Min and max for each channel in {R,G,B}.
+    NormalizeHistory min[3], max[3];           // Min and max for each channel in {R,G,B}.
     uint8_t *history_mem;       // Single allocation for above history entries
 
 } NormalizeContext;
 
 #define OFFSET(x) offsetof(NormalizeContext, x)
 #define FLAGS AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_FILTERING_PARAM
+#define FLAGSR AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_RUNTIME_PARAM
 
 static const AVOption normalize_options[] = {
-    { "blackpt",  "output color to which darkest input color is mapped",  OFFSET(blackpt), AV_OPT_TYPE_COLOR, { .str = "black" }, CHAR_MIN, CHAR_MAX, FLAGS },
-    { "whitept",  "output color to which brightest input color is mapped",  OFFSET(whitept), AV_OPT_TYPE_COLOR, { .str = "white" }, CHAR_MIN, CHAR_MAX, FLAGS },
+    { "blackpt",  "output color to which darkest input color is mapped",  OFFSET(blackpt), AV_OPT_TYPE_COLOR, { .str = "black" }, CHAR_MIN, CHAR_MAX, FLAGSR },
+    { "whitept",  "output color to which brightest input color is mapped",  OFFSET(whitept), AV_OPT_TYPE_COLOR, { .str = "white" }, CHAR_MIN, CHAR_MAX, FLAGSR },
     { "smoothing",  "amount of temporal smoothing of the input range, to reduce flicker", OFFSET(smoothing), AV_OPT_TYPE_INT, {.i64=0}, 0, INT_MAX/8, FLAGS },
-    { "independence", "proportion of independent to linked channel normalization", OFFSET(independence), AV_OPT_TYPE_FLOAT, {.dbl=1.0}, 0.0, 1.0, FLAGS },
-    { "strength", "strength of filter, from no effect to full normalization", OFFSET(strength), AV_OPT_TYPE_FLOAT, {.dbl=1.0}, 0.0, 1.0, FLAGS },
+    { "independence", "proportion of independent to linked channel normalization", OFFSET(independence), AV_OPT_TYPE_FLOAT, {.dbl=1.0}, 0.0, 1.0, FLAGSR },
+    { "strength", "strength of filter, from no effect to full normalization", OFFSET(strength), AV_OPT_TYPE_FLOAT, {.dbl=1.0}, 0.0, 1.0, FLAGSR },
     { NULL }
 };
 
@@ -126,11 +135,7 @@ AVFILTER_DEFINE_CLASS(normalize);
 static void normalize(NormalizeContext *s, AVFrame *in, AVFrame *out)
 {
     // Per-extremum, per-channel local variables.
-    struct {
-        uint8_t in;     // Original input byte value for this frame.
-        float smoothed; // Smoothed input value [0,255].
-        float out;      // Output value [0,255].
-    } min[3], max[3];   // Min and max for each channel in {R,G,B}.
+    NormalizeLocal min[3], max[3];   // Min and max for each channel in {R,G,B}.
 
     float rgb_min_smoothed; // Min input range for linked normalization
     float rgb_max_smoothed; // Max input range for linked normalization
@@ -143,14 +148,12 @@ static void normalize(NormalizeContext *s, AVFrame *in, AVFrame *out)
         min[c].in = max[c].in = in->data[0][s->co[c]];
     for (y = 0; y < in->height; y++) {
         uint8_t *inp = in->data[0] + y * in->linesize[0];
-        uint8_t *outp = out->data[0] + y * out->linesize[0];
         for (x = 0; x < in->width; x++) {
             for (c = 0; c < 3; c++) {
                 min[c].in = FFMIN(min[c].in, inp[s->co[c]]);
                 max[c].in = FFMAX(max[c].in, inp[s->co[c]]);
             }
             inp += s->step;
-            outp += s->step;
         }
     }
 
@@ -386,4 +389,5 @@ AVFilter ff_vf_normalize = {
     .inputs        = inputs,
     .outputs       = outputs,
     .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL,
+    .process_command = ff_filter_process_command,
 };

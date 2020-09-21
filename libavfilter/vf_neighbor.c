@@ -64,6 +64,7 @@ static int query_formats(AVFilterContext *ctx)
         AV_PIX_FMT_YUV420P16, AV_PIX_FMT_YUV422P16, AV_PIX_FMT_YUV444P16,
         AV_PIX_FMT_YUVA420P9, AV_PIX_FMT_YUVA422P9, AV_PIX_FMT_YUVA444P9,
         AV_PIX_FMT_YUVA420P10, AV_PIX_FMT_YUVA422P10, AV_PIX_FMT_YUVA444P10,
+        AV_PIX_FMT_YUVA422P12, AV_PIX_FMT_YUVA444P12,
         AV_PIX_FMT_YUVA420P16, AV_PIX_FMT_YUVA422P16, AV_PIX_FMT_YUVA444P16,
         AV_PIX_FMT_GBRP, AV_PIX_FMT_GBRP9, AV_PIX_FMT_GBRP10,
         AV_PIX_FMT_GBRP12, AV_PIX_FMT_GBRP14, AV_PIX_FMT_GBRP16,
@@ -296,9 +297,11 @@ static int filter_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
                                                src + (width - 2) * bpc,                                                      src + (width - 2) * bpc,
                                                src + (width - 2) * bpc + ph * stride, src + (width - 1) * bpc + ph * stride, src + (width - 2) * bpc + ph * stride};
 
-            s->filter(dst,                     src,                     1,         threshold, coordinateslb, s->coordinates, s->max);
-            s->filter(dst          + 1  * bpc, src          + 1  * bpc, width - 2, threshold, coordinates,   s->coordinates, s->max);
-            s->filter(dst + (width - 1) * bpc, src + (width - 1) * bpc, 1,         threshold, coordinatesrb, s->coordinates, s->max);
+            s->filter(dst,                         src,                     1,         threshold, coordinateslb, s->coordinates, s->max);
+            if (width > 1) {
+                s->filter(dst          + 1  * bpc, src          + 1  * bpc, width - 2, threshold, coordinates,   s->coordinates, s->max);
+                s->filter(dst + (width - 1) * bpc, src + (width - 1) * bpc, 1,         threshold, coordinatesrb, s->coordinates, s->max);
+            }
 
             src += stride;
             dst += dstride;

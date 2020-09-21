@@ -24,14 +24,6 @@
 #include "internal.h"
 #include "mpeg.h"
 
-#if CONFIG_VOBSUB_DEMUXER
-# include "subtitles.h"
-# include "libavutil/bprint.h"
-# include "libavutil/opt.h"
-#endif
-
-#include "libavutil/avassert.h"
-
 /*********************************************/
 /* demux code */
 
@@ -123,18 +115,12 @@ static int mpegps_probe(const AVProbeData *p)
 }
 
 typedef struct MpegDemuxContext {
-    AVClass *class;
     int32_t header_state;
     unsigned char psm_es_type[256];
     int sofdec;
     int dvd;
     int imkh_cctv;
     int raw_ac3;
-#if CONFIG_VOBSUB_DEMUXER
-    AVFormatContext *sub_ctx;
-    FFDemuxSubtitlesQueue q[32];
-    char *sub_name;
-#endif
 } MpegDemuxContext;
 
 static int mpegps_read_header(AVFormatContext *s)
@@ -489,7 +475,7 @@ static int mpegps_read_packet(AVFormatContext *s,
     MpegDemuxContext *m = s->priv_data;
     AVStream *st;
     int len, startcode, i, es_type, ret;
-    int lpcm_header_len = -1; //Init to suppress warning
+    int pcm_dvd = 0;
     int request_probe= 0;
     enum AVCodecID codec_id = AV_CODEC_ID_NONE;
     enum AVMediaType type;
@@ -506,13 +492,18 @@ redo:
 
         if (!m->raw_ac3) {
             /* audio: skip header */
-            avio_r8(s->pb);
-            lpcm_header_len = avio_rb16(s->pb);
+            avio_skip(s->pb, 3);
             len -= 3;
             if (startcode >= 0xb0 && startcode <= 0xbf) {
                 /* MLP/TrueHD audio has a 4-byte header */
                 avio_r8(s->pb);
                 len--;
+            } else if (startcode >= 0xa0 && startcode <= 0xaf) {
+                ret = ffio_ensure_seekback(s->pb, 3);
+                if (ret < 0)
+                    return ret;
+                pcm_dvd = (avio_rb24(s->pb) & 0xFF) == 0x80;
+                avio_skip(s->pb, -3);
             }
         }
     }
@@ -591,7 +582,7 @@ redo:
         codec_id = AV_CODEC_ID_DTS;
     } else if (startcode >= 0xa0 && startcode <= 0xaf) {
         type     = AVMEDIA_TYPE_AUDIO;
-        if (lpcm_header_len >= 6 && startcode == 0xa1) {
+        if (!pcm_dvd) {
             codec_id = AV_CODEC_ID_MLP;
         } else {
             codec_id = AV_CODEC_ID_PCM_DVD;
@@ -700,8 +691,20 @@ AVInputFormat ff_mpegps_demuxer = {
 
 #if CONFIG_VOBSUB_DEMUXER
 
+#include "subtitles.h"
+#include "libavutil/avassert.h"
+#include "libavutil/bprint.h"
+#include "libavutil/opt.h"
+
 #define REF_STRING "# VobSub index file,"
 #define MAX_LINE_SIZE 2048
+
+typedef struct VobSubDemuxContext {
+    const AVClass *class;
+    AVFormatContext *sub_ctx;
+    FFDemuxSubtitlesQueue q[32];
+    char *sub_name;
+} VobSubDemuxContext;
 
 static int vobsub_probe(const AVProbeData *p)
 {
@@ -710,12 +713,23 @@ static int vobsub_probe(const AVProbeData *p)
     return 0;
 }
 
+static int vobsub_read_close(AVFormatContext *s)
+{
+    VobSubDemuxContext *vobsub = s->priv_data;
+    int i;
+
+    for (i = 0; i < s->nb_streams; i++)
+        ff_subtitles_queue_clean(&vobsub->q[i]);
+    if (vobsub->sub_ctx)
+        avformat_close_input(&vobsub->sub_ctx);
+    return 0;
+}
+
 static int vobsub_read_header(AVFormatContext *s)
 {
     int i, ret = 0, header_parsed = 0, langidx = 0;
-    MpegDemuxContext *vobsub = s->priv_data;
+    VobSubDemuxContext *vobsub = s->priv_data;
     size_t fname_len;
-    char *header_str;
     AVBPrint header;
     int64_t delay = 0;
     AVStream *st = NULL;
@@ -728,8 +742,7 @@ static int vobsub_read_header(AVFormatContext *s)
         char *ext;
         vobsub->sub_name = av_strdup(s->url);
         if (!vobsub->sub_name) {
-            ret = AVERROR(ENOMEM);
-            goto end;
+            return AVERROR(ENOMEM);
         }
 
         fname_len = strlen(vobsub->sub_name);
@@ -737,23 +750,22 @@ static int vobsub_read_header(AVFormatContext *s)
         if (fname_len < 4 || *(ext - 1) != '.') {
             av_log(s, AV_LOG_ERROR, "The input index filename is too short "
                    "to guess the associated .SUB file\n");
-            ret = AVERROR_INVALIDDATA;
-            goto end;
+            return AVERROR_INVALIDDATA;
         }
         memcpy(ext, !strncmp(ext, "IDX", 3) ? "SUB" : "sub", 3);
         av_log(s, AV_LOG_VERBOSE, "IDX/SUB: %s -> %s\n", s->url, vobsub->sub_name);
     }
 
     if (!(iformat = av_find_input_format("mpeg"))) {
-        ret = AVERROR_DEMUXER_NOT_FOUND;
-        goto end;
+        return AVERROR_DEMUXER_NOT_FOUND;
     }
 
     vobsub->sub_ctx = avformat_alloc_context();
     if (!vobsub->sub_ctx) {
-        ret = AVERROR(ENOMEM);
-        goto end;
+        return AVERROR(ENOMEM);
     }
+
+    av_bprint_init(&header, 0, INT_MAX - AV_INPUT_BUFFER_PADDING_SIZE);
 
     if ((ret = ff_copy_whiteblacklists(vobsub->sub_ctx, s)) < 0)
         goto end;
@@ -764,7 +776,6 @@ static int vobsub_read_header(AVFormatContext *s)
         goto end;
     }
 
-    av_bprint_init(&header, 0, AV_BPRINT_SIZE_UNLIMITED);
     while (!avio_feof(s->pb)) {
         char line[MAX_LINE_SIZE];
         int len = ff_get_line(s->pb, line, sizeof(line));
@@ -885,25 +896,27 @@ static int vobsub_read_header(AVFormatContext *s)
     }
 
     if (!av_bprint_is_complete(&header)) {
-        av_bprint_finalize(&header, NULL);
         ret = AVERROR(ENOMEM);
         goto end;
     }
-    av_bprint_finalize(&header, &header_str);
     for (i = 0; i < s->nb_streams; i++) {
-        AVStream *sub_st = s->streams[i];
-        sub_st->codecpar->extradata      = av_strdup(header_str);
-        sub_st->codecpar->extradata_size = header.len;
+        AVCodecParameters *par = s->streams[i]->codecpar;
+        ret = ff_alloc_extradata(par, header.len);
+        if (ret < 0) {
+            goto end;
+        }
+        memcpy(par->extradata, header.str, header.len);
     }
-    av_free(header_str);
-
 end:
+    if (ret < 0)
+        vobsub_read_close(s);
+    av_bprint_finalize(&header, NULL);
     return ret;
 }
 
 static int vobsub_read_packet(AVFormatContext *s, AVPacket *pkt)
 {
-    MpegDemuxContext *vobsub = s->priv_data;
+    VobSubDemuxContext *vobsub = s->priv_data;
     FFDemuxSubtitlesQueue *q;
     AVIOContext *pb = vobsub->sub_ctx->pb;
     int ret, psize, total_read = 0, i;
@@ -991,7 +1004,7 @@ fail:
 static int vobsub_read_seek(AVFormatContext *s, int stream_index,
                             int64_t min_ts, int64_t ts, int64_t max_ts, int flags)
 {
-    MpegDemuxContext *vobsub = s->priv_data;
+    VobSubDemuxContext *vobsub = s->priv_data;
 
     /* Rescale requested timestamps based on the first stream (timebase is the
      * same for all subtitles stream within a .idx/.sub). Rescaling is done just
@@ -1021,20 +1034,8 @@ static int vobsub_read_seek(AVFormatContext *s, int stream_index,
                                    min_ts, ts, max_ts, flags);
 }
 
-static int vobsub_read_close(AVFormatContext *s)
-{
-    int i;
-    MpegDemuxContext *vobsub = s->priv_data;
-
-    for (i = 0; i < s->nb_streams; i++)
-        ff_subtitles_queue_clean(&vobsub->q[i]);
-    if (vobsub->sub_ctx)
-        avformat_close_input(&vobsub->sub_ctx);
-    return 0;
-}
-
 static const AVOption options[] = {
-    { "sub_name", "URI for .sub file", offsetof(MpegDemuxContext, sub_name), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, AV_OPT_FLAG_DECODING_PARAM },
+    { "sub_name", "URI for .sub file", offsetof(VobSubDemuxContext, sub_name), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, AV_OPT_FLAG_DECODING_PARAM },
     { NULL }
 };
 
@@ -1048,7 +1049,7 @@ static const AVClass vobsub_demuxer_class = {
 AVInputFormat ff_vobsub_demuxer = {
     .name           = "vobsub",
     .long_name      = NULL_IF_CONFIG_SMALL("VobSub subtitle format"),
-    .priv_data_size = sizeof(MpegDemuxContext),
+    .priv_data_size = sizeof(VobSubDemuxContext),
     .read_probe     = vobsub_probe,
     .read_header    = vobsub_read_header,
     .read_packet    = vobsub_read_packet,

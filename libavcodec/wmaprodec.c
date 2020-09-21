@@ -437,7 +437,7 @@ static av_cold int decode_init(WMAProDecodeCtx *s, AVCodecContext *avctx, int nu
         av_log(avctx, AV_LOG_ERROR, "invalid number of channels per XMA stream %d\n",
                s->nb_channels);
         return AVERROR_INVALIDDATA;
-    } else if (s->nb_channels > WMAPRO_MAX_CHANNELS) {
+    } else if (s->nb_channels > WMAPRO_MAX_CHANNELS || s->nb_channels > avctx->channels) {
         avpriv_request_sample(avctx,
                               "More than %d channels", WMAPRO_MAX_CHANNELS);
         return AVERROR_PATCHWELCOME;
@@ -1565,9 +1565,9 @@ static void save_bits(WMAProDecodeCtx *s, GetBitContext* gb, int len,
         s->frame_offset = get_bits_count(gb) & 7;
         s->num_saved_bits = s->frame_offset;
         init_put_bits(&s->pb, s->frame_data, MAX_FRAMESIZE);
-    }
-
-    buflen = (put_bits_count(&s->pb) + len + 8) >> 3;
+        buflen = (s->num_saved_bits      + len + 7) >> 3;
+    } else
+        buflen = (put_bits_count(&s->pb) + len + 7) >> 3;
 
     if (len <= 0 || buflen > MAX_FRAMESIZE) {
         avpriv_request_sample(s->avctx, "Too small input buffer");
@@ -1793,6 +1793,12 @@ static int xma_decode_packet(AVCodecContext *avctx, void *data,
     AVFrame *frame = data;
     int i, ret, offset = INT_MAX;
 
+    if (!s->frames[s->current_stream]->data[0]) {
+        s->frames[s->current_stream]->nb_samples = 512;
+        if ((ret = ff_get_buffer(avctx, s->frames[s->current_stream], 0)) < 0) {
+            return ret;
+        }
+    }
     /* decode current stream packet */
     ret = decode_packet(avctx, &s->xma[s->current_stream], s->frames[s->current_stream],
                         &got_stream_frame_ptr, avpkt);
@@ -1888,12 +1894,14 @@ static av_cold int xma_decode_init(AVCodecContext *avctx)
         s->num_streams = avctx->extradata[1];
         if (avctx->extradata_size != (32 + ((avctx->extradata[0]==3)?0:8) + 4*s->num_streams)) {
             av_log(avctx, AV_LOG_ERROR, "Incorrect XMA2 extradata size\n");
+            s->num_streams = 0;
             return AVERROR(EINVAL);
         }
     } else if (avctx->codec_id == AV_CODEC_ID_XMA1 && avctx->extradata_size >= 4) { /* XMAWAVEFORMAT */
         s->num_streams = avctx->extradata[4];
         if (avctx->extradata_size != (8 + 20*s->num_streams)) {
             av_log(avctx, AV_LOG_ERROR, "Incorrect XMA1 extradata size\n");
+            s->num_streams = 0;
             return AVERROR(EINVAL);
         }
     } else {
@@ -1902,8 +1910,11 @@ static av_cold int xma_decode_init(AVCodecContext *avctx)
     }
 
     /* encoder supports up to 64 streams / 64*2 channels (would have to alloc arrays) */
-    if (avctx->channels > XMA_MAX_CHANNELS || s->num_streams > XMA_MAX_STREAMS) {
+    if (avctx->channels > XMA_MAX_CHANNELS || s->num_streams > XMA_MAX_STREAMS ||
+        s->num_streams <= 0
+    ) {
         avpriv_request_sample(avctx, "More than %d channels in %d streams", XMA_MAX_CHANNELS, s->num_streams);
+        s->num_streams = 0;
         return AVERROR_PATCHWELCOME;
     }
 
@@ -1915,10 +1926,6 @@ static av_cold int xma_decode_init(AVCodecContext *avctx)
         s->frames[i] = av_frame_alloc();
         if (!s->frames[i])
             return AVERROR(ENOMEM);
-        s->frames[i]->nb_samples = 512;
-        if ((ret = ff_get_buffer(avctx, s->frames[i], 0)) < 0) {
-            return AVERROR(ENOMEM);
-        }
 
         s->start_channel[i] = start_channels;
         start_channels += s->xma[i].nb_channels;
@@ -1936,6 +1943,7 @@ static av_cold int xma_decode_end(AVCodecContext *avctx)
         decode_end(&s->xma[i]);
         av_frame_free(&s->frames[i]);
     }
+    s->num_streams = 0;
 
     return 0;
 }
@@ -1991,6 +1999,7 @@ AVCodec ff_wmapro_decoder = {
     .close          = wmapro_decode_end,
     .decode         = wmapro_decode_packet,
     .capabilities   = AV_CODEC_CAP_SUBFRAMES | AV_CODEC_CAP_DR1,
+    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
     .flush          = wmapro_flush,
     .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_FLTP,
                                                       AV_SAMPLE_FMT_NONE },
@@ -2006,6 +2015,7 @@ AVCodec ff_xma1_decoder = {
     .close          = xma_decode_end,
     .decode         = xma_decode_packet,
     .capabilities   = AV_CODEC_CAP_SUBFRAMES | AV_CODEC_CAP_DR1 | AV_CODEC_CAP_DELAY,
+    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
     .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_FLTP,
                                                       AV_SAMPLE_FMT_NONE },
 };
@@ -2021,6 +2031,7 @@ AVCodec ff_xma2_decoder = {
     .decode         = xma_decode_packet,
     .flush          = xma_flush,
     .capabilities   = AV_CODEC_CAP_SUBFRAMES | AV_CODEC_CAP_DR1 | AV_CODEC_CAP_DELAY,
+    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
     .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_FLTP,
                                                       AV_SAMPLE_FMT_NONE },
 };

@@ -360,7 +360,7 @@ FATE_SHUFFLEPLANES += fate-filter-shuffleplanes-dup-luma
 fate-filter-shuffleplanes-dup-luma: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf format=yuva444p,shuffleplanes=0:0:0:0
 
 FATE_SHUFFLEPLANES += fate-filter-shuffleplanes-swapuv
-fate-filter-shuffleplanes-swapuv: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf shuffleplanes=0:2:1
+fate-filter-shuffleplanes-swapuv: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf shuffleplanes=0:2:1:0
 
 FATE_FILTER_VSYNTH-$(CONFIG_SHUFFLEPLANES_FILTER) += $(FATE_SHUFFLEPLANES)
 
@@ -424,9 +424,11 @@ FATE_FILTER_SAMPLES-$(call ALLYES, VMD_DEMUXER VMDVIDEO_DECODER FORMAT_FILTER PE
 fate-filter-gradfun-sample: tests/data/filtergraphs/gradfun
 fate-filter-gradfun-sample: CMD = framecrc -i $(TARGET_SAMPLES)/vmd/12.vmd -filter_script $(TARGET_PATH)/tests/data/filtergraphs/gradfun -an -frames:v 20
 
-FATE_FILTER-$(call ALLYES, TESTSRC_FILTER SINE_FILTER CONCAT_FILTER) += fate-filter-concat
+FATE_FILTER-$(call ALLYES, TESTSRC_FILTER SINE_FILTER CONCAT_FILTER) += fate-filter-concat fate-filter-concat-vfr
 fate-filter-concat: tests/data/filtergraphs/concat
 fate-filter-concat: CMD = framecrc -filter_complex_script $(TARGET_PATH)/tests/data/filtergraphs/concat
+fate-filter-concat-vfr: tests/data/filtergraphs/concat-vfr
+fate-filter-concat-vfr: CMD = framecrc -filter_complex_script $(TARGET_PATH)/tests/data/filtergraphs/concat-vfr
 
 FATE_FILTER-$(call ALLYES, TESTSRC2_FILTER FPS_FILTER MPDECIMATE_FILTER) += fate-filter-mpdecimate
 fate-filter-mpdecimate: CMD = framecrc -lavfi testsrc2=r=2:d=10,fps=3,mpdecimate -r 3 -pix_fmt yuv420p
@@ -486,6 +488,12 @@ fate-filter-scalechroma: CMD = framecrc -flags bitexact -s 352x288 -pix_fmt yuv4
 
 FATE_FILTER_VSYNTH-$(CONFIG_VFLIP_FILTER) += fate-filter-vflip
 fate-filter-vflip: CMD = video_filter "vflip"
+
+FATE_FILTER_VSYNTH-$(CONFIG_COLORLEVELS_FILTER) += fate-filter-colorlevels
+fate-filter-colorlevels: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf format=rgb24,colorlevels -flags +bitexact -sws_flags +accurate_rnd+bitexact
+
+FATE_FILTER_VSYNTH-$(CONFIG_COLORLEVELS_FILTER) += fate-filter-colorlevels-16
+fate-filter-colorlevels-16: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf format=rgb48,colorlevels -pix_fmt rgb48le -flags +bitexact -sws_flags +accurate_rnd+bitexact
 
 FATE_FILTER_VSYNTH-$(CONFIG_COLORMATRIX_FILTER) += fate-filter-colormatrix1
 fate-filter-colormatrix1: CMD = video_filter "colormatrix=bt601:smpte240m,colormatrix=smpte240m:fcc,colormatrix=fcc:bt601,colormatrix=bt601:fcc,colormatrix=fcc:smpte240m,colormatrix=smpte240m:bt709"
@@ -734,7 +742,7 @@ SCENEDETECT_DEPS = FFPROBE LAVFI_INDEV MOVIE_FILTER SELECT_FILTER SCALE_FILTER \
                    AVCODEC AVDEVICE MOV_DEMUXER SVQ3_DECODER ZLIB
 FATE_METADATA_FILTER-$(call ALLYES, $(SCENEDETECT_DEPS)) += fate-filter-metadata-scenedetect
 fate-filter-metadata-scenedetect: SRC = $(TARGET_SAMPLES)/svq3/Vertical400kbit.sorenson3.mov
-fate-filter-metadata-scenedetect: CMD = run $(FILTER_METADATA_COMMAND) "sws_flags=+accurate_rnd+bitexact;movie='$(SRC)',select=gt(scene\,.4)"
+fate-filter-metadata-scenedetect: CMD = run $(FILTER_METADATA_COMMAND) "sws_flags=+accurate_rnd+bitexact;movie='$(SRC)',select=gt(scene\,.25)"
 
 CROPDETECT_DEPS = FFPROBE LAVFI_INDEV MOVIE_FILTER CROPDETECT_FILTER SCALE_FILTER \
                   AVCODEC AVDEVICE MOV_DEMUXER H264_DECODER
@@ -742,10 +750,14 @@ FATE_METADATA_FILTER-$(call ALLYES, $(CROPDETECT_DEPS)) += fate-filter-metadata-
 fate-filter-metadata-cropdetect: SRC = $(TARGET_SAMPLES)/filter/cropdetect.mp4
 fate-filter-metadata-cropdetect: CMD = run $(FILTER_METADATA_COMMAND) "sws_flags=+accurate_rnd+bitexact;movie='$(SRC)',cropdetect=max_outliers=3"
 
+FREEZEDETECT_DEPS = FFPROBE AVDEVICE LAVFI_INDEV MPTESTSRC_FILTER SCALE_FILTER FREEZEDETECT_FILTER
+FATE_METADATA_FILTER-$(call ALLYES, $(FREEZEDETECT_DEPS)) += fate-filter-metadata-freezedetect
+fate-filter-metadata-freezedetect: CMD = run $(FILTER_METADATA_COMMAND) "sws_flags=+accurate_rnd+bitexact;mptestsrc=r=25:d=10:m=51,freezedetect"
+
 SILENCEDETECT_DEPS = FFPROBE AVDEVICE LAVFI_INDEV AMOVIE_FILTER TTA_DEMUXER TTA_DECODER SILENCEDETECT_FILTER
 FATE_METADATA_FILTER-$(call ALLYES, $(SILENCEDETECT_DEPS)) += fate-filter-metadata-silencedetect
 fate-filter-metadata-silencedetect: SRC = $(TARGET_SAMPLES)/lossless-audio/inside.tta
-fate-filter-metadata-silencedetect: CMD = run $(FILTER_METADATA_COMMAND) "amovie='$(SRC)',silencedetect=n=-33.5dB:d=.2"
+fate-filter-metadata-silencedetect: CMD = run $(FILTER_METADATA_COMMAND) "amovie='$(SRC)',silencedetect=n=-33.5dB:d=0.2"
 
 EBUR128_METADATA_DEPS = FFPROBE AVDEVICE LAVFI_INDEV AMOVIE_FILTER FLAC_DEMUXER FLAC_DECODER EBUR128_FILTER
 FATE_METADATA_FILTER-$(call ALLYES, $(EBUR128_METADATA_DEPS)) += fate-filter-metadata-ebur128

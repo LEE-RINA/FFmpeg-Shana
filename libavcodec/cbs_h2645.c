@@ -289,28 +289,28 @@ static int cbs_write_se_golomb(CodedBitstreamContext *ctx, PutBitContext *pbc,
 #define RWContext GetBitContext
 
 #define xu(width, name, var, range_min, range_max, subs, ...) do { \
-        uint32_t value = range_min; \
+        uint32_t value; \
         CHECK(ff_cbs_read_unsigned(ctx, rw, width, #name, \
                                    SUBSCRIPTS(subs, __VA_ARGS__), \
                                    &value, range_min, range_max)); \
         var = value; \
     } while (0)
 #define xue(name, var, range_min, range_max, subs, ...) do { \
-        uint32_t value = range_min; \
+        uint32_t value; \
         CHECK(cbs_read_ue_golomb(ctx, rw, #name, \
                                  SUBSCRIPTS(subs, __VA_ARGS__), \
                                  &value, range_min, range_max)); \
         var = value; \
     } while (0)
 #define xi(width, name, var, range_min, range_max, subs, ...) do { \
-        int32_t value = range_min; \
+        int32_t value; \
         CHECK(ff_cbs_read_signed(ctx, rw, width, #name, \
                                  SUBSCRIPTS(subs, __VA_ARGS__), \
                                  &value, range_min, range_max)); \
         var = value; \
     } while (0)
 #define xse(name, var, range_min, range_max, subs, ...) do { \
-        int32_t value = range_min; \
+        int32_t value; \
         CHECK(cbs_read_se_golomb(ctx, rw, #name, \
                                  SUBSCRIPTS(subs, __VA_ARGS__), \
                                  &value, range_min, range_max)); \
@@ -443,7 +443,7 @@ static int cbs_h2645_read_more_rbsp_data(GetBitContext *gbc)
 #undef allocate
 
 
-static void cbs_h264_free_pps(void *unit, uint8_t *content)
+static void cbs_h264_free_pps(void *opaque, uint8_t *content)
 {
     H264RawPPS *pps = (H264RawPPS*)content;
     av_buffer_unref(&pps->slice_group_id_ref);
@@ -473,7 +473,7 @@ static void cbs_h264_free_sei_payload(H264RawSEIPayload *payload)
     }
 }
 
-static void cbs_h264_free_sei(void *unit, uint8_t *content)
+static void cbs_h264_free_sei(void *opaque, uint8_t *content)
 {
     H264RawSEI *sei = (H264RawSEI*)content;
     int i;
@@ -482,35 +482,35 @@ static void cbs_h264_free_sei(void *unit, uint8_t *content)
     av_freep(&content);
 }
 
-static void cbs_h264_free_slice(void *unit, uint8_t *content)
+static void cbs_h264_free_slice(void *opaque, uint8_t *content)
 {
     H264RawSlice *slice = (H264RawSlice*)content;
     av_buffer_unref(&slice->data_ref);
     av_freep(&content);
 }
 
-static void cbs_h265_free_vps(void *unit, uint8_t *content)
+static void cbs_h265_free_vps(void *opaque, uint8_t *content)
 {
     H265RawVPS *vps = (H265RawVPS*)content;
     av_buffer_unref(&vps->extension_data.data_ref);
     av_freep(&content);
 }
 
-static void cbs_h265_free_sps(void *unit, uint8_t *content)
+static void cbs_h265_free_sps(void *opaque, uint8_t *content)
 {
     H265RawSPS *sps = (H265RawSPS*)content;
     av_buffer_unref(&sps->extension_data.data_ref);
     av_freep(&content);
 }
 
-static void cbs_h265_free_pps(void *unit, uint8_t *content)
+static void cbs_h265_free_pps(void *opaque, uint8_t *content)
 {
     H265RawPPS *pps = (H265RawPPS*)content;
     av_buffer_unref(&pps->extension_data.data_ref);
     av_freep(&content);
 }
 
-static void cbs_h265_free_slice(void *unit, uint8_t *content)
+static void cbs_h265_free_slice(void *opaque, uint8_t *content)
 {
     H265RawSlice *slice = (H265RawSlice*)content;
     av_buffer_unref(&slice->data_ref);
@@ -545,7 +545,7 @@ static void cbs_h265_free_sei_payload(H265RawSEIPayload *payload)
     }
 }
 
-static void cbs_h265_free_sei(void *unit, uint8_t *content)
+static void cbs_h265_free_sei(void *opaque, uint8_t *content)
 {
     H265RawSEI *sei = (H265RawSEI*)content;
     int i;
@@ -748,7 +748,7 @@ static int cbs_h26 ## h26n ## _replace_ ## ps_var(CodedBitstreamContext *ctx, \
     CodedBitstreamH26 ## h26n ## Context *priv = ctx->priv_data; \
     H26 ## h26n ## Raw ## ps_name *ps_var = unit->content; \
     unsigned int id = ps_var->id_element; \
-    if (id > FF_ARRAY_ELEMS(priv->ps_var)) { \
+    if (id >= FF_ARRAY_ELEMS(priv->ps_var)) { \
         av_log(ctx->log_ctx, AV_LOG_ERROR, "Invalid " #ps_name \
                " id : %d.\n", id); \
         return AVERROR_INVALIDDATA; \
@@ -1101,7 +1101,7 @@ static int cbs_h2645_write_slice_data(CodedBitstreamContext *ctx,
     const uint8_t *pos = data + data_bit_start / 8;
 
     av_assert0(data_bit_start >= 0 &&
-               8 * data_size > data_bit_start);
+               data_size > data_bit_start / 8);
 
     if (data_size * 8 + 8 > put_bits_left(pbc))
         return AVERROR(ENOSPC);
@@ -1380,65 +1380,6 @@ static int cbs_h265_write_nal_unit(CodedBitstreamContext *ctx,
     return 0;
 }
 
-static int cbs_h2645_write_nal_unit(CodedBitstreamContext *ctx,
-                                    CodedBitstreamUnit *unit)
-{
-    CodedBitstreamH2645Context *priv = ctx->priv_data;
-    enum AVCodecID codec_id = ctx->codec->codec_id;
-    PutBitContext pbc;
-    int err;
-
-    if (!priv->write_buffer) {
-        // Initial write buffer size is 1MB.
-        priv->write_buffer_size = 1024 * 1024;
-
-    reallocate_and_try_again:
-        err = av_reallocp(&priv->write_buffer, priv->write_buffer_size);
-        if (err < 0) {
-            av_log(ctx->log_ctx, AV_LOG_ERROR, "Unable to allocate a "
-                   "sufficiently large write buffer (last attempt "
-                   "%"SIZE_SPECIFIER" bytes).\n", priv->write_buffer_size);
-            return err;
-        }
-    }
-
-    init_put_bits(&pbc, priv->write_buffer, priv->write_buffer_size);
-
-    if (codec_id == AV_CODEC_ID_H264)
-        err = cbs_h264_write_nal_unit(ctx, unit, &pbc);
-    else
-        err = cbs_h265_write_nal_unit(ctx, unit, &pbc);
-
-    if (err == AVERROR(ENOSPC)) {
-        // Overflow.
-        priv->write_buffer_size *= 2;
-        goto reallocate_and_try_again;
-    }
-    // Overflow but we didn't notice.
-    av_assert0(put_bits_count(&pbc) <= 8 * priv->write_buffer_size);
-
-    if (err < 0) {
-        // Write failed for some other reason.
-        return err;
-    }
-
-    if (put_bits_count(&pbc) % 8)
-        unit->data_bit_padding = 8 - put_bits_count(&pbc) % 8;
-    else
-        unit->data_bit_padding = 0;
-
-    unit->data_size = (put_bits_count(&pbc) + 7) / 8;
-    flush_put_bits(&pbc);
-
-    err = ff_cbs_alloc_unit_data(ctx, unit, unit->data_size);
-    if (err < 0)
-        return err;
-
-    memcpy(unit->data, priv->write_buffer, unit->data_size);
-
-    return 0;
-}
-
 static int cbs_h2645_assemble_fragment(CodedBitstreamContext *ctx,
                                        CodedBitstreamFragment *frag)
 {
@@ -1457,7 +1398,7 @@ static int cbs_h2645_assemble_fragment(CodedBitstreamContext *ctx,
         max_size += 3 + frag->units[i].data_size * 3 / 2;
     }
 
-    data = av_malloc(max_size + AV_INPUT_BUFFER_PADDING_SIZE);
+    data = av_realloc(NULL, max_size + AV_INPUT_BUFFER_PADDING_SIZE);
     if (!data)
         return AVERROR(ENOMEM);
 
@@ -1533,8 +1474,6 @@ static void cbs_h264_close(CodedBitstreamContext *ctx)
 
     ff_h2645_packet_uninit(&h264->common.read_packet);
 
-    av_freep(&h264->common.write_buffer);
-
     for (i = 0; i < FF_ARRAY_ELEMS(h264->sps); i++)
         av_buffer_unref(&h264->sps_ref[i]);
     for (i = 0; i < FF_ARRAY_ELEMS(h264->pps); i++)
@@ -1547,8 +1486,6 @@ static void cbs_h265_close(CodedBitstreamContext *ctx)
     int i;
 
     ff_h2645_packet_uninit(&h265->common.read_packet);
-
-    av_freep(&h265->common.write_buffer);
 
     for (i = 0; i < FF_ARRAY_ELEMS(h265->vps); i++)
         av_buffer_unref(&h265->vps_ref[i]);
@@ -1565,7 +1502,7 @@ const CodedBitstreamType ff_cbs_type_h264 = {
 
     .split_fragment    = &cbs_h2645_split_fragment,
     .read_unit         = &cbs_h264_read_nal_unit,
-    .write_unit        = &cbs_h2645_write_nal_unit,
+    .write_unit        = &cbs_h264_write_nal_unit,
     .assemble_fragment = &cbs_h2645_assemble_fragment,
 
     .close             = &cbs_h264_close,
@@ -1578,7 +1515,7 @@ const CodedBitstreamType ff_cbs_type_h265 = {
 
     .split_fragment    = &cbs_h2645_split_fragment,
     .read_unit         = &cbs_h265_read_nal_unit,
-    .write_unit        = &cbs_h2645_write_nal_unit,
+    .write_unit        = &cbs_h265_write_nal_unit,
     .assemble_fragment = &cbs_h2645_assemble_fragment,
 
     .close             = &cbs_h265_close,
@@ -1586,39 +1523,42 @@ const CodedBitstreamType ff_cbs_type_h265 = {
 
 int ff_cbs_h264_add_sei_message(CodedBitstreamContext *ctx,
                                 CodedBitstreamFragment *au,
-                                const H264RawSEIPayload *payload)
+                                H264RawSEIPayload *payload)
 {
-    H264RawSEI *sei;
-    CodedBitstreamUnit *nal = NULL;
+    H264RawSEI *sei = NULL;
     int err, i;
 
     // Find an existing SEI NAL unit to add to.
     for (i = 0; i < au->nb_units; i++) {
         if (au->units[i].type == H264_NAL_SEI) {
-            nal = &au->units[i];
-            break;
+            sei = au->units[i].content;
+            if (sei->payload_count < H264_MAX_SEI_PAYLOADS)
+                break;
+
+            sei = NULL;
         }
     }
-    if (nal) {
-        sei = nal->content;
 
-    } else {
+    if (!sei) {
         // Need to make a new SEI NAL unit.  Insert it before the first
         // slice data NAL unit; if no slice data, add at the end.
         AVBufferRef *sei_ref;
 
         sei = av_mallocz(sizeof(*sei));
-        if (!sei)
-            return AVERROR(ENOMEM);
+        if (!sei) {
+            err = AVERROR(ENOMEM);
+            goto fail;
+        }
 
         sei->nal_unit_header.nal_unit_type = H264_NAL_SEI;
         sei->nal_unit_header.nal_ref_idc   = 0;
 
         sei_ref = av_buffer_create((uint8_t*)sei, sizeof(*sei),
-                                   &cbs_h264_free_sei, ctx, 0);
+                                   &cbs_h264_free_sei, NULL, 0);
         if (!sei_ref) {
             av_freep(&sei);
-            return AVERROR(ENOMEM);
+            err = AVERROR(ENOMEM);
+            goto fail;
         }
 
         for (i = 0; i < au->nb_units; i++) {
@@ -1631,19 +1571,16 @@ int ff_cbs_h264_add_sei_message(CodedBitstreamContext *ctx,
                                          sei, sei_ref);
         av_buffer_unref(&sei_ref);
         if (err < 0)
-            return err;
-    }
-
-    if (sei->payload_count >= H264_MAX_SEI_PAYLOADS) {
-        av_log(ctx->log_ctx, AV_LOG_ERROR, "Too many payloads in "
-               "SEI NAL unit.\n");
-        return AVERROR(EINVAL);
+            goto fail;
     }
 
     memcpy(&sei->payload[sei->payload_count], payload, sizeof(*payload));
     ++sei->payload_count;
 
     return 0;
+fail:
+    cbs_h264_free_sei_payload(payload);
+    return err;
 }
 
 void ff_cbs_h264_delete_sei_message(CodedBitstreamContext *ctx,

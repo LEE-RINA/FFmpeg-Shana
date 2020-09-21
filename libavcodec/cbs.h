@@ -210,6 +210,13 @@ typedef struct CodedBitstreamContext {
      * From AV_LOG_*; defaults to AV_LOG_TRACE.
      */
     int trace_level;
+
+    /**
+     * Write buffer. Used as intermediate buffer when writing units.
+     * For internal use of cbs only.
+     */
+    uint8_t *write_buffer;
+    size_t   write_buffer_size;
 } CodedBitstreamContext;
 
 
@@ -341,7 +348,7 @@ void ff_cbs_fragment_free(CodedBitstreamContext *ctx,
 int ff_cbs_alloc_unit_content(CodedBitstreamContext *ctx,
                               CodedBitstreamUnit *unit,
                               size_t size,
-                              void (*free)(void *unit, uint8_t *content));
+                              void (*free)(void *opaque, uint8_t *content));
 
 /**
  * Allocate a new internal data buffer of the given size in the unit.

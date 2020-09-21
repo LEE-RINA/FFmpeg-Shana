@@ -724,8 +724,8 @@ static int rm_sync(AVFormatContext *s, int64_t *timestamp, int *flags, int *stre
 
             num = avio_rb16(pb);
             *timestamp = avio_rb32(pb);
-            mlti_id = (avio_r8(pb)>>1)-1<<16;
-            mlti_id = FFMAX(mlti_id, 0);
+            mlti_id = (avio_r8(pb) >> 1) - 1;
+            mlti_id = FFMAX(mlti_id, 0) << 16;
             *flags = avio_r8(pb); /* flags */
         }
         for(i=0;i<s->nb_streams;i++) {
@@ -836,10 +836,7 @@ static int rm_assemble_video_frame(AVFormatContext *s, AVIOContext *pb,
 
     if (type == 2 || vst->videobufpos == vst->videobufsize) {
         vst->pkt.data[0] = vst->cur_slice-1;
-        *pkt= vst->pkt;
-        vst->pkt.data= NULL;
-        vst->pkt.size= 0;
-        vst->pkt.buf = NULL;
+        av_packet_move_ref(pkt, &vst->pkt);
         if(vst->slices != vst->cur_slice) //FIXME find out how to set slices correct from the begin
             memmove(pkt->data + 1 + 8*vst->cur_slice, pkt->data + 1 + 8*vst->slices,
                 vst->videobufpos - 1 - 8*vst->slices);

@@ -363,8 +363,7 @@ static void free_representation(struct representation *pls)
     free_fragment(&pls->init_section);
     av_freep(&pls->init_sec_buf);
     av_freep(&pls->pb.buffer);
-    if (pls->input)
-        ff_format_io_close(pls->parent, &pls->input);
+    ff_format_io_close(pls->parent, &pls->input);
     if (pls->ctx) {
         pls->ctx->pb = NULL;
         avformat_close_input(&pls->ctx);
@@ -794,12 +793,22 @@ static int resolve_content_path(AVFormatContext *s, const char *url, int *max_ur
             continue;
         }
         text = xmlNodeGetContent(baseurl_nodes[i]);
-        if (text) {
+        if (text && !av_strstart(text, "/", NULL)) {
             memset(tmp_str, 0, strlen(tmp_str));
             if (!ishttp(text) && isRootHttp) {
                 av_strlcpy(tmp_str, root_url, size + 1);
             }
             start = (text[0] == token);
+            if (start && av_stristr(tmp_str, text)) {
+                char *p = tmp_str;
+                if (!av_strncasecmp(tmp_str, "http://", 7)) {
+                    p += 7;
+                } else if (!av_strncasecmp(tmp_str, "https://", 8)) {
+                    p += 8;
+                }
+                p = strchr(p, '/');
+                memset(p + 1, 0, strlen(p));
+            }
             av_strlcat(tmp_str, text + start, tmp_max_url_size);
             xmlNodeSetContent(baseurl_nodes[i], tmp_str);
             updated = 1;
@@ -876,6 +885,7 @@ static int parse_manifest_representation(AVFormatContext *s, const char *url,
             ret = AVERROR(ENOMEM);
             goto end;
         }
+        rep->parent = s;
         representation_segmenttemplate_node = find_child_node_by_name(representation_node, "SegmentTemplate");
         representation_baseurl_node = find_child_node_by_name(representation_node, "BaseURL");
         representation_segmentlist_node = find_child_node_by_name(representation_node, "SegmentList");
@@ -948,7 +958,7 @@ static int parse_manifest_representation(AVFormatContext *s, const char *url,
                 xmlFree(timescale_val);
             }
             if (startnumber_val) {
-                rep->first_seq_no = (int64_t) strtoll(startnumber_val, NULL, 10);
+                rep->start_number = rep->first_seq_no = (int64_t) strtoll(startnumber_val, NULL, 10);
                 av_log(s, AV_LOG_TRACE, "rep->first_seq_no = [%"PRId64"]\n", rep->first_seq_no);
                 xmlFree(startnumber_val);
             }
@@ -1006,6 +1016,7 @@ static int parse_manifest_representation(AVFormatContext *s, const char *url,
 
             duration_val = get_val_from_nodes_tab(segmentlists_tab, 3, "duration");
             timescale_val = get_val_from_nodes_tab(segmentlists_tab, 3, "timescale");
+            startnumber_val = get_val_from_nodes_tab(segmentlists_tab, 3, "startNumber");
             if (duration_val) {
                 rep->fragment_duration = (int64_t) strtoll(duration_val, NULL, 10);
                 av_log(s, AV_LOG_TRACE, "rep->fragment_duration = [%"PRId64"]\n", rep->fragment_duration);
@@ -1016,6 +1027,12 @@ static int parse_manifest_representation(AVFormatContext *s, const char *url,
                 av_log(s, AV_LOG_TRACE, "rep->fragment_timescale = [%"PRId64"]\n", rep->fragment_timescale);
                 xmlFree(timescale_val);
             }
+            if (startnumber_val) {
+                rep->start_number = rep->first_seq_no = (int64_t) strtoll(startnumber_val, NULL, 10);
+                av_log(s, AV_LOG_TRACE, "rep->first_seq_no = [%"PRId64"]\n", rep->first_seq_no);
+                xmlFree(startnumber_val);
+            }
+
             fragmenturl_node = xmlFirstElementChild(representation_segmentlist_node);
             while (fragmenturl_node) {
                 ret = parse_manifest_segmenturlnode(s, rep, fragmenturl_node,
@@ -1185,6 +1202,7 @@ static int parse_programinformation(AVFormatContext *s, xmlNodePtr node)
         }
         node = xmlNextElementSibling(node);
         xmlFree(val);
+        val = NULL;
     }
     return 0;
 }
@@ -1247,7 +1265,7 @@ static int parse_manifest(AVFormatContext *s, const char *url, AVIOContext *in)
     } else {
         LIBXML_TEST_VERSION
 
-            doc = xmlReadMemory(buffer, filesize, c->base_url, NULL, 0);
+        doc = xmlReadMemory(buffer, filesize, c->base_url, NULL, 0);
         root_element = xmlDocGetRootElement(doc);
         node = root_element;
 
@@ -1916,8 +1934,8 @@ static int reopen_demux_for_component(AVFormatContext *s, struct representation 
         goto fail;
 
     pls->ctx->flags = AVFMT_FLAG_CUSTOM_IO;
-    pls->ctx->probesize = 1024 * 4;
-    pls->ctx->max_analyze_duration = 4 * AV_TIME_BASE;
+    pls->ctx->probesize = s->probesize > 0 ? s->probesize : 1024 * 4;;
+    pls->ctx->max_analyze_duration = s->max_analyze_duration > 0 ? s->max_analyze_duration : 4 * AV_TIME_BASE;
     ret = av_probe_input_buffer(&pls->pb, &in_fmt, "", NULL, 0, 0);
     if (ret < 0) {
         av_log(s, AV_LOG_ERROR, "Error when loading first fragment, playlist %d\n", (int)pls->rep_idx);
@@ -2164,8 +2182,7 @@ static void recheck_discard_flags(AVFormatContext *s, struct representation **p,
             av_log(s, AV_LOG_INFO, "Now receiving stream_index %d\n", pls->stream_index);
         } else if (!needed && pls->ctx) {
             close_demux_for_component(pls);
-            if (pls->input)
-                ff_format_io_close(pls->parent, &pls->input);
+            ff_format_io_close(pls->parent, &pls->input);
             av_log(s, AV_LOG_INFO, "No longer receiving stream_index %d\n", pls->stream_index);
         }
     }
@@ -2226,8 +2243,7 @@ static int dash_read_packet(AVFormatContext *s, AVPacket *pkt)
         if (cur->is_restart_needed) {
             cur->cur_seg_offset = 0;
             cur->init_sec_buf_read_offset = 0;
-            if (cur->input)
-                ff_format_io_close(cur->parent, &cur->input);
+            ff_format_io_close(cur->parent, &cur->input);
             ret = reopen_demux_for_component(s, cur);
             cur->is_restart_needed = 0;
         }
@@ -2265,8 +2281,7 @@ static int dash_seek(AVFormatContext *s, struct representation *pls, int64_t see
         return av_seek_frame(pls->ctx, -1, seek_pos_msec * 1000, flags);
     }
 
-    if (pls->input)
-        ff_format_io_close(pls->parent, &pls->input);
+    ff_format_io_close(pls->parent, &pls->input);
 
     // find the nearest fragment
     if (pls->n_timelines > 0 && pls->fragment_timescale > 0) {

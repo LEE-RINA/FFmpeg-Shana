@@ -89,7 +89,7 @@ static int query_formats(AVFilterContext *ctx)
         AV_PIX_FMT_GBRP, AV_PIX_FMT_GBRAP,
         AV_PIX_FMT_YUV444P9, AV_PIX_FMT_YUV444P10, AV_PIX_FMT_YUV444P12,
         AV_PIX_FMT_YUV444P14, AV_PIX_FMT_YUV444P16,
-        AV_PIX_FMT_YUVA444P9, AV_PIX_FMT_YUVA444P10, AV_PIX_FMT_YUVA444P16,
+        AV_PIX_FMT_YUVA444P9, AV_PIX_FMT_YUVA444P10, AV_PIX_FMT_YUVA444P12, AV_PIX_FMT_YUVA444P16,
         AV_PIX_FMT_GBRP9, AV_PIX_FMT_GBRP10, AV_PIX_FMT_GBRP12,
         AV_PIX_FMT_GBRP14, AV_PIX_FMT_GBRP16,
         AV_PIX_FMT_GBRAP10, AV_PIX_FMT_GBRAP12, AV_PIX_FMT_GBRAP16,
@@ -140,7 +140,7 @@ fail:
 static int remap_planar##bits##_##name##_slice(AVFilterContext *ctx, void *arg,             \
                                                int jobnr, int nb_jobs)                      \
 {                                                                                           \
-    const ThreadData *td = (ThreadData*)arg;                                                \
+    const ThreadData *td = arg;                                                             \
     const AVFrame *in  = td->in;                                                            \
     const AVFrame *xin = td->xin;                                                           \
     const AVFrame *yin = td->yin;                                                           \
@@ -189,7 +189,7 @@ DEFINE_REMAP_PLANAR_FUNC(nearest, 16, 2)
 static int remap_packed##bits##_##name##_slice(AVFilterContext *ctx, void *arg,             \
                                                int jobnr, int nb_jobs)                      \
 {                                                                                           \
-    const ThreadData *td = (ThreadData*)arg;                                                \
+    const ThreadData *td = arg;                                                             \
     const AVFrame *in  = td->in;                                                            \
     const AVFrame *xin = td->xin;                                                           \
     const AVFrame *yin = td->yin;                                                           \

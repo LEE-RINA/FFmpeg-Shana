@@ -174,10 +174,9 @@ static int config_input(AVFilterLink *link)
         s->vsub = pix_desc->log2_chroma_h;
     }
 
-    if ((ret = av_expr_parse_and_eval(&res, (expr = s->w_expr),
-                                      var_names, s->var_values,
-                                      NULL, NULL, NULL, NULL, NULL, 0, ctx)) < 0)
-        goto fail_expr;
+    av_expr_parse_and_eval(&res, (expr = s->w_expr),
+                           var_names, s->var_values,
+                           NULL, NULL, NULL, NULL, NULL, 0, ctx);
     s->var_values[VAR_OUT_W] = s->var_values[VAR_OW] = res;
     if ((ret = av_expr_parse_and_eval(&res, (expr = s->h_expr),
                                       var_names, s->var_values,
@@ -244,7 +243,7 @@ static int config_input(AVFilterLink *link)
     return 0;
 
 fail_expr:
-    av_log(NULL, AV_LOG_ERROR, "Error when evaluating the expression '%s'\n", expr);
+    av_log(ctx, AV_LOG_ERROR, "Error when evaluating the expression '%s'\n", expr);
     return ret;
 }
 

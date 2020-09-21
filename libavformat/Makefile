@@ -82,7 +82,7 @@ OBJS-$(CONFIG_ADX_MUXER)                 += rawenc.o
 OBJS-$(CONFIG_AEA_DEMUXER)               += aea.o pcm.o
 OBJS-$(CONFIG_AFC_DEMUXER)               += afc.o
 OBJS-$(CONFIG_AIFF_DEMUXER)              += aiffdec.o pcm.o isom.o \
-                                            mov_chan.o
+                                            mov_chan.o replaygain.o
 OBJS-$(CONFIG_AIFF_MUXER)                += aiffenc.o id3v2enc.o
 OBJS-$(CONFIG_AIX_DEMUXER)               += aixdec.o
 OBJS-$(CONFIG_AMR_DEMUXER)               += amr.o
@@ -219,7 +219,7 @@ OBJS-$(CONFIG_H263_MUXER)                += rawenc.o
 OBJS-$(CONFIG_H264_DEMUXER)              += h264dec.o rawdec.o
 OBJS-$(CONFIG_H264_MUXER)                += rawenc.o
 OBJS-$(CONFIG_HASH_MUXER)                += hashenc.o
-OBJS-$(CONFIG_HCOM_DEMUXER)              += hcom.o
+OBJS-$(CONFIG_HCOM_DEMUXER)              += hcom.o pcm.o
 OBJS-$(CONFIG_HDS_MUXER)                 += hdsenc.o
 OBJS-$(CONFIG_HEVC_DEMUXER)              += hevcdec.o rawdec.o
 OBJS-$(CONFIG_HEVC_MUXER)                += rawenc.o
@@ -344,12 +344,13 @@ OBJS-$(CONFIG_MXF_MUXER)                 += mxfenc.o mxf.o audiointerleave.o avc
 OBJS-$(CONFIG_MXG_DEMUXER)               += mxg.o
 OBJS-$(CONFIG_NC_DEMUXER)                += ncdec.o
 OBJS-$(CONFIG_NISTSPHERE_DEMUXER)        += nistspheredec.o pcm.o
-OBJS-$(CONFIG_NSP_DEMUXER)               += nspdec.o
+OBJS-$(CONFIG_NSP_DEMUXER)               += nspdec.o pcm.o
 OBJS-$(CONFIG_NSV_DEMUXER)               += nsvdec.o
 OBJS-$(CONFIG_NULL_MUXER)                += nullenc.o
 OBJS-$(CONFIG_NUT_DEMUXER)               += nutdec.o nut.o isom.o
 OBJS-$(CONFIG_NUT_MUXER)                 += nutenc.o nut.o
 OBJS-$(CONFIG_NUV_DEMUXER)               += nuv.o
+OBJS-$(CONFIG_AV1_DEMUXER)               += av1dec.o
 OBJS-$(CONFIG_OGG_DEMUXER)               += oggdec.o         \
                                             oggparsecelt.o   \
                                             oggparsedaala.o  \
@@ -470,7 +471,7 @@ OBJS-$(CONFIG_SCC_MUXER)                 += sccenc.o subtitles.o
 OBJS-$(CONFIG_SDP_DEMUXER)               += rtsp.o
 OBJS-$(CONFIG_SDR2_DEMUXER)              += sdr2.o
 OBJS-$(CONFIG_SDS_DEMUXER)               += sdsdec.o
-OBJS-$(CONFIG_SDX_DEMUXER)               += sdxdec.o
+OBJS-$(CONFIG_SDX_DEMUXER)               += sdxdec.o pcm.o
 OBJS-$(CONFIG_SEGAFILM_DEMUXER)          += segafilm.o
 OBJS-$(CONFIG_SEGAFILM_MUXER)            += segafilmenc.o
 OBJS-$(CONFIG_SEGMENT_MUXER)             += segment.o
@@ -478,6 +479,7 @@ OBJS-$(CONFIG_SER_DEMUXER)               += serdec.o
 OBJS-$(CONFIG_SHORTEN_DEMUXER)           += shortendec.o rawdec.o
 OBJS-$(CONFIG_SIFF_DEMUXER)              += siff.o
 OBJS-$(CONFIG_SINGLEJPEG_MUXER)          += rawenc.o
+OBJS-$(CONFIG_SLN_DEMUXER)               += pcmdec.o pcm.o
 OBJS-$(CONFIG_SMACKER_DEMUXER)           += smacker.o
 OBJS-$(CONFIG_SMJPEG_DEMUXER)            += smjpegdec.o smjpeg.o
 OBJS-$(CONFIG_SMJPEG_MUXER)              += smjpegenc.o smjpeg.o
@@ -494,6 +496,7 @@ OBJS-$(CONFIG_SRT_DEMUXER)               += srtdec.o subtitles.o
 OBJS-$(CONFIG_SRT_MUXER)                 += srtenc.o
 OBJS-$(CONFIG_STL_DEMUXER)               += stldec.o subtitles.o
 OBJS-$(CONFIG_STR_DEMUXER)               += psxstr.o
+OBJS-$(CONFIG_STREAMHASH_MUXER)          += hashenc.o
 OBJS-$(CONFIG_STREAM_SEGMENT_MUXER)      += segment.o
 OBJS-$(CONFIG_SUBVIEWER1_DEMUXER)        += subviewer1dec.o subtitles.o
 OBJS-$(CONFIG_SUBVIEWER_DEMUXER)         += subviewerdec.o subtitles.o
@@ -631,6 +634,7 @@ OBJS-$(CONFIG_LIBRTMPTE_PROTOCOL)        += librtmp.o
 OBJS-$(CONFIG_LIBSMBCLIENT_PROTOCOL)     += libsmbclient.o
 OBJS-$(CONFIG_LIBSRT_PROTOCOL)           += libsrt.o
 OBJS-$(CONFIG_LIBSSH_PROTOCOL)           += libssh.o
+OBJS-$(CONFIG_LIBZMQ_PROTOCOL)           += libzmq.o
 
 # libavdevice dependencies
 OBJS-$(CONFIG_IEC61883_INDEV)            += dv.o
