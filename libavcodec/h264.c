@@ -877,7 +877,7 @@ static void decode_postinit(H264Context *h, int setup_finished)
         if (rotation) {
             av_display_rotation_set((int32_t *)rotation->data, angle);
             av_display_matrix_flip((int32_t *)rotation->data,
-                                   h->sei_vflip, h->sei_hflip);
+                                   h->sei_hflip, h->sei_vflip);
         }
     }
 
@@ -1329,43 +1329,6 @@ int ff_set_ref_count(H264Context *h)
 }
 
 static const uint8_t start_code[] = { 0x00, 0x00, 0x01 };
-
-static int find_start_code(const uint8_t *buf, int buf_size,
-                           int buf_index, int next_avc)
-{
-    // start code prefix search
-    for (; buf_index + 3 < next_avc; buf_index++)
-        // This should always succeed in the first iteration.
-        if (buf[buf_index]     == 0 &&
-            buf[buf_index + 1] == 0 &&
-            buf[buf_index + 2] == 1)
-            break;
-
-    buf_index += 3;
-
-    if (buf_index >= buf_size)
-        return buf_size;
-
-    return buf_index;
-}
-
-static int get_avc_nalsize(H264Context *h, const uint8_t *buf,
-                           int buf_size, int *buf_index)
-{
-    int i, nalsize = 0;
-
-    if (*buf_index >= buf_size - h->nal_length_size)
-        return -1;
-
-    for (i = 0; i < h->nal_length_size; i++)
-        nalsize = (nalsize << 8) | buf[(*buf_index)++];
-    if (nalsize <= 0 || nalsize > buf_size - *buf_index) {
-        av_log(h->avctx, AV_LOG_ERROR,
-               "AVC: nal size %d\n", nalsize);
-        return -1;
-    }
-    return nalsize;
-}
 
 static int get_bit_length(H264Context *h, const uint8_t *buf,
                           const uint8_t *ptr, int dst_length,

@@ -52,7 +52,7 @@ typedef struct LAMEContext {
     int lamechmode;
     float *samples_flt[2];
     AudioFrameQueue afq;
-    AVFloatDSPContext fdsp;
+    AVFloatDSPContext *fdsp;
 } LAMEContext;
 
 
@@ -79,6 +79,7 @@ static av_cold int mp3lame_encode_close(AVCodecContext *avctx)
     av_freep(&s->samples_flt[0]);
     av_freep(&s->samples_flt[1]);
     av_freep(&s->buffer);
+    av_freep(&s->fdsp);
 
     ff_af_queue_close(&s->afq);
 
@@ -96,6 +97,7 @@ static av_cold int mp3lame_encode_init(AVCodecContext *avctx)
     /* initialize LAME and get defaults */
     if (!(s->gfp = lame_init()))
         return AVERROR(ENOMEM);
+
 
     lame_set_num_channels(s->gfp, avctx->channels);
 
@@ -215,7 +217,12 @@ static av_cold int mp3lame_encode_init(AVCodecContext *avctx)
     if (ret < 0)
         goto error;
 
-    avpriv_float_dsp_init(&s->fdsp, avctx->flags & CODEC_FLAG_BITEXACT);
+    s->fdsp = avpriv_float_dsp_alloc(avctx->flags & CODEC_FLAG_BITEXACT);
+    if (!s->fdsp) {
+        ret = AVERROR(ENOMEM);
+        goto error;
+    }
+
 
     return 0;
 error:
@@ -254,7 +261,7 @@ static int mp3lame_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
                 return AVERROR(EINVAL);
             }
             for (ch = 0; ch < avctx->channels; ch++) {
-                s->fdsp.vector_fmul_scalar(s->samples_flt[ch],
+                s->fdsp->vector_fmul_scalar(s->samples_flt[ch],
                                            (const float *)frame->data[ch],
                                            32768.0f,
                                            FFALIGN(frame->nb_samples, 8));

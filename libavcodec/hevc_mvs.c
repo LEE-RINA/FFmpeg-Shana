@@ -227,8 +227,10 @@ static int temporal_luma_motion_vector(HEVCContext *s, int x0, int y0,
 
     HEVCFrame *ref = s->ref->collocated_ref;
 
-    if (!ref)
+    if (!ref) {
+        memset(mvLXCol, 0, sizeof(*mvLXCol));
         return 0;
+    }
 
     tab_mvf = ref->tab_mvf;
     colPic  = ref->poc;
@@ -406,7 +408,7 @@ static void derive_spatial_merge_candidates(HEVCContext *s, int x0, int y0,
     // temporal motion vector candidate
     if (s->sh.slice_temporal_mvp_enabled_flag &&
         nb_merge_cand < s->sh.max_num_merge_cand) {
-        Mv mv_l0_col, mv_l1_col;
+        Mv mv_l0_col = { 0 }, mv_l1_col = { 0 };
         int available_l0 = temporal_luma_motion_vector(s, x0, y0, nPbW, nPbH,
                                                        0, &mv_l0_col, 0);
         int available_l1 = (s->sh.slice_type == B_SLICE) ?
@@ -415,14 +417,10 @@ static void derive_spatial_merge_candidates(HEVCContext *s, int x0, int y0,
 
         if (available_l0 || available_l1) {
             mergecandlist[nb_merge_cand].pred_flag = available_l0 + (available_l1 << 1);
-            if (available_l0) {
-                mergecandlist[nb_merge_cand].mv[0]      = mv_l0_col;
-                mergecandlist[nb_merge_cand].ref_idx[0] = 0;
-            }
-            if (available_l1) {
-                mergecandlist[nb_merge_cand].mv[1]      = mv_l1_col;
-                mergecandlist[nb_merge_cand].ref_idx[1] = 0;
-            }
+            AV_ZERO16(mergecandlist[nb_merge_cand].ref_idx);
+            mergecandlist[nb_merge_cand].mv[0]      = mv_l0_col;
+            mergecandlist[nb_merge_cand].mv[1]      = mv_l1_col;
+
             if (merge_idx == nb_merge_cand)
                 return;
             nb_merge_cand++;
@@ -487,8 +485,6 @@ void ff_hevc_luma_mv_merge_mode(HEVCContext *s, int x0, int y0, int nPbW,
     int nPbW2 = nPbW;
     int nPbH2 = nPbH;
     HEVCLocalContext *lc = s->HEVClc;
-
-    memset(mergecand_list, 0, MRG_MAX_NUM_CANDS * sizeof(*mergecand_list));
 
     if (s->pps->log2_parallel_merge_level > 2 && nCS == 8) {
         singleMCLFlag = 1;

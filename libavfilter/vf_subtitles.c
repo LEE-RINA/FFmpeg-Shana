@@ -58,6 +58,7 @@ typedef struct {
     int     pix_step[4];       ///< steps per pixel for each plane of the main output
     int original_w, original_h;
     double subdelay;
+    int shaping;
     FFDrawContext draw;
 } AssContext;
 
@@ -73,23 +74,15 @@ typedef struct {
 
 /* libass supports a log level ranging from 0 to 7 */
 static const int ass_libavfilter_log_level_map[] = {
-    AV_LOG_QUIET,               /* 0 */
-    AV_LOG_PANIC,               /* 1 */
-    AV_LOG_FATAL,               /* 2 */
-    AV_LOG_ERROR,               /* 3 */
-    AV_LOG_WARNING,             /* 4 */
-    AV_LOG_INFO,                /* 5 */
-    AV_LOG_VERBOSE,             /* 6 */
-    AV_LOG_DEBUG,               /* 7 */
+    [0] = AV_LOG_FATAL,     /* MSGL_FATAL */
+    [1] = AV_LOG_ERROR,     /* MSGL_ERR */
+    [2] = AV_LOG_WARNING,   /* MSGL_WARN */
+    [3] = AV_LOG_WARNING,   /* <undefined> */
+    [4] = AV_LOG_INFO,      /* MSGL_INFO */
+    [5] = AV_LOG_INFO,      /* <undefined> */
+    [6] = AV_LOG_VERBOSE,   /* MSGL_V */
+    [7] = AV_LOG_DEBUG,     /* MSGL_DBG2 */
 };
-
-static void ass_log(int ass_level, const char *fmt, va_list args, void *ctx)
-{
-    //int level = ass_libavfilter_log_level_map[ass_level];
-
-    //av_vlog(ctx, level, fmt, args);
-    //av_log(ctx, level, "\n");
-}
 
 static av_cold int init(AVFilterContext *ctx)
 {
@@ -105,7 +98,6 @@ static av_cold int init(AVFilterContext *ctx)
         av_log(ctx, AV_LOG_ERROR, "Could not initialize libass.\n");
         return AVERROR(EINVAL);
     }
-    ass_set_message_cb(ass->library, ass_log, ctx);
 
     ass->renderer = ass_renderer_init(ass->library);
     if (!ass->renderer) {
@@ -144,6 +136,8 @@ static int config_input(AVFilterLink *inlink)
     if (ass->original_w && ass->original_h)
         ass_set_aspect_ratio(ass->renderer, (double)inlink->w / inlink->h,
                              (double)ass->original_w / ass->original_h);
+    if (ass->shaping != -1)
+        ass_set_shaper(ass->renderer, ass->shaping);
 
     return 0;
 }
@@ -210,6 +204,10 @@ static const AVFilterPad ass_outputs[] = {
 
 static const AVOption ass_options[] = {
     COMMON_OPTIONS
+    {"shaping", "set shaping engine", OFFSET(shaping), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 1, FLAGS, "shaping_mode"},
+        {"auto", NULL,                 0, AV_OPT_TYPE_CONST, {.i64 = -1},                  INT_MIN, INT_MAX, FLAGS, "shaping_mode"},
+        {"simple",  "simple shaping",  0, AV_OPT_TYPE_CONST, {.i64 = ASS_SHAPING_SIMPLE},  INT_MIN, INT_MAX, FLAGS, "shaping_mode"},
+        {"complex", "complex shaping", 0, AV_OPT_TYPE_CONST, {.i64 = ASS_SHAPING_COMPLEX}, INT_MIN, INT_MAX, FLAGS, "shaping_mode"},
     {NULL},
 };
 
@@ -304,6 +302,8 @@ static av_cold int init_subtitles(AVFilterContext *ctx)
     AVStream *st;
     AVPacket pkt;
     AssContext *ass = ctx->priv;
+    char filename_char[1024] = { 0 };
+    wchar_t filename_wchar[1024] = { 0 };
 
     /* Init libass */
     ret = init(ctx);
@@ -316,6 +316,11 @@ static av_cold int init_subtitles(AVFilterContext *ctx)
     }
 
     /* Open subtitles file */
+    /* can't accept UTF-8 filename */
+    if (ass->filename[1] == '0') ass->filename[1]=':';
+    MultiByteToWideChar(CP_UTF8, 0, ass->filename, -1, filename_wchar, 1024);
+    WideCharToMultiByte(CP_THREAD_ACP, 0, filename_wchar, -1, filename_char, 1024, NULL, NULL);
+
     ret = avformat_open_input(&fmt, ass->filename, NULL, NULL);
     if (ret < 0) {
         av_log(ctx, AV_LOG_ERROR, "Unable to open %s\n", ass->filename);

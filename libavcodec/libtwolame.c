@@ -151,10 +151,10 @@ static int twolame_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
     if (ret < 0)  // twolame error
         return AVERROR_UNKNOWN;
 
-    avpkt->duration = ff_samples_to_time_base(avctx, frame->nb_samples);
     if (frame) {
+        avpkt->duration = ff_samples_to_time_base(avctx, frame->nb_samples);
         if (frame->pts != AV_NOPTS_VALUE)
-            avpkt->pts = frame->pts - ff_samples_to_time_base(avctx, avctx->delay);
+            avpkt->pts = frame->pts - ff_samples_to_time_base(avctx, avctx->initial_padding);
     } else {
         avpkt->pts = s->next_pts;
     }

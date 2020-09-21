@@ -68,8 +68,6 @@ int ff_put_wav_header(AVIOContext *pb, AVCodecContext *enc, int flags)
      * fall back on using AVCodecContext.frame_size, which is not as reliable
      * for indicating packet duration. */
     frame_size = av_get_audio_frame_duration(enc, enc->block_align);
-    if (!frame_size)
-        frame_size = enc->frame_size;
 
     waveformatextensible = (enc->channels > 2 && enc->channel_layout) ||
                            enc->sample_rate > 48000 ||
@@ -107,7 +105,7 @@ int ff_put_wav_header(AVIOContext *pb, AVCodecContext *enc, int flags)
     if (enc->codec_id == AV_CODEC_ID_MP2) {
         blkalign = frame_size;
     } else if (enc->codec_id == AV_CODEC_ID_MP3) {
-        blkalign = frame_size;
+        blkalign = 576 * (enc->sample_rate <= (24000 + 32000)/2 ? 1 : 2);
         if (enc->libmp3lame_cbr == 1) blkalign = 1;
     } else if (enc->codec_id == AV_CODEC_ID_AC3) {
         blkalign = 3840;                /* maximum bytes per frame */

@@ -525,7 +525,11 @@ static void decode_vui(HEVCContext *s, HEVCSPS *sps)
     vui->field_seq_flag                = get_bits1(gb);
     vui->frame_field_info_present_flag = get_bits1(gb);
 
-    vui->default_display_window_flag = get_bits1(gb);
+    if (get_bits_left(gb) >= 68 && show_bits_long(gb, 21) == 0x100000) {
+        vui->default_display_window_flag = 0;
+        av_log(s->avctx, AV_LOG_WARNING, "Invalid default display window\n");
+    } else
+        vui->default_display_window_flag = get_bits1(gb);
     // Backup context in case an alternate header is detected
     memcpy(&backup, gb, sizeof(backup));
 
@@ -947,6 +951,11 @@ int ff_hevc_decode_nal_sps(HEVCContext *s)
     sps->long_term_ref_pics_present_flag = get_bits1(gb);
     if (sps->long_term_ref_pics_present_flag) {
         sps->num_long_term_ref_pics_sps = get_ue_golomb_long(gb);
+        if (sps->num_long_term_ref_pics_sps > 31U) {
+            av_log(0, AV_LOG_ERROR, "num_long_term_ref_pics_sps %d is out of range.\n",
+                   sps->num_long_term_ref_pics_sps);
+            goto err;
+        }
         for (i = 0; i < sps->num_long_term_ref_pics_sps; i++) {
             sps->lt_ref_pic_poc_lsb_sps[i]       = get_bits(gb, sps->log2_max_poc_lsb);
             sps->used_by_curr_pic_lt_sps_flag[i] = get_bits1(gb);
@@ -1021,10 +1030,8 @@ int ff_hevc_decode_nal_sps(HEVCContext *s)
         }
         av_log(s->avctx, AV_LOG_WARNING,
                "Displaying the whole video surface.\n");
-        sps->pic_conf_win.left_offset   =
-        sps->pic_conf_win.right_offset  =
-        sps->pic_conf_win.top_offset    =
-        sps->pic_conf_win.bottom_offset = 0;
+        memset(&sps->pic_conf_win, 0, sizeof(sps->pic_conf_win));
+        memset(&sps->output_window, 0, sizeof(sps->output_window));
         sps->output_width               = sps->width;
         sps->output_height              = sps->height;
     }
@@ -1371,7 +1378,8 @@ int ff_hevc_decode_nal_pps(HEVCContext *s)
         int pps_range_extensions_flag = get_bits1(gb);
         /* int pps_extension_7bits = */ get_bits(gb, 7);
         if (sps->ptl.general_ptl.profile_idc == FF_PROFILE_HEVC_REXT && pps_range_extensions_flag) {
-            pps_range_extensions(s, pps, sps);
+            if ((ret = pps_range_extensions(s, pps, sps)) < 0)
+                goto err;
         }
     }
 

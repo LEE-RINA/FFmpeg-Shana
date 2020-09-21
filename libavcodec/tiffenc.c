@@ -235,7 +235,7 @@ static int encode_frame(AVCodecContext *avctx, AVPacket *pkt,
     int bytes_per_row;
     uint32_t res[2] = { s->dpi, 1 };    // image resolution (72/1)
     uint16_t bpp_tab[4];
-    int ret = -1;
+    int ret = 0;
     int is_yuv = 0, alpha = 0;
     int shift_h, shift_v;
     int packet_size;
@@ -305,7 +305,9 @@ static int encode_frame(AVCodecContext *avctx, AVPacket *pkt,
 
     strips = (s->height - 1) / s->rps + 1;
 
-    packet_size = avctx->height * ((avctx->width * s->bpp + 7) >> 3) * 2 +
+    bytes_per_row = (((s->width - 1) / s->subsampling[0] + 1) * s->bpp *
+                     s->subsampling[0] * s->subsampling[1] + 7) >> 3;
+    packet_size = avctx->height * bytes_per_row * 2 +
                   avctx->height * 4 + FF_MIN_BUFFER_SIZE;
 
     if ((ret = ff_alloc_packet2(avctx, pkt, packet_size)) < 0)
@@ -325,6 +327,10 @@ static int encode_frame(AVCodecContext *avctx, AVPacket *pkt,
     offset = ptr;
     bytestream_put_le32(&ptr, 0);
 
+    if (strips > INT_MAX / FFMAX(sizeof(s->strip_sizes[0]), sizeof(s->strip_offsets[0]))) {
+        ret = AVERROR(ENOMEM);
+        goto fail;
+    }
     av_fast_padded_mallocz(&s->strip_sizes  , &s->strip_sizes_size  , sizeof(s->strip_sizes  [0]) * strips);
     av_fast_padded_mallocz(&s->strip_offsets, &s->strip_offsets_size, sizeof(s->strip_offsets[0]) * strips);
 
@@ -333,8 +339,6 @@ static int encode_frame(AVCodecContext *avctx, AVPacket *pkt,
         goto fail;
     }
 
-    bytes_per_row = (((s->width - 1) / s->subsampling[0] + 1) * s->bpp *
-                     s->subsampling[0] * s->subsampling[1] + 7) >> 3;
     if (is_yuv) {
         av_fast_padded_malloc(&s->yuv_line, &s->yuv_line_size, bytes_per_row);
         if (s->yuv_line == NULL) {
@@ -416,7 +420,7 @@ static int encode_frame(AVCodecContext *avctx, AVPacket *pkt,
         }
     }
     if (s->compr == TIFF_LZW)
-        av_free(s->lzws);
+        av_freep(&s->lzws);
     }
 
     s->num_entries = 0;
