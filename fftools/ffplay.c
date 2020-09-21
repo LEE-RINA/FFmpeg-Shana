@@ -40,6 +40,7 @@
 #include "libavutil/samplefmt.h"
 #include "libavutil/avassert.h"
 #include "libavutil/time.h"
+#include "libavutil/bprint.h"
 #include "libavformat/avformat.h"
 #include "libavdevice/avdevice.h"
 #include "libswscale/swscale.h"
@@ -55,9 +56,7 @@
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_thread.h>
-#ifdef _WIN32
 #include <SDL2/SDL_syswm.h>
-#endif
 
 #include "cmdutils.h"
 
@@ -75,9 +74,6 @@ const int program_birth_year = 2003;
 #define SDL_AUDIO_MIN_BUFFER_SIZE 512
 /* Calculate actual buffer size keeping in mind not cause too frequent audio callbacks */
 #define SDL_AUDIO_MAX_CALLBACKS_PER_SEC 30
-
-/* Step size for volume control in dB */
-#define SDL_VOLUME_STEP (0.75)
 
 /* no AV sync correction is done if below the minimum AV sync threshold */
 #define AV_SYNC_THRESHOLD_MIN 0.04
@@ -111,13 +107,6 @@ const int program_birth_year = 2003;
 #define USE_ONEPASS_SUBTITLE_RENDER 1
 
 static unsigned sws_flags = SWS_BICUBIC;
-//shana
-static int hide_msg;
-//opts
-static int nokeepaspect;
-static int volume_s = SDL_MIX_MAXVOLUME;
-static double speed_s = 1.0;
-static int64_t start_time_s;
 
 typedef struct MyAVPacketList {
     AVPacket pkt;
@@ -220,7 +209,33 @@ typedef struct VideoState {
     int queue_attachments_req;
     int seek_req;
     int seek_flags;
-    int seek_frame;
+/* shana */
+    int tmp_status_flag_s;      // 상태 플래그 값(값이 1이면 디스플레이 후 seek 시도)
+    int tmp_dwdata_s;           // 전달받은 임시 dwdata 값
+    int seek_dwdata_s;          // 전달받은 실제 사용 dwdata 값
+    double tmp_lpdata_s;        // 전달받은 임시 lpdata 값
+    double proc_lpdata_s;       // 전달받은 lpdata 값
+
+    int seek_forward_s;         // 뒤로 가야 할 프레임이 앞으로 이동했는지 여부
+    int seek_display_s;         // 비디오 디스플레이 여부
+    int seek_interrupt_s;       // seeking 강제 중단 여부
+
+    int seek_aud_req_s;         // 오디오 프레임 요청
+    int seek_vid_req_s;         // 비디오 프레임 요청
+    int seek_vid_re_req_s;      // 비디오 프레임 다시 요청
+    int seek_seg_req_s;         // 세그먼트 이동 요청
+
+    double aud_pts_s;           // 기준 오디오 pts 값(세그먼트와 같이 사용)
+    double vid_pts_s;           // 기준 비디오 pts 값
+    double vid_duration_s;      // 기준 비디오 duration 값
+    double vid_last_drop_pts_s; // 마지막으로 drop된 이전 비디오 프레임의 pts 값(다시 요청 시 사용)
+    double vid_seg_pts_s;       // 세그먼트 이동 pts 값
+
+    double vid_pts_arr_s[VIDEO_PICTURE_QUEUE_SIZE];      // 비디오 pts 배열
+    double vid_duration_arr_s[VIDEO_PICTURE_QUEUE_SIZE]; // 비디오 duration 배열
+
+    char frame_info[VIDEO_PICTURE_QUEUE_SIZE][128];
+/* shana */
     int64_t seek_pos;
     int64_t seek_rel;
     int read_pause_return;
@@ -258,8 +273,6 @@ typedef struct VideoState {
     unsigned int audio_buf1_size;
     int audio_buf_index; /* in bytes */
     int audio_write_buf_size;
-    int audio_volume;
-    int muted;
     struct AudioParams audio_src;
 #if CONFIG_AVFILTER
     struct AudioParams audio_filter_src;
@@ -295,7 +308,6 @@ typedef struct VideoState {
     AVStream *video_st;
     PacketQueue videoq;
     double max_frame_duration;      // maximum duration of a frame - above this, we consider the jump a timestamp discontinuity
-    char frame_info[VIDEO_PICTURE_QUEUE_SIZE][128];
     struct SwsContext *img_convert_ctx;
     struct SwsContext *sub_convert_ctx;
     int eof;
@@ -322,7 +334,7 @@ typedef struct VideoState {
 static AVInputFormat *file_iformat;
 static const char *input_filename;
 static const char *window_title;
-/* hwnd */
+/* shana */
 #ifdef _WIN32
 static HWND SDL_hwnd;
 static const char *window_hwnd;
@@ -332,6 +344,14 @@ static const char *frame_text_hwnd;
 static const char *duration_hwnd;
 static const char *gui_message_hwnd;
 #endif
+static int shana_as_s;
+static int shana_as_vid_s;
+static int shana_as_aud_s;
+static int nokeepaspect_s;
+static int volume_s = SDL_MIX_MAXVOLUME;
+static double speed_s = 1.0;
+static int64_t ic_start_time_s;
+/* shana */
 static int default_width  = 640;
 static int default_height = 480;
 static int screen_width  = 0;
@@ -347,7 +367,7 @@ static float seek_interval = 10;
 static int display_disable;
 static int borderless;
 static int alwaysontop;
-static int show_status = 1;
+static int show_status = -1;
 static int av_sync_type = AV_SYNC_AUDIO_MASTER;
 static int64_t start_time = AV_NOPTS_VALUE;
 static int64_t duration = AV_NOPTS_VALUE;
@@ -415,6 +435,599 @@ static const struct TextureFormatEntry {
     { AV_PIX_FMT_UYVY422,        SDL_PIXELFORMAT_UYVY },
     { AV_PIX_FMT_NONE,           SDL_PIXELFORMAT_UNKNOWN },
 };
+
+/**
+ * ShanaEncoder Additional Functions
+ * Author: LEE RINA(lrn@leerina.net)
+ */
+
+typedef struct ShanaMoveWindow {
+    int dragging;
+    int sx;
+    int sy;
+    int sx2;
+    int sy2;
+} ShanaMoveWindow;
+
+static void do_exit(VideoState *is);
+static void stream_seek(VideoState *is, int64_t pos, int64_t rel, int seek_by_bytes);
+static void stream_toggle_pause(VideoState *is);
+static int packet_queue_put(PacketQueue *q, AVPacket *pkt);
+static double get_master_clock(VideoState *is);
+
+static void s_gui_message(int int_keycode)
+{
+#ifdef _WIN32
+    if (gui_message_hwnd != NULL)
+    {
+        char ghwndbuf[128];
+        HWND ghWnd = (HWND)(LONG_PTR)atol(gui_message_hwnd);
+        snprintf(ghwndbuf, sizeof(ghwndbuf), "%d", int_keycode);
+        SendMessage(ghWnd, 0x000C, 0, (LPARAM)ghwndbuf);
+    }
+#endif
+}
+
+static void s_window_resize(VideoState *is)
+{
+#ifdef _WIN32
+    if (window_hwnd != NULL)
+    {
+        int w, h;
+        RECT rect_s;
+        HWND win_hWnd = (HWND)(LONG_PTR)atol(window_hwnd);
+
+        // 리사이즈
+        GetWindowRect(win_hWnd, &rect_s);
+        w = rect_s.right - rect_s.left;
+        h = rect_s.bottom - rect_s.top;
+#if SDL_VERSION_ATLEAST(2,0,8)
+        SDL_SetWindowSize(window, w, h);
+#endif
+        SetWindowPos(SDL_hwnd, 0, 0, 0, w, h, SWP_NOACTIVATE);
+
+        is->width = w;
+        is->height = h;
+    }
+#endif
+}
+
+static void s_input_window(VideoState *is)
+{
+#ifdef _WIN32
+    if (SDL_hwnd != NULL)
+    {
+        HWND hWnd = SDL_hwnd;
+        if (control_hwnd != NULL)
+        {
+            char ctlhwndbuf[128];
+            HWND ctlhWnd = (HWND)(LONG_PTR)atol(control_hwnd);
+            snprintf(ctlhwndbuf, sizeof(ctlhwndbuf), "%d", (int)hWnd);
+            SendMessage(ctlhWnd, 0x000C, 0, (LPARAM)ctlhwndbuf);
+        }
+        if (window_hwnd != NULL && hWnd != NULL) 
+        {
+            HWND win_hWnd = (HWND)(LONG_PTR)atol(window_hwnd);
+
+            // 자식으로 바꾸고 부모 지정
+            DWORD ws = GetWindowLong(hWnd, GWL_STYLE);
+            ws &= !WS_POPUP;
+            ws |= WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
+            SetWindowLong(hWnd, GWL_STYLE, ws);
+            SetParent(hWnd, win_hWnd);
+        }
+        s_window_resize(is);
+    }
+#endif
+    return;
+}
+
+static void s_shanaencoder_fsb_init(VideoState *is)
+{
+    is->seek_vid_req_s = 0;
+    is->seek_vid_re_req_s = 0;
+    is->seek_seg_req_s = 0;
+    is->proc_lpdata_s = 0;
+}
+
+static void s_shanaencoder_fsb_seg(VideoState *is, double lpData, int dwData)
+{
+    // 1024 = 선택한 pts 값으로 이동
+    // 2048 = 시, 분, 초를 조절하여 이동
+    // 4096 = 탐색 바를 사용하여 이동
+    if (dwData == 1024 || dwData == 2048 || dwData == 4096)
+    {
+        if (is->seek_display_s && is->paused && !is->seek_aud_req_s) // display 값이 1이고 audio 값이 0일 때 seek 처리를 못하는 경우
+            stream_toggle_pause(is);
+
+        if (!is->seek_aud_req_s &&
+            !is->seek_display_s &&
+            !is->seek_vid_req_s &&
+            !is->seek_seg_req_s &&
+            is->video_st &&
+            is->show_mode == SHOW_MODE_VIDEO)
+        {
+            double pts = lpData;
+            double duration;
+
+            if (is->ic->duration == AV_NOPTS_VALUE) // nopts_value
+            {
+                uint64_t size = avio_size(is->ic->pb);
+                stream_seek(is, size*pts, 0, 1);
+                return;
+            }
+            else
+                duration = (double)is->ic->duration / 1000000LL;
+
+            if (ic_start_time_s != AV_NOPTS_VALUE)
+            {
+                duration += ((double)ic_start_time_s / AV_TIME_BASE);
+                if (dwData == 2048 || dwData == 4096) // 1024는 시작 시간이 더해진 값으로 전달
+                    pts += ((double)ic_start_time_s / AV_TIME_BASE);
+            }
+
+            if (duration < pts)
+                goto err;
+
+            if (!is->paused && dwData != 4096)
+                stream_toggle_pause(is);
+
+            is->tmp_status_flag_s = 0;
+            if (is->audio_st)
+            {
+                is->aud_pts_s = floorf(pts * 1000) / 1000;
+                is->seek_aud_req_s = 1;
+            }
+            is->seek_display_s = 1;
+            is->seek_vid_req_s = 1;
+            is->seek_seg_req_s = 1;
+            is->vid_seg_pts_s = pts;
+            is->seek_dwdata_s = dwData;
+            is->proc_lpdata_s = lpData;
+            is->seek_forward_s = 0;
+            stream_seek(is, (int64_t)((is->vid_seg_pts_s - 1.0) * AV_TIME_BASE), (int64_t)(-1.0 * AV_TIME_BASE), 0);
+        }
+        else if ((is->video_st && is->audio_st && is->show_mode != SHOW_MODE_VIDEO) ||
+                (!is->video_st && is->audio_st)) // 오디오만 있거나 비디오 모드가 아님
+            stream_seek(is, (int64_t)lpData * AV_TIME_BASE, 0, 0);
+        else
+        {
+            if (lpData == is->proc_lpdata_s) // 중복 요청
+                return;
+            is->tmp_lpdata_s = lpData;
+            is->tmp_dwdata_s = dwData;
+            is->tmp_status_flag_s = 1;
+        }
+    }
+    else
+    {
+err:
+        av_log(NULL, AV_LOG_ERROR, "[ShanaEncoder_FSB @ %p] Seek failed\n", &is->vid_seg_pts_s);
+        is->tmp_status_flag_s = 0;
+    }
+}   
+
+static void s_shanaencoder_fsb_audio_wait(VideoState *is)
+{
+    while ((is->seek_vid_req_s || shana_as_vid_s) && !is->seek_interrupt_s)
+        SDL_Delay(10);
+}
+
+static int s_shanaencoder_fsb_audio(VideoState *is, double apts)
+{
+    if (isnan(apts) || isnan(is->aud_pts_s))
+        return 0;
+
+    // 시작 시간을 설정하였을 때 해당 시작 시간으로 정확히 이동
+    if (start_time != AV_NOPTS_VALUE && is->video_st && shana_as_aud_s)
+    {
+        if ((double)start_time / AV_TIME_BASE > apts) // 통과
+            return -1;
+        else
+        {
+            shana_as_aud_s = 0;
+            s_shanaencoder_fsb_audio_wait(is);
+            return 0;
+        }
+    }
+
+    // Frame Step Backwards
+    if (is->seek_aud_req_s && is->seek_req) // seek 중이면 통과
+        return -1;
+    // else if (is->seek_aud_req_s && !is->seek_interrupt_s && is->aud_pts_s > apts) // 통과
+    //    return -1;
+    else if (is->seek_aud_req_s && !is->seek_interrupt_s && is->aud_pts_s - 0.1 > apts) // 통과
+        return -1;
+    else if (is->seek_aud_req_s && !is->seek_interrupt_s && is->aud_pts_s > apts) // 사용
+        return 0;
+
+    if (is->seek_aud_req_s && (apts - is->aud_pts_s < 0.1 || is->aud_pts_s < 0))
+    {
+        //av_log(NULL, AV_LOG_WARNING, "[ShanaEncoder_FSB @ %p] 9999 : base_pts=%f apts=%f\n", &is->aud_pts_s, is->aud_pts_s, apts);
+        is->aud_pts_s = NAN;
+        is->seek_aud_req_s = 0;
+        s_shanaencoder_fsb_audio_wait(is);
+        return 0;
+    }
+    else if (is->seek_aud_req_s) // 오류
+    {
+        if (is->aud_pts_s < apts)
+        {
+            //av_log(NULL, AV_LOG_INFO, "[ERR] base_pts=%f apts=%f\n", is->aud_pts_s, apts);
+            is->aud_pts_s = NAN;
+            is->seek_aud_req_s = 0;
+        }
+        return -1;
+    }
+
+    return 0;
+}
+
+static int s_shanaencoder_fsb_video(VideoState *is, AVFrame *frame, double dpts)
+{
+    double display_pts = dpts; // 디스플레이 PTS
+    if (ic_start_time_s != AV_NOPTS_VALUE)
+       display_pts -= ((double)ic_start_time_s / AV_TIME_BASE);
+    display_pts = floorf(display_pts * 1000) / 1000;
+
+    // 시작 시간을 설정하였을 때 해당 시작 시간으로 정확히 이동
+    if (shana_as_vid_s && is->video_st && start_time != AV_NOPTS_VALUE)
+    {
+        double start_pts = floorf((double)start_time / AV_TIME_BASE * 1000) / 1000;
+
+        if (shana_as_vid_s && start_pts > display_pts) // 드롭
+        {
+            //av_log(NULL, AV_LOG_INFO, "[DRP] **** start_pts=%f display_pts=%f dpts=%f\n", start_pts, display_pts, dpts);
+            av_frame_unref(frame);
+            return 0;
+        }
+        else if (shana_as_vid_s)
+            shana_as_vid_s = 0;
+    }
+
+    // Frame Step Backwards
+    if (is->seek_vid_req_s && is->seek_req) // seek 중이면 통과
+    {
+        av_frame_unref(frame);
+        return 0;
+    }
+    else if (is->seek_vid_req_s && !is->seek_interrupt_s)
+    {
+        double base_pts; // 기준 PTS
+
+        if (is->seek_seg_req_s) base_pts = is->vid_seg_pts_s;
+        else base_pts = is->vid_pts_s;
+        if (ic_start_time_s != AV_NOPTS_VALUE)
+           base_pts -= ((double)ic_start_time_s / AV_TIME_BASE);
+        base_pts = floorf(base_pts * 1000) / 1000;
+
+        if (is->seek_seg_req_s) // 세그먼트 이동 요청
+        {
+            if (base_pts > display_pts) // 드롭
+            {
+                //av_log(NULL, AV_LOG_INFO, "[DRP] **** base_pts=%f display_pts=%f dpts=%f\n", base_pts, display_pts, dpts);
+                is->seek_forward_s = 1;
+                av_frame_unref(frame);
+                return 0;
+            }
+            else if (!is->seek_forward_s && base_pts < display_pts) // 드롭
+            {
+                //av_log(NULL, AV_LOG_INFO, "[DRP] **** base_pts=%f display_pts=%f\n", base_pts, display_pts);
+                is->seek_forward_s = 1;
+                av_frame_unref(frame);
+                return 0;
+            }
+            else // 추가
+            {
+                av_log(NULL, AV_LOG_WARNING, "[ShanaEncoder_FSB @ %p] ", &base_pts);
+                av_log(NULL, AV_LOG_INFO,    "%d : base_pts = %f display_pts = %f\n", is->seek_dwdata_s, base_pts, display_pts);
+                s_shanaencoder_fsb_init(is);
+            }
+        }
+        else // 프레임 뒤로 이동
+        {                    
+            double f_prev_pts = floorf((base_pts - is->vid_duration_s) * 1000) / 1000; // 계산된 PTS
+
+            if (is->seek_vid_re_req_s)
+                f_prev_pts = is->vid_last_drop_pts_s; // 마지막으로 드롭된 PTS 값을 사용
+
+            if (f_prev_pts > display_pts) // 드롭
+            {
+                //av_log(NULL, AV_LOG_INFO, "[DRP] **** f_prev_pts=%f display_pts=%f\n", f_prev_pts, display_pts);
+                if (!is->seek_vid_re_req_s) is->vid_last_drop_pts_s = display_pts;
+                is->seek_forward_s = 1;
+                av_frame_unref(frame);
+                return 0;
+            }
+            else if ((!is->seek_forward_s && f_prev_pts < display_pts) ||
+                     (!is->seek_vid_re_req_s && fabs(base_pts - display_pts) < 0.001)) // 오류, 다시 요청
+            {
+                //av_log(NULL, AV_LOG_INFO, "[ERR] **** f_prev_pts = %.3f, display_pts = %.3f last_del_pts = %.3f\n", f_prev_pts, display_pts, is->vid_last_drop_pts_s);
+                av_frame_unref(frame);
+                is->seek_forward_s = 1;
+                is->seek_vid_re_req_s = 1;
+                if (is->audio_st) // 오디오 요청
+                {
+                    is->aud_pts_s = floorf(f_prev_pts * 1000) / 1000;
+                    is->seek_aud_req_s = 1;
+                }
+                if (f_prev_pts < display_pts) // 2초 뒤로 이동
+                    stream_seek(is, (int64_t)((dpts - 2.0) * AV_TIME_BASE), (int64_t)(-2.0 * AV_TIME_BASE), 0);
+                else // 1초 뒤로 이동
+                    stream_seek(is, (int64_t)((dpts - 1.0) * AV_TIME_BASE), (int64_t)(-1.0 * AV_TIME_BASE), 0);
+                return 0;
+            }
+            else if (fabs((f_prev_pts + is->vid_duration_s) - (display_pts - is->vid_duration_s)) < 0.001) // 프레임 앞으로 이동하는 오류, 다시 요청
+            {
+                //av_log(NULL, AV_LOG_INFO, "[ERR] **** vid_last_drop_pts_s=%f display_pts=%f\n", is->vid_last_drop_pts_s, display_pts);
+                av_frame_unref(frame);
+                is->seek_vid_re_req_s = 1;
+                is->vid_last_drop_pts_s = floorf((is->vid_last_drop_pts_s - is->vid_duration_s) * 1000) / 1000;
+                if (is->audio_st) // 오디오 요청
+                {
+                    is->aud_pts_s = floorf(f_prev_pts * 1000) / 1000;
+                    is->seek_aud_req_s = 1;
+                }
+                stream_seek(is, (int64_t)((dpts - 1.0) * AV_TIME_BASE), (int64_t)(-1.0 * AV_TIME_BASE), 0);
+                return 0;
+            }
+            else // 추가
+            {
+                av_log(NULL, AV_LOG_WARNING, "[ShanaEncoder_FSB @ %p] ", &f_prev_pts);
+                av_log(NULL, AV_LOG_INFO,    "0000 : f_prev_pts = %f display_pts = %f\n", f_prev_pts, display_pts);
+                s_shanaencoder_fsb_init(is);
+            }
+        }
+    }
+
+    return 1;
+}
+
+static int s_wm_copydata_event_watcher(void *is, SDL_Event *event)
+{
+#ifdef _WIN32
+    if (event->type == SDL_SYSWMEVENT &&
+        event->syswm.msg->subsystem == SDL_SYSWM_WINDOWS &&
+        event->syswm.msg->msg.win.msg == WM_COPYDATA)
+    {
+        PCOPYDATASTRUCT pcds;
+        pcds = (PCOPYDATASTRUCT)event->syswm.msg->msg.win.lParam;
+        s_shanaencoder_fsb_seg(is, atof(pcds->lpData), pcds->dwData);
+    }
+#endif
+    return 0;
+}
+
+static void s_video_audio_display(void)
+{
+#ifdef _WIN32
+    if (frame_text_hwnd != NULL)
+    {
+        char lbuf[128];
+        HWND frametext_hWnd = (HWND)(LONG_PTR)atol(frame_text_hwnd);
+        memset(lbuf, 0, sizeof(lbuf));
+        SendMessage(frametext_hWnd, 0x000C, 0, (LPARAM)lbuf);
+    }
+#endif
+}
+
+static void s_video_image_display(VideoState *is)
+{
+#ifdef _WIN32
+    if (frame_text_hwnd != NULL)
+    {
+        HWND frametext_hWnd = (HWND)(LONG_PTR)atol(frame_text_hwnd);
+        SendMessage(frametext_hWnd, 0x000C, 0, (LPARAM)is->frame_info[is->pictq.rindex]);
+    }
+#endif
+
+    is->vid_pts_s = is->vid_pts_arr_s[is->pictq.rindex];
+    is->vid_duration_s = is->vid_duration_arr_s[is->pictq.rindex];
+    if (is->seek_display_s)
+        is->seek_display_s = 0;
+    if (is->tmp_status_flag_s)
+        s_shanaencoder_fsb_seg(is, is->tmp_lpdata_s, is->tmp_dwdata_s);
+    if (is->seek_interrupt_s)
+    {
+        is->vid_last_drop_pts_s = floorf((is->vid_pts_s - is->vid_duration_s) * 1000) / 1000;
+        s_shanaencoder_fsb_init(is);
+        is->seek_interrupt_s = 0;
+    }
+    //av_log(NULL, AV_LOG_INFO, "[DISP] rindex = %d max = %d vid_pts_s = %f vid_duration_s = %f\n", is->pictq.rindex, is->pictq.max_size, is->vid_pts_s, is->vid_duration_s);
+}
+
+static void s_queue_picture(VideoState *is, AVFrame *src_frame, double pts, double duration)
+{
+    is->vid_pts_arr_s[is->pictq.windex] = pts;
+    is->vid_duration_arr_s[is->pictq.windex] = duration;
+
+    //av_log(NULL, AV_LOG_INFO, "[QUEUE] idx=%d, frame_type=%c pts=%f duration=%f\n", is->pictq.windex, av_get_picture_type_char(src_frame->pict_type), pts, duration);
+
+#ifdef _WIN32
+    if (frame_text_hwnd != NULL)
+    {
+        int framedrop_s = is->frame_drops_early + is->frame_drops_late;
+        int hours, mins, secs, us;
+        int64_t starttime = 0;
+        int64_t ptstime = 0;
+        double _timestamp;
+
+        if (ic_start_time_s != AV_NOPTS_VALUE) starttime = ic_start_time_s;
+        ptstime = ((double)pts * AV_TIME_BASE) - starttime;
+        _timestamp = is->vid_pts_arr_s[is->pictq.windex];
+
+        if (ptstime >= 0)
+        {
+            secs = ptstime / AV_TIME_BASE;
+            us = ptstime % AV_TIME_BASE;
+            mins = secs / 60;
+            secs %= 60;
+            hours = mins / 60;
+            mins %= 60;
+            snprintf(is->frame_info[is->pictq.windex], sizeof(is->frame_info[is->pictq.windex]),
+            "%02d:%02d:%02d.%02d, timestamp=%f, width=%d, height=%d, type=%c, keyframe=%d, fd=%d",
+            hours, mins, secs, (100 * us) / AV_TIME_BASE, _timestamp, src_frame->width, src_frame->height, av_get_picture_type_char(src_frame->pict_type), src_frame->key_frame, framedrop_s);
+        }
+        else
+        {
+            snprintf(is->frame_info[is->pictq.windex], sizeof(is->frame_info[is->pictq.windex]),
+            "pts=NaN, timestamp=%f, width=%d, height=%d, type=%c, keyframe=%d, fd=%d",
+            _timestamp, src_frame->width, src_frame->height, av_get_picture_type_char(src_frame->pict_type), src_frame->key_frame, framedrop_s);
+        }
+    }
+#endif
+}
+
+static void s_video_open(int w, int h)
+{
+#ifdef _WIN32
+    if (SDL_hwnd == NULL)
+    {
+        // SDL 창 핸들
+        SDL_SysWMinfo info;
+        SDL_VERSION(&info.version);
+        if (SDL_GetWindowWMInfo(window, &info)) SDL_hwnd=info.info.win.window;
+    }
+#endif
+    if (window_hwnd == NULL) 
+    {
+        if (!window_title)
+            window_title = input_filename;
+        SDL_SetWindowTitle(window, window_title);
+        SDL_SetWindowSize(window, w, h);
+        SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+        if (is_full_screen)
+            SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+        SDL_ShowWindow(window);
+    }
+}
+
+static void s_video_refresh(VideoState *is, double av_diff)
+{
+    char buf_s[1024];
+    int hours, mins, secs, us;
+    int volpct = (int)(((long)volume_s + 0.5) * 100 / SDL_MIX_MAXVOLUME);
+    int64_t starttime = 0;
+    int64_t playtime  = 0;
+
+    //start time
+    if (ic_start_time_s != AV_NOPTS_VALUE)
+        starttime = ic_start_time_s;
+
+    //clock
+    playtime = (get_master_clock(is) * AV_TIME_BASE) - starttime;
+
+    if (playtime >= 0)
+    {
+        secs = playtime / AV_TIME_BASE;
+        us = playtime % AV_TIME_BASE;
+        mins = secs / 60;
+        secs %= 60;
+        hours = mins / 60;
+        mins %= 60;
+
+        snprintf(buf_s, sizeof(buf_s), "%02d:%02d:%02d.%02d, %3.1fx, %s:%7.3f, vol=%d(%d%%)",
+                                       hours,
+                                       mins,
+                                       secs,
+                                       (100 * us) / AV_TIME_BASE,
+                                       speed_s,
+                                       (is->audio_st && is->video_st) ? "A-V" : (is->video_st ? "M-V" : (is->audio_st ? "M-A" : "   ")),
+                                       av_diff,
+                                       volume_s,
+                                       volpct);
+    }
+    else
+    {
+        snprintf(buf_s, sizeof(buf_s), "time=NaN, %3.1fx, %s:%7.3f, vol=%d(%d%%)",
+                                       speed_s,
+                                       (is->audio_st && is->video_st) ? "A-V" : (is->video_st ? "M-V" : (is->audio_st ? "M-A" : "   ")),
+                                       av_diff,
+                                       volume_s,
+                                       volpct);
+    }
+
+    if (window_title == NULL && window_text_hwnd == NULL)
+        SDL_SetWindowTitle(window, buf_s);
+
+#ifdef _WIN32
+    if (window_text_hwnd != NULL)
+    {
+        HWND wintext_hWnd = (HWND)(LONG_PTR)atol(window_text_hwnd);
+        SendMessage(wintext_hWnd, 0x000C, 0, (LPARAM)buf_s);
+    }
+#endif
+}
+
+static void s_read_thread(AVFormatContext *ic)
+{
+    /* start time */
+    ic_start_time_s = ic->start_time;
+
+    /* duration */
+#ifdef _WIN32
+    if (duration_hwnd != NULL && ic->duration != AV_NOPTS_VALUE)
+    {
+        char dhwndbuf[128];
+        HWND dhWnd = (HWND)(LONG_PTR)atol(duration_hwnd);
+        int hours, mins, secs, us;
+        int64_t duration_sd = ic->duration;
+
+        if (duration_sd >= 0)
+        {
+            secs = duration_sd / AV_TIME_BASE;
+            us = duration_sd % AV_TIME_BASE;
+            mins = secs / 60;
+            secs %= 60;
+            hours = mins / 60;
+            mins %= 60;
+
+            snprintf(dhwndbuf, sizeof(dhwndbuf), "%02d:%02d:%02d.%02d", hours, mins, secs, (100 * us) / AV_TIME_BASE);
+            SendMessage(dhWnd, 0x000C, 0, (LPARAM)dhwndbuf);
+        }
+    }
+#endif
+}
+
+static void s_refresh_loop_wait_event(VideoState *is)
+{
+#ifdef _WIN32
+    if (window_hwnd != NULL)
+    {
+        HWND win_hWnd = (HWND)(LONG_PTR)atol(window_hwnd);
+        if (!IsWindow(win_hWnd))
+        do_exit(is);
+    }
+#endif
+}
+
+static void s_main(void)
+{
+    av_log(NULL, AV_LOG_WARNING, "-------------------------------\n");
+    av_log(NULL, AV_LOG_WARNING, " ShanaFFplay v2.0, LEE RINA    \n");
+    av_log(NULL, AV_LOG_WARNING, " Homepage: https://shana.pe.kr \n");
+    av_log(NULL, AV_LOG_WARNING, "-------------------------------\n");
+
+    if (window_hwnd != NULL)
+        window = SDL_CreateWindow(window_title, 0, 0, 0, 0, SDL_WINDOW_BORDERLESS | SDL_WINDOW_HIDDEN | SDL_WINDOW_ALLOW_HIGHDPI);
+    else
+    {
+        int flags = SDL_WINDOW_HIDDEN;
+        if (alwaysontop)
+#if SDL_VERSION_ATLEAST(2,0,5)
+            flags |= SDL_WINDOW_ALWAYS_ON_TOP;
+#else
+            av_log(NULL, AV_LOG_WARNING, "Your SDL version doesn't support SDL_WINDOW_ALWAYS_ON_TOP. Feature will be inactive.\n");
+#endif
+        if (borderless)
+            flags |= SDL_WINDOW_BORDERLESS;
+        else
+            flags |= SDL_WINDOW_RESIZABLE;
+        window = SDL_CreateWindow(program_name, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, default_width, default_height, flags);
+    }
+}
+
+/********************************************************************/
 
 #if CONFIG_AVFILTER
 static int opt_add_vfilter(void *optctx, const char *opt, const char *arg)
@@ -665,7 +1278,10 @@ static int decoder_decode_frame(Decoder *d, AVFrame *frame, AVSubtitle *sub) {
                 if (packet_queue_get(d->queue, &pkt, 1, &d->pkt_serial) < 0)
                     return -1;
             }
-        } while (d->queue->serial != d->pkt_serial);
+            if (d->queue->serial == d->pkt_serial)
+                break;
+            av_packet_unref(&pkt);
+        } while (1);
 
         if (pkt.data == flush_pkt.data) {
             avcodec_flush_buffers(d->avctx);
@@ -992,49 +1608,13 @@ static void set_sdl_yuv_conversion_mode(AVFrame *frame)
 #endif
 }
 
-static void s_input_window(VideoState *is)
-{
-#ifdef _WIN32
-    if (SDL_hwnd != NULL)
-    {
-        HWND hWnd = SDL_hwnd;
-        if (control_hwnd != NULL)
-        {
-            char ctlhwndbuf[128];
-            HWND ctlhWnd = (HWND)(LONG_PTR)atol(control_hwnd);
-            snprintf(ctlhwndbuf, sizeof(ctlhwndbuf), "%d", (int)hWnd);
-            SendMessage(ctlhWnd, 0x000C, 0, (LPARAM) ctlhwndbuf);
-        }
-        if (window_hwnd != NULL && hWnd != NULL) 
-        {
-            HWND win_hWnd = (HWND)(LONG_PTR)atol(window_hwnd);
-            
-            // 자식으로 바꾸고 부모 지정
-            DWORD ws = GetWindowLong(hWnd, GWL_STYLE);
-            ws &= !WS_POPUP;
-            ws |= WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
-            SetWindowLong(hWnd, GWL_STYLE, ws);
-            SetParent(hWnd, win_hWnd);
-        }
-    }
-#endif
-    return;
-}
-
 static void video_image_display(VideoState *is)
 {
     Frame *vp;
     Frame *sp = NULL;
     SDL_Rect rect;
 
-#ifdef _WIN32
-    if (frame_text_hwnd != NULL)
-    {
-        HWND frametext_hWnd = (HWND)(LONG_PTR)atol(frame_text_hwnd);
-        SendMessage(frametext_hWnd, 0x000C, 0, (LPARAM) is->frame_info[is->pictq.rindex]);
-    }
-#endif
-
+    s_video_image_display(is);
     vp = frame_queue_peek_last(&is->pictq);
     if (is->subtitle_st) {
         if (frame_queue_nb_remaining(&is->subpq) > 0) {
@@ -1081,7 +1661,7 @@ static void video_image_display(VideoState *is)
         }
     }
 
-    if (nokeepaspect)
+    if (nokeepaspect_s)
     {
         rect.x = is->xleft;
         rect.y = is->ytop;
@@ -1132,15 +1712,7 @@ static void video_audio_display(VideoState *s)
     int64_t time_diff;
     int rdft_bits, nb_freq;
 
-#ifdef _WIN32
-    if (frame_text_hwnd != NULL)
-    {
-        char lbuf[128];
-        HWND frametext_hWnd = (HWND)(LONG_PTR)atol(frame_text_hwnd);
-        memset(lbuf, 0, sizeof(lbuf));
-        SendMessage(frametext_hWnd, 0x000C, 0, (LPARAM) lbuf);
-    }
-#endif
+    s_video_audio_display();
 
     for (rdft_bits = 1; (1 << rdft_bits) < 2 * s->height; rdft_bits++)
         ;
@@ -1219,14 +1791,6 @@ static void video_audio_display(VideoState *s)
             y = s->ytop + ch * h;
             fill_rectangle(s->xleft, y, s->width, 1);
         }
-#ifdef _WIN32
-    {
-        // 원래 창의 핸들 가져오기 부분
-        SDL_SysWMinfo info;
-        SDL_VERSION(&info.version);
-        if (SDL_GetWindowWMInfo(window, &info)) SDL_hwnd=info.info.win.window;
-    }
-#endif
     } else {
         if (realloc_texture(&s->vis_texture, SDL_PIXELFORMAT_ARGB8888, s->width, s->height, SDL_BLENDMODE_NONE, 1) < 0)
             return;
@@ -1382,6 +1946,7 @@ static void stream_close(VideoState *is)
 static void do_exit(VideoState *is)
 {
     if (is) {
+        SDL_DelEventWatch(s_wm_copydata_event_watcher, is);
         stream_close(is);
     }
     if (renderer)
@@ -1424,33 +1989,14 @@ static int video_open(VideoState *is)
     w = screen_width ? screen_width : default_width;
     h = screen_height ? screen_height : default_height;
 
-#ifdef _WIN32
-    if (window_hwnd != NULL) 
-    {
-        // 원래 창의 핸들 가져오기 부분
-        SDL_SysWMinfo info;
-        SDL_VERSION(&info.version);
-        if (SDL_GetWindowWMInfo(window, &info)) SDL_hwnd=info.info.win.window;    
-    }
-    else
-#endif        
-    {
-        if (!window_title)
-            window_title = input_filename;
-        SDL_SetWindowTitle(window, window_title);
-        SDL_SetWindowSize(window, w, h);
-        SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
-        if (is_full_screen)
-            SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
-        SDL_ShowWindow(window);
-    }
-     
+    s_video_open(w, h);
+
     is->width  = w;
     is->height = h;
 
-    // 창삽입
+    // 창 넣기
     s_input_window(is);
-    
+
     return 0;
 }
 
@@ -1775,6 +2321,7 @@ display:
     }
     is->force_refresh = 0;
     if (show_status) {
+        AVBPrint buf;
         static int64_t last_time;
         int64_t cur_time;
         int aqsize, vqsize, sqsize;
@@ -1782,12 +2329,6 @@ display:
 
         cur_time = av_gettime_relative();
         if (!last_time || (cur_time - last_time) >= 30000) {
-            char buf_s[1024];
-            int hours, mins, secs, us;
-            int volpct = (int)(((long)volume_s + 0.5) * 100 / SDL_MIX_MAXVOLUME);
-            int64_t starttime = 0;
-            int64_t playtime  = 0;
-            
             aqsize = 0;
             vqsize = 0;
             sqsize = 0;
@@ -1806,57 +2347,33 @@ display:
                 av_diff = get_master_clock(is) - get_clock(&is->audclk);
             if (isnan(av_diff))
                 av_diff = 0;
-            
-            //start time
-            if (start_time_s != AV_NOPTS_VALUE)
-                starttime = start_time_s;
-
-            //clock
-            playtime = (get_master_clock(is) * AV_TIME_BASE) - starttime + 5000;
-
-            if (playtime >= 0)
-            {
-                secs = playtime / AV_TIME_BASE;
-                us = playtime % AV_TIME_BASE;
-                mins = secs / 60;
-                secs %= 60;
-                hours = mins / 60;
-                mins %= 60;
-
-                snprintf(buf_s, sizeof(buf_s), "%02d:%02d:%02d.%02d, %3.1fx, A-V:%7.3f, vol=%d(%d%%)",
-                                               hours, mins, secs, (100 * us) / AV_TIME_BASE, speed_s, av_diff, volume_s, volpct);
-            }
-            else
-            {
-                snprintf(buf_s, sizeof(buf_s), "time=NaN, %3.1fx, A-V:%7.3f, vol=%d(%d%%)",
-                                               speed_s, av_diff, volume_s, volpct);
-            }
-
-            if (window_title == NULL && window_text_hwnd == NULL)
-                SDL_SetWindowTitle(window, buf_s);
-                
-#ifdef _WIN32
-                if (window_text_hwnd != NULL)
-                {
-                    HWND wintext_hWnd = (HWND)(LONG_PTR)atol(window_text_hwnd);
-                    SendMessage(wintext_hWnd, 0x000C, 0, (LPARAM) buf_s);
-                }
-#endif
-
+            s_video_refresh(is, av_diff);
             if (window_text_hwnd == NULL)
             {
-                printf("%7.2f A-V:%7.3f fd=%4d aq=%5dKB vq=%5dKB sq=%5dB f=%"PRId64"/%"PRId64"   %3.1fx  \r",
-                get_master_clock(is),
-                av_diff,
-                is->frame_drops_early + is->frame_drops_late,
-                aqsize / 1024,
-                vqsize / 1024,
-                sqsize,
-                is->video_st ? is->viddec.avctx->pts_correction_num_faulty_dts : 0,
-                is->video_st ? is->viddec.avctx->pts_correction_num_faulty_pts : 0,
-                speed_s);
+            //----------
+            av_bprint_init(&buf, 0, AV_BPRINT_SIZE_AUTOMATIC);
+            av_bprintf(&buf,
+                      "%7.2f %s:%7.3f fd=%4d aq=%5dKB vq=%5dKB sq=%5dB f=%"PRId64"/%"PRId64"   %3.1fx  \r",
+                      get_master_clock(is),
+                      (is->audio_st && is->video_st) ? "A-V" : (is->video_st ? "M-V" : (is->audio_st ? "M-A" : "   ")),
+                      av_diff,
+                      is->frame_drops_early + is->frame_drops_late,
+                      aqsize / 1024,
+                      vqsize / 1024,
+                      sqsize,
+                      is->video_st ? is->viddec.avctx->pts_correction_num_faulty_dts : 0,
+                      is->video_st ? is->viddec.avctx->pts_correction_num_faulty_pts : 0,
+                      speed_s);
+
+            if (show_status == 1 && AV_LOG_INFO > av_log_get_level())
+                fprintf(stderr, "%s", buf.str);
+            else
+                av_log(NULL, AV_LOG_INFO, "%s", buf.str);
+
+            fflush(stderr);
+            av_bprint_finalize(&buf, NULL);
+            //----------
             }
-            fflush(stdout);
             last_time = cur_time;
         }
     }
@@ -1874,37 +2391,8 @@ static int queue_picture(VideoState *is, AVFrame *src_frame, double pts, double 
     if (!(vp = frame_queue_peek_writable(&is->pictq)))
         return -1;
 
-#ifdef _WIN32
-    if (frame_text_hwnd != NULL)
-    {
-        int framedrop_s = is->frame_drops_early + is->frame_drops_late;
-        int hours, mins, secs, us;
-        int64_t starttime = 0;
-        int64_t ptstime = 0;
+    s_queue_picture(is, src_frame, pts, duration);
 
-        if (start_time_s != AV_NOPTS_VALUE) starttime = start_time_s;
-        ptstime = ((float)pts * AV_TIME_BASE) - starttime + 5000;
-
-        if (ptstime >= 0)
-        {
-            secs = ptstime / AV_TIME_BASE;
-            us = ptstime % AV_TIME_BASE;
-            mins = secs / 60;
-            secs %= 60;
-            hours = mins / 60;
-            mins %= 60;
-
-            snprintf(is->frame_info[is->pictq.windex], sizeof(is->frame_info[is->pictq.windex]), "%02d:%02d:%02d.%02d, width=%d, height=%d, type=%c, keyframe=%d, fd=%d",
-            hours, mins, secs, (100 * us) / AV_TIME_BASE, src_frame->width, src_frame->height, av_get_picture_type_char(src_frame->pict_type), src_frame->key_frame, framedrop_s);
-        }
-        else
-        {
-            snprintf(is->frame_info[is->pictq.windex], sizeof(is->frame_info[is->pictq.windex]), "pts=NaN, width=%d, height=%d, type=%c, keyframe=%d, fd=%d",
-            src_frame->width, src_frame->height, av_get_picture_type_char(src_frame->pict_type), src_frame->key_frame, framedrop_s);
-        }
-    }
-#endif
-    
     vp->sar = src_frame->sample_aspect_ratio;
     vp->uploaded = 0;
 
@@ -1937,6 +2425,9 @@ static int get_video_frame(VideoState *is, AVFrame *frame)
         if (frame->pts != AV_NOPTS_VALUE)
             dpts = av_q2d(is->video_st->time_base) * frame->pts;
 
+        if (!s_shanaencoder_fsb_video(is, frame, dpts))
+            return 0;
+
         frame->sample_aspect_ratio = av_guess_sample_aspect_ratio(is->ic, is->video_st, frame);
 
         if (framedrop>0 || (framedrop && get_master_sync_type(is) != AV_SYNC_VIDEO_MASTER)) {
@@ -1952,6 +2443,12 @@ static int get_video_frame(VideoState *is, AVFrame *frame)
                 }
             }
         }
+    }
+    else
+    {
+        is->seek_aud_req_s = 0;
+        is->seek_display_s = 0;
+        s_shanaencoder_fsb_init(is);
     }
 
     return got_picture;
@@ -2207,6 +2704,9 @@ static int audio_thread(void *arg)
         if (got_frame) {
                 tb = (AVRational){1, frame->sample_rate};
 
+                if (s_shanaencoder_fsb_audio(is, (frame->pts == AV_NOPTS_VALUE) ? NAN : frame->pts * av_q2d(tb)) < 0)
+                    continue;
+
 #if CONFIG_AVFILTER
                 dec_channel_layout = get_valid_channel_layout(frame->channel_layout, frame->channels);
 
@@ -2261,6 +2761,8 @@ static int audio_thread(void *arg)
                 is->auddec.finished = is->auddec.pkt_serial;
 #endif
         }
+        else
+            is->seek_aud_req_s = 0;
     } while (ret >= 0 || ret == AVERROR(EAGAIN) || ret == AVERROR_EOF);
  the_end:
 #if CONFIG_AVFILTER
@@ -2499,7 +3001,7 @@ static int audio_decode_frame(VideoState *is)
     int wanted_nb_samples;
     Frame *af;
 
-    if (is->paused)
+    if (is->paused && !is->seek_aud_req_s)
         return -1;
 
     do {
@@ -2628,11 +3130,11 @@ static void sdl_audio_callback(void *opaque, Uint8 *stream, int len)
         len1 = is->audio_buf_size - is->audio_buf_index;
         if (len1 > len)
             len1 = len;
-        if (!is->muted && is->audio_buf && volume_s == SDL_MIX_MAXVOLUME)
+        if (is->audio_buf && volume_s == SDL_MIX_MAXVOLUME)
             memcpy(stream, (uint8_t *)is->audio_buf + is->audio_buf_index, len1);
         else {
             memset(stream, 0, len1);
-            if (!is->muted && is->audio_buf)
+            if (is->audio_buf)
                 SDL_MixAudioFormat(stream, (uint8_t *)is->audio_buf + is->audio_buf_index, AUDIO_S16SYS, len1, volume_s);
         }
         len -= len1;
@@ -2924,9 +3426,6 @@ static int read_thread(void *arg)
     }
 
     memset(st_index, -1, sizeof(st_index));
-    is->last_video_stream = is->video_stream = -1;
-    is->last_audio_stream = is->audio_stream = -1;
-    is->last_subtitle_stream = is->subtitle_stream = -1;
     is->eof = 0;
 
     ic = avformat_alloc_context();
@@ -2991,32 +3490,7 @@ static int read_thread(void *arg)
     if (!window_title && (t = av_dict_get(ic->metadata, "title", NULL, 0)))
         window_title = av_asprintf("%s - %s", t->value, input_filename);
 
-    /* start time */
-    start_time_s = ic->start_time;
-
-    /* duration */
-#ifdef _WIN32
-    if (duration_hwnd != NULL && ic->duration != AV_NOPTS_VALUE)
-    {
-        char dhwndbuf[128];
-        HWND dhWnd = (HWND)(LONG_PTR)atol(duration_hwnd);
-        int hours, mins, secs, us;
-        int64_t duration_sd = ic->duration + 5000;
-
-        if (duration_sd >= 0)
-        {
-            secs = duration_sd / AV_TIME_BASE;
-            us = duration_sd % AV_TIME_BASE;
-            mins = secs / 60;
-            secs %= 60;
-            hours = mins / 60;
-            mins %= 60;
-
-            snprintf(dhwndbuf, sizeof(dhwndbuf), "%02d:%02d:%02d.%02d", hours, mins, secs, (100 * us) / AV_TIME_BASE);
-            SendMessage(dhWnd, 0x000C, 0, (LPARAM) dhwndbuf);
-        }
-    }
-#endif
+    s_read_thread(ic);
 
     /* if seeking requested, we execute it */
     if (start_time != AV_NOPTS_VALUE) {
@@ -3026,6 +3500,14 @@ static int read_thread(void *arg)
         /* add the stream start time */
         if (ic->start_time != AV_NOPTS_VALUE)
             timestamp += ic->start_time;
+        /* mpegts 오프셋 설정(-0.5) */
+        if (shana_as_s)
+        {
+            shana_as_vid_s = 1;
+            shana_as_aud_s = 1;
+            if (!strcmp(ic->iformat->name, "mpegts"))
+                timestamp -= AV_TIME_BASE;
+        }
         ret = avformat_seek_file(ic, -1, INT64_MIN, timestamp, INT64_MAX, 0);
         if (ret < 0) {
             av_log(NULL, AV_LOG_WARNING, "%s: could not seek to position %0.3f\n",
@@ -3134,13 +3616,7 @@ static int read_thread(void *arg)
 // FIXME the +-2 is due to rounding being not done in the correct direction in generation
 //      of the seek_pos/seek_rel variables
 
-            if (is->seek_frame)
-                  {
-                        ret = av_seek_frame(is->ic, -1, seek_target, is->seek_flags | AVSEEK_FLAG_BACKWARD);
-                        is->seek_frame = 0;
-                  }
-                  else
-                        ret = avformat_seek_file(is->ic, -1, seek_min, seek_target, seek_max, is->seek_flags);
+            ret = avformat_seek_file(is->ic, -1, seek_min, seek_target, seek_max, is->seek_flags);
             if (ret < 0) {
                 av_log(NULL, AV_LOG_ERROR,
                        "%s: error while seeking\n", is->ic->url);
@@ -3171,7 +3647,7 @@ static int read_thread(void *arg)
         }
         if (is->queue_attachments_req) {
             if (is->video_st && is->video_st->disposition & AV_DISPOSITION_ATTACHED_PIC) {
-                AVPacket copy = { 0 };
+                AVPacket copy;
                 if ((ret = av_packet_ref(&copy, &is->video_st->attached_pic)) < 0)
                     goto fail;
                 packet_queue_put(&is->videoq, &copy);
@@ -3265,6 +3741,9 @@ static VideoState *stream_open(const char *filename, AVInputFormat *iformat)
     is = av_mallocz(sizeof(VideoState));
     if (!is)
         return NULL;
+    is->last_video_stream = is->video_stream = -1;
+    is->last_audio_stream = is->audio_stream = -1;
+    is->last_subtitle_stream = is->subtitle_stream = -1;
     is->filename = av_strdup(filename);
     if (!is->filename)
         goto fail;
@@ -3294,7 +3773,6 @@ static VideoState *stream_open(const char *filename, AVInputFormat *iformat)
     init_clock(&is->audclk, &is->audioq.serial);
     init_clock(&is->extclk, &is->extclk.serial);
     is->audio_clock_serial = -1;
-    is->muted = 0;
     is->av_sync_type = av_sync_type;
     is->read_tid     = SDL_CreateThread(read_thread, "read_thread", is);
     if (!is->read_tid) {
@@ -3384,6 +3862,7 @@ static void stream_cycle_channel(VideoState *is, int codec_type)
     stream_component_open(is, stream_index);
 }
 
+
 static void toggle_full_screen(VideoState *is)
 {
     is_full_screen = !is_full_screen;
@@ -3406,14 +3885,7 @@ static void refresh_loop_wait_event(VideoState *is, SDL_Event *event) {
     double remaining_time = 0.0;
     SDL_PumpEvents();
     while (!SDL_PeepEvents(event, 1, SDL_GETEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT)) {
-        #ifdef _WIN32
-            if (window_hwnd != NULL)
-            {
-                HWND win_hWnd = (HWND)(LONG_PTR)atol(window_hwnd);
-                if (!IsWindow(win_hWnd))
-                do_exit(is);
-            }
-        #endif
+        s_refresh_loop_wait_event(is);
         if (!cursor_hidden && av_gettime_relative() - cursor_last_shown > CURSOR_HIDE_DELAY) {
             SDL_ShowCursor(0);
             cursor_hidden = 1;
@@ -3454,275 +3926,272 @@ static void seek_chapter(VideoState *is, int incr)
                                  AV_TIME_BASE_Q), 0, 0);
 }
 
-static void gui_message(int int_keycode)
-{
-#ifdef _WIN32
-    if (gui_message_hwnd != NULL)
-    {
-        char ghwndbuf[128];
-        HWND ghWnd = (HWND)(LONG_PTR)atol(gui_message_hwnd);
-        snprintf(ghwndbuf, sizeof(ghwndbuf), "%d", int_keycode);
-        SendMessage(ghWnd, 0x000C, 0, (LPARAM) ghwndbuf);
-    }
-#endif
-}
-
-static void s_window_resize(VideoState *is)
-{
-#ifdef _WIN32
-    if (window_hwnd != NULL)
-    {
-        int w, h;
-        RECT s_rect;
-        HWND win_hWnd = (HWND)(LONG_PTR)atol(window_hwnd);
-
-        // 리사이즈
-        GetWindowRect(win_hWnd, &s_rect);
-        w = s_rect.right - s_rect.left;
-        h = s_rect.bottom - s_rect.top;
-        SetWindowPos(SDL_hwnd, 0, 0, 0, w, h, SWP_NOACTIVATE);
-
-        is->width = w;
-        is->height = h;
-    }
-#endif
-}
-
 /* handle an event sent by the GUI */
 static void event_loop(VideoState *cur_stream)
 {
     SDL_Event event;
-    RECT s_rect;
-    double incr, pos, frac;
-    int dragging = 0;
-    int sx=0, sy=0, sx2=0, sy2=0;
+    ShanaMoveWindow smw = {0};
     for (;;) {
-        int x, y;
         refresh_loop_wait_event(cur_stream, &event);
-        switch (event.type)
-        {
+        switch (event.type) {
             case SDL_SYSWMEVENT:
-            {
-                switch (event.syswm.msg->msg.win.msg)
+/* shana */
+#ifdef _WIN32
+                if (event.syswm.msg->subsystem == SDL_SYSWM_WINDOWS)
                 {
-                    if (exit_on_keydown) {
-                        do_exit(cur_stream);
-                        break;
-                    }
-                    case WM_SYSKEYDOWN:
-                    case WM_KEYDOWN:
-                        switch (event.syswm.msg->msg.win.wParam)
-                        {
-                            case 13: // enter
-                                if (window_hwnd == NULL && SDL_hwnd != NULL)
-                                {
-                                    toggle_full_screen(cur_stream);
-                                    cur_stream->force_refresh = 1;
-                                }
-                                break;
-                            case 32: // space bar
-                                toggle_pause(cur_stream);
-                                break;
-                            case 33: // pgup
-                                if (cur_stream->ic->nb_chapters <= 1) {
-                                    incr = 300.0;
-                                    goto do_seek;
-                                }
-                                seek_chapter(cur_stream, 1);
-                                break;
-                            case 34: // pgdn
-                                if (cur_stream->ic->nb_chapters <= 1) {
-                                    incr = -300.0;
-                                    goto do_seek;
-                                }
-                                seek_chapter(cur_stream, -1);
-                                break;
-                            case 38: // up
-                                if (volume_s < 128) volume_s = FFMIN(volume_s + 8, 128);
-                                break;
-                            case 40: // down
-                                if (volume_s > 0) volume_s = FFMAX(volume_s - 8, 0);
-                                break;
-                            case 65: // a
-                                stream_cycle_channel(cur_stream, AVMEDIA_TYPE_AUDIO);
-                                break;
-                            case 67: // c
-                                stream_cycle_channel(cur_stream, AVMEDIA_TYPE_VIDEO);
-                                stream_cycle_channel(cur_stream, AVMEDIA_TYPE_AUDIO);
-                                stream_cycle_channel(cur_stream, AVMEDIA_TYPE_SUBTITLE);
-                                break;
-                            case 68: // d
-                                if (!cur_stream->paused)
-                                    stream_toggle_pause(cur_stream);
-                                incr = -1.0;
-                                goto do_seek;
-                                break;
-                            case 69: // e
-                            case 37: // left
-                                incr = -5.0;
-                                goto do_seek;
-                                break;
-                            case 70: // f
-                                if (!cur_stream->paused)
-                                    stream_toggle_pause(cur_stream);
-                                incr = 0.05;
-                                goto do_seek;
-                                break;
-                            case 27: // esc
-                            case 81: // q
-                                gui_message(27);
-                                do_exit(cur_stream);
-                                break;
-                            case 39: // right
-                            case 82: // r
-                                incr = 5.0;
-                                goto do_seek;
-                                break;
-                            case 83: // s
-                                step_to_next_frame(cur_stream);
-                                break;
-                            case 84: // t
-                                stream_cycle_channel(cur_stream, AVMEDIA_TYPE_SUBTITLE);
-                                break;
-                            case 86: // v
-                                stream_cycle_channel(cur_stream, AVMEDIA_TYPE_VIDEO);
-                                break;
-                            case 87: // w
-                                #if CONFIG_AVFILTER
-                                    if (cur_stream->show_mode == SHOW_MODE_VIDEO && cur_stream->vfilter_idx < nb_vfilters - 1) {
-                                        if (++cur_stream->vfilter_idx >= nb_vfilters)
-                                            cur_stream->vfilter_idx = 0;
-                                    } else {
-                                        cur_stream->vfilter_idx = 0;
-                                        toggle_audio_display(cur_stream);
-                                    }
-                                #else
-                                    toggle_audio_display(cur_stream);
-                                #endif
-                                break;
-                            case 90: // z
-                                s_window_resize(cur_stream);
-                                break;
-                            case 112: // F1
-                                gui_message(12);
-                                break;
-                            case 219: // [
-                                if (speed_s >= 0.6) speed_s -= 0.1;
-                            break;
-                            case 221: // ]
-                                speed_s += 0.1;
-                                break;
-                            default:
-                                break;                                
-                        }
-                        break;
-                    do_seek:
-                        if (seek_by_bytes) {
-                            pos = -1;
-                            if (pos < 0 && cur_stream->video_stream >= 0)
-                                pos = frame_queue_last_pos(&cur_stream->pictq);
-                            if (pos < 0 && cur_stream->audio_stream >= 0)
-                                pos = frame_queue_last_pos(&cur_stream->sampq);
-                            if (pos < 0)
-                                pos = avio_tell(cur_stream->ic->pb);
-                            if (cur_stream->ic->bit_rate)
-                                incr *= cur_stream->ic->bit_rate / 8.0;
-                            else
-                                incr *= 180000.0;
-                            pos += incr;
-                            stream_seek(cur_stream, pos, incr, 1);
-                        } else {
-                            pos = get_master_clock(cur_stream);
-                            if (isnan(pos))
-                                pos = (double)cur_stream->seek_pos / AV_TIME_BASE;
-                            pos += incr;
-                            if (cur_stream->ic->start_time != AV_NOPTS_VALUE && pos < cur_stream->ic->start_time / (double)AV_TIME_BASE)
-                                pos = cur_stream->ic->start_time / (double)AV_TIME_BASE;
-                            stream_seek(cur_stream, (int64_t)(pos * AV_TIME_BASE), (int64_t)(incr * AV_TIME_BASE), 0);
-                        }
-                        break;
-                    case WM_LBUTTONDOWN:
-                        if (exit_on_mousedown) {
+                    int x, y;
+                    double incr, pos, frac;
+                    RECT rect_s;
+
+                    switch (event.syswm.msg->msg.win.msg)
+                    {
+                        if (exit_on_keydown) {
                             do_exit(cur_stream);
                             break;
                         }
-                        if (window_hwnd != NULL)
-                        {
-                            sx = LOWORD(event.syswm.msg->msg.win.lParam);
-                            sy = HIWORD(event.syswm.msg->msg.win.lParam);
-                        }
-                        else
-                            SDL_GetMouseState(&sx, &sy);
-                        dragging = 1;
-                        goto do_seek2;
-                        break;
-                    case WM_MOUSELEAVE:
-                    case WM_LBUTTONUP:
-                        dragging = 0;
-                        break;
-                    case WM_MOUSEMOVE:
-                        if (cursor_hidden) {
-                            SDL_ShowCursor(1);
-                            cursor_hidden = 0;
-                        }
-                        cursor_last_shown = av_gettime_relative();
-                        do_seek2:
-                            /* 이동 부분 */
-                            if (window_hwnd == NULL && SDL_hwnd != NULL && !is_full_screen)
+                        case WM_SYSKEYDOWN:
+                        case WM_KEYDOWN:
+                            switch (event.syswm.msg->msg.win.wParam)
                             {
-                            #ifdef _WIN32
-                                if (dragging)
+                                case 13: // enter
+                                    if (window_hwnd == NULL && SDL_hwnd != NULL)
+                                    {
+                                        toggle_full_screen(cur_stream);
+                                        cur_stream->force_refresh = 1;
+                                    }
+                                    break;
+                                case 32: // space bar
+                                    toggle_pause(cur_stream);
+                                    break;
+                                case 33: // pgup
+                                        incr = 300.0;
+                                        goto do_seek;
+                                    break;
+                                case 34: // pgdn
+                                        incr = -300.0;
+                                        goto do_seek;
+                                    break;
+                                case 38: // up
+                                    if (volume_s < 128) volume_s = FFMIN(volume_s + 8, 128);
+                                    break;
+                                case 40: // down
+                                    if (volume_s > 0) volume_s = FFMAX(volume_s - 8, 0);
+                                    break;
+                                case 65: // a
+                                    stream_cycle_channel(cur_stream, AVMEDIA_TYPE_AUDIO);
+                                    break;
+                                case 67: // c
+                                    if (!cur_stream->seek_aud_req_s &&
+                                    !cur_stream->seek_display_s &&
+                                    !cur_stream->seek_vid_req_s &&
+                                    !cur_stream->seek_vid_re_req_s &&
+                                    cur_stream->video_st &&
+                                    cur_stream->show_mode == SHOW_MODE_VIDEO &&
+                                    cur_stream->ic->duration != AV_NOPTS_VALUE)
+                                    {
+                                        if (!cur_stream->paused)
+                                            stream_toggle_pause(cur_stream);
+                                        incr = -1.0;
+                                        if (cur_stream->audio_st)
+                                        {
+                                            cur_stream->aud_pts_s = floorf((cur_stream->vid_pts_s - cur_stream->vid_duration_s) * 1000) / 1000;
+                                            cur_stream->seek_aud_req_s = 1;
+                                        }
+                                        cur_stream->seek_display_s = 1;
+                                        cur_stream->seek_vid_req_s = 1;
+                                        cur_stream->seek_seg_req_s = 0;
+                                        cur_stream->seek_forward_s = 0;
+                                        goto do_seek;
+                                    }
+                                    break;
+                                case 68: // d
+                                    if (!cur_stream->paused)
+                                        stream_toggle_pause(cur_stream);
+                                    incr = -1.0;
+                                    goto do_seek;
+                                    break;
+                                case 37: // left
+                                case 69: // e
+                                    incr = -5.0;
+                                    goto do_seek;
+                                    break;
+                                case 70: // f
+                                    if (!cur_stream->paused)
+                                        stream_toggle_pause(cur_stream);
+                                    incr = 0.05;
+                                    goto do_seek;
+                                    break;
+                                case 73: // i
+                                    stream_cycle_channel(cur_stream, AVMEDIA_TYPE_VIDEO);
+                                    break;
+                                case 27: // esc
+                                case 81: // q
+                                    s_gui_message(27);
+                                    do_exit(cur_stream);
+                                    break;
+                                case 39: // right
+                                case 82: // r
+                                    incr = 5.0;
+                                    goto do_seek;
+                                    break;
+                                case 84: // t
+                                    stream_cycle_channel(cur_stream, AVMEDIA_TYPE_SUBTITLE);
+                                    break;
+                                case 83: // s
+                                case 86: // v
+                                    step_to_next_frame(cur_stream);
+                                    break;
+                                case 87: // w
+                                    #if CONFIG_AVFILTER
+                                        if (cur_stream->show_mode == SHOW_MODE_VIDEO && cur_stream->vfilter_idx < nb_vfilters - 1) {
+                                            if (++cur_stream->vfilter_idx >= nb_vfilters)
+                                                cur_stream->vfilter_idx = 0;
+                                        } else {
+                                            cur_stream->vfilter_idx = 0;
+                                            toggle_audio_display(cur_stream);
+                                        }
+                                    #else
+                                        toggle_audio_display(cur_stream);
+                                    #endif
+                                    break;
+                                case 90: // z
+                                    s_window_resize(cur_stream);
+                                    break;
+                                case 112: // F1
+                                    s_gui_message(12);
+                                    break;
+                                case 187: // =
+                                    if (cur_stream->ic->nb_chapters > 1) 
+                                        seek_chapter(cur_stream, 1); // up, next
+                                    break;
+                                case 189: // -
+                                    if (cur_stream->ic->nb_chapters > 1) 
+                                        seek_chapter(cur_stream, -1); // down, previous
+                                    break;
+                                case 191: // /
+                                    stream_cycle_channel(cur_stream, AVMEDIA_TYPE_VIDEO);
+                                    stream_cycle_channel(cur_stream, AVMEDIA_TYPE_AUDIO);
+                                    stream_cycle_channel(cur_stream, AVMEDIA_TYPE_SUBTITLE);
+                                    break;
+                                case 219: // [
+                                    if (speed_s >= 0.6) speed_s -= 0.1;
+                                break;
+                                case 221: // ]
+                                    speed_s += 0.1;
+                                    break;
+                                default:
+                                    break;                                
+                            }
+                            break;
+                        do_seek:
+                            if (seek_by_bytes) {
+                                pos = -1;
+                                if (pos < 0 && cur_stream->video_stream >= 0)
+                                    pos = frame_queue_last_pos(&cur_stream->pictq);
+                                if (pos < 0 && cur_stream->audio_stream >= 0)
+                                    pos = frame_queue_last_pos(&cur_stream->sampq);
+                                if (pos < 0)
+                                    pos = avio_tell(cur_stream->ic->pb);
+                                if (cur_stream->ic->bit_rate)
+                                    incr *= cur_stream->ic->bit_rate / 8.0;
+                                else
+                                    incr *= 180000.0;
+                                pos += incr;
+                                stream_seek(cur_stream, pos, incr, 1);
+                            } else {
+                                pos = get_master_clock(cur_stream);
+                                if (isnan(pos))
+                                    pos = (double)cur_stream->seek_pos / AV_TIME_BASE;
+                                pos += incr;
+                                if (cur_stream->ic->start_time != AV_NOPTS_VALUE && pos < cur_stream->ic->start_time / (double)AV_TIME_BASE)
+                                    pos = cur_stream->ic->start_time / (double)AV_TIME_BASE;
+                                stream_seek(cur_stream, (int64_t)(pos * AV_TIME_BASE), (int64_t)(incr * AV_TIME_BASE), 0);
+                            }
+                            break;
+                        case WM_LBUTTONDOWN:
+                            if (exit_on_mousedown) {
+                                do_exit(cur_stream);
+                                break;
+                            }
+                            if (window_hwnd != NULL)
+                            {
+                                smw.sx = LOWORD(event.syswm.msg->msg.win.lParam);
+                                smw.sy = HIWORD(event.syswm.msg->msg.win.lParam);
+                            }
+                            else
+                                SDL_GetMouseState(&smw.sx, &smw.sy);
+                            smw.dragging = 1;
+                            goto do_seek2;
+                            break;
+                        case WM_MOUSELEAVE:
+                        case WM_LBUTTONUP:
+                            smw.dragging = 0;
+                            break;
+                        case WM_MOUSEMOVE:
+                            if (cursor_hidden) {
+                                SDL_ShowCursor(1);
+                                cursor_hidden = 0;
+                            }
+                            cursor_last_shown = av_gettime_relative();
+                            do_seek2:
+                                /* 이동 부분 */
+                                if (window_hwnd == NULL && SDL_hwnd != NULL && !is_full_screen)
+                                {
+                                    if (smw.dragging)
+                                    {
+                                        if (window_hwnd != NULL)
+                                        {
+                                            smw.sx2 = LOWORD(event.syswm.msg->msg.win.lParam);
+                                            smw.sy2 = HIWORD(event.syswm.msg->msg.win.lParam);
+                                        }
+                                        else
+                                            SDL_GetMouseState(&smw.sx2, &smw.sy2);
+                                        GetWindowRect(SDL_hwnd, &rect_s);
+                                        MoveWindow(SDL_hwnd, rect_s.left + smw.sx2 - smw.sx, rect_s.top + smw.sy2 - smw.sy,
+                                                             rect_s.right - rect_s.left, rect_s.bottom - rect_s.top, TRUE);
+                                    }
+                                }
+                                else if (smw.dragging)
                                 {
                                     if (window_hwnd != NULL)
                                     {
-                                        sx2 = LOWORD(event.syswm.msg->msg.win.lParam);
-                                        sy2 = HIWORD(event.syswm.msg->msg.win.lParam);
+                                        x = LOWORD(event.syswm.msg->msg.win.lParam);
+                                        y = HIWORD(event.syswm.msg->msg.win.lParam);
                                     }
                                     else
-                                        SDL_GetMouseState(&sx2, &sy2);
-                                    GetWindowRect(SDL_hwnd, &s_rect);
-                                    MoveWindow(SDL_hwnd, s_rect.left + sx2 - sx, s_rect.top + sy2 - sy,
-                                                         s_rect.right - s_rect.left, s_rect.bottom - s_rect.top, TRUE);
+                                        SDL_GetMouseState(&x, &y);
+                                    if (seek_by_bytes || cur_stream->ic->duration <= 0) {
+                                        uint64_t size =  avio_size(cur_stream->ic->pb);
+                                        cur_stream->seek_interrupt_s = 1;
+                                        stream_seek(cur_stream, size*x/cur_stream->width, 0, 1);
+                                    } else {
+                                        int64_t ts;
+                                        int ns, hh, mm, ss;
+                                        int tns, thh, tmm, tss;
+                                        tns  = cur_stream->ic->duration / 1000000LL;
+                                        thh  = tns / 3600;
+                                        tmm  = (tns % 3600) / 60;
+                                        tss  = (tns % 60);
+                                        frac = (double)x / cur_stream->width;
+                                        ns   = frac * tns;
+                                        hh   = ns / 3600;
+                                        mm   = (ns % 3600) / 60;
+                                        ss   = (ns % 60);
+                                        av_log(NULL, AV_LOG_INFO,
+                                               "Seek to %2.0f%% (%2d:%02d:%02d) of total duration (%2d:%02d:%02d)       \n", frac*100,
+                                                hh, mm, ss, thh, tmm, tss);
+                                        ts = frac * cur_stream->ic->duration;
+                                        if (cur_stream->ic->start_time != AV_NOPTS_VALUE)
+                                            ts += cur_stream->ic->start_time;
+                                        cur_stream->seek_interrupt_s = 1;
+                                        stream_seek(cur_stream, ts, 0, 0);
+                                    }
                                 }
-                            #endif
-                            }
-                            else if (dragging)
-                            {
-                                if (window_hwnd != NULL)
-                                {
-                                    x = LOWORD(event.syswm.msg->msg.win.lParam);
-                                    y = HIWORD(event.syswm.msg->msg.win.lParam);
-                                }
-                                else
-                                    SDL_GetMouseState(&x, &y);
-                                if (seek_by_bytes || cur_stream->ic->duration <= 0) {
-                                    uint64_t size =  avio_size(cur_stream->ic->pb);
-                                    stream_seek(cur_stream, size*x/cur_stream->width, 0, 1);
-                                } else {
-                                    int64_t ts;
-                                    int ns, hh, mm, ss;
-                                    int tns, thh, tmm, tss;
-                                    tns  = cur_stream->ic->duration / 1000000LL;
-                                    thh  = tns / 3600;
-                                    tmm  = (tns % 3600) / 60;
-                                    tss  = (tns % 60);
-                                    frac = (double)x / cur_stream->width;
-                                    ns   = frac * tns;
-                                    hh   = ns / 3600;
-                                    mm   = (ns % 3600) / 60;
-                                    ss   = (ns % 60);
-                                    av_log(NULL, AV_LOG_INFO,
-                                           "Seek to %2.0f%% (%2d:%02d:%02d) of total duration (%2d:%02d:%02d)       \n", frac*100,
-                                            hh, mm, ss, thh, tmm, tss);
-                                    ts = frac * cur_stream->ic->duration;
-                                    if (cur_stream->ic->start_time != AV_NOPTS_VALUE)
-                                        ts += cur_stream->ic->start_time;
-                                    stream_seek(cur_stream, ts, 0, 0);
-                                }
-                            }
-                            break;
+                                break;
+                    }
                 }
-            }
+#endif
+/* shana */
             break;
         case SDL_WINDOWEVENT:
             switch (event.window.event) {
@@ -3900,8 +4369,8 @@ static const OptionDef options[] = {
     { "window_title", OPT_STRING | HAS_ARG, { &window_title }, "set window title", "window title" },
     { "left", OPT_INT | HAS_ARG | OPT_EXPERT, { &screen_left }, "set the x position for the left of the window", "x pos" },
     { "top", OPT_INT | HAS_ARG | OPT_EXPERT, { &screen_top }, "set the y position for the top of the window", "y pos" },
+/* shana */
 #ifdef _WIN32
-/* hwnd */
     { "window_hwnd", HAS_ARG | OPT_STRING | OPT_EXPERT, { &window_hwnd }, "window hWnd", "" },
     { "window_text_hwnd", HAS_ARG | OPT_STRING | OPT_EXPERT, { &window_text_hwnd }, "window text hWnd", "" },
     { "control_hwnd", HAS_ARG | OPT_STRING | OPT_EXPERT, { &control_hwnd }, "control hWnd", "" },
@@ -3909,10 +4378,10 @@ static const OptionDef options[] = {
     { "duration_hwnd", HAS_ARG | OPT_STRING | OPT_EXPERT, { &duration_hwnd }, "duration hWnd", "" },
     { "gui_message_hwnd", HAS_ARG | OPT_STRING | OPT_EXPERT, { &gui_message_hwnd }, "gui message hWnd", "" },
 #endif
+    { "shana_as", OPT_BOOL, { &shana_as_s }, "enable accurate start time seeking", "" },
+    { "shana_nokeepaspect", OPT_BOOL, { &nokeepaspect_s }, "not maintain aspect ratio", "" },
+    { "shana_volume", OPT_INT | HAS_ARG, { &volume_s }, "set audio volume (0~128)", "" },
 /* shana */
-    { "nokeepaspect", OPT_BOOL, { &nokeepaspect }, "do not keep aspect ratio", "" },
-    { "sdl_vol", OPT_INT | HAS_ARG, { &volume_s }, "set audio volume (0~128)", "" },
-    { "hide_msg", OPT_BOOL, { &hide_msg }, "Hide Message", "" },        
 #if CONFIG_AVFILTER
     { "vf", OPT_EXPERT | HAS_ARG, { .func_arg = opt_add_vfilter }, "set video filters", "filter_graph" },
     { "af", OPT_STRING | HAS_ARG, { &afilters }, "set audio filters", "filter_graph" },
@@ -3961,7 +4430,6 @@ int main(int argc, char **argv)
     int flags;
     VideoState *is;
 
-    av_log(NULL, AV_LOG_INFO, "-------------------\nShanaFFplay\nhttps://shana.pe.kr\n-------------------\n");
     init_dynload();
 
     av_log_set_flags(AV_LOG_SKIP_REPEATED);
@@ -4011,26 +4479,7 @@ int main(int argc, char **argv)
     flush_pkt.data = (uint8_t *)&flush_pkt;
 
     if (!display_disable) {
-        if (window_hwnd != NULL) 
-        {
-            int flags = SDL_WINDOW_BORDERLESS | SDL_WINDOW_HIDDEN | SDL_WINDOW_ALLOW_HIGHDPI;
-            window = SDL_CreateWindow(window_title, 0, 0, 0, 0, flags);
-        }
-        else
-        {
-            int flags = SDL_WINDOW_HIDDEN;
-            if (alwaysontop)
-#if SDL_VERSION_ATLEAST(2,0,5)
-                flags |= SDL_WINDOW_ALWAYS_ON_TOP;
-#else
-                av_log(NULL, AV_LOG_WARNING, "Your SDL version doesn't support SDL_WINDOW_ALWAYS_ON_TOP. Feature will be inactive.\n");
-#endif
-            if (borderless)
-                flags |= SDL_WINDOW_BORDERLESS;
-            else
-                flags |= SDL_WINDOW_RESIZABLE;
-            window = SDL_CreateWindow(program_name, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, default_width, default_height, flags);
-        }
+        s_main();
         SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
         if (window) {
             renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
@@ -4055,6 +4504,7 @@ int main(int argc, char **argv)
         do_exit(NULL);
     }
 
+    SDL_AddEventWatch(s_wm_copydata_event_watcher, is);
     event_loop(is);
 
     /* never returns */

@@ -120,15 +120,11 @@ static int cbs_av1_write_uvlc(CodedBitstreamContext *ctx, PutBitContext *pbc,
     if (ctx->trace_enable)
         position = put_bits_count(pbc);
 
-    if (value == 0) {
-        zeroes = 0;
-        put_bits(pbc, 1, 1);
-    } else {
-        zeroes = av_log2(value + 1);
-        v = value - (1 << zeroes) + 1;
-        put_bits(pbc, zeroes + 1, 1);
-        put_bits(pbc, zeroes, v);
-    }
+    zeroes = av_log2(value + 1);
+    v = value - (1U << zeroes) + 1;
+    put_bits(pbc, zeroes, 0);
+    put_bits(pbc, 1, 1);
+    put_bits(pbc, zeroes, v);
 
     if (ctx->trace_enable) {
         char bits[65];
@@ -169,6 +165,9 @@ static int cbs_av1_read_leb128(CodedBitstreamContext *ctx, GetBitContext *gbc,
         if (!(byte & 0x80))
             break;
     }
+
+    if (value > UINT32_MAX)
+        return AVERROR_INVALIDDATA;
 
     if (ctx->trace_enable)
         ff_cbs_trace_syntax_element(ctx, position, name, NULL, "", value);
@@ -547,12 +546,12 @@ static size_t cbs_av1_get_payload_bytes_left(GetBitContext *gbc)
 #define SUBSCRIPTS(subs, ...) (subs > 0 ? ((int[subs + 1]){ subs, __VA_ARGS__ }) : NULL)
 
 #define fb(width, name) \
-        xf(width, name, current->name, 0, MAX_UINT_BITS(width), 0)
+        xf(width, name, current->name, 0, MAX_UINT_BITS(width), 0, )
 #define fc(width, name, range_min, range_max) \
-        xf(width, name, current->name, range_min, range_max, 0)
+        xf(width, name, current->name, range_min, range_max, 0, )
 #define flag(name) fb(1, name)
 #define su(width, name) \
-        xsu(width, name, current->name, 0)
+        xsu(width, name, current->name, 0, )
 
 #define fbs(width, name, subs, ...) \
         xf(width, name, current->name, 0, MAX_UINT_BITS(width), subs, __VA_ARGS__)
@@ -565,7 +564,7 @@ static size_t cbs_av1_get_payload_bytes_left(GetBitContext *gbc)
 
 #define fixed(width, name, value) do { \
         av_unused uint32_t fixed_value = value; \
-        xf(width, name, fixed_value, value, value, 0); \
+        xf(width, name, fixed_value, value, value, 0, ); \
     } while (0)
 
 
@@ -620,9 +619,9 @@ static size_t cbs_av1_get_payload_bytes_left(GetBitContext *gbc)
 #define delta_q(name) do { \
         uint8_t delta_coded; \
         int8_t delta_q; \
-        xf(1, name.delta_coded, delta_coded, 0, 1, 0); \
+        xf(1, name.delta_coded, delta_coded, 0, 1, 0, ); \
         if (delta_coded) \
-            xsu(1 + 6, name.delta_q, delta_q, 0); \
+            xsu(1 + 6, name.delta_q, delta_q, 0, ); \
         else \
             delta_q = 0; \
         current->name = delta_q; \
@@ -697,9 +696,9 @@ static size_t cbs_av1_get_payload_bytes_left(GetBitContext *gbc)
     } while (0)
 
 #define delta_q(name) do { \
-        xf(1, name.delta_coded, current->name != 0, 0, 1, 0); \
+        xf(1, name.delta_coded, current->name != 0, 0, 1, 0, ); \
         if (current->name) \
-            xsu(1 + 6, name.delta_q, current->name, 0); \
+            xsu(1 + 6, name.delta_q, current->name, 0, ); \
     } while (0)
 
 #define leb128(name) do { \
@@ -708,10 +707,11 @@ static size_t cbs_av1_get_payload_bytes_left(GetBitContext *gbc)
 
 #define infer(name, value) do { \
         if (current->name != (value)) { \
-            av_log(ctx->log_ctx, AV_LOG_WARNING, "Warning: " \
+            av_log(ctx->log_ctx, AV_LOG_ERROR, \
                    "%s does not match inferred value: " \
                    "%"PRId64", but should be %"PRId64".\n", \
                    #name, (int64_t)current->name, (int64_t)(value)); \
+            return AVERROR_INVALIDDATA; \
         } \
     } while (0)
 
@@ -794,7 +794,7 @@ static int cbs_av1_split_fragment(CodedBitstreamContext *ctx,
             goto fail;
         }
 
-        err = ff_cbs_insert_unit_data(ctx, frag, -1, header.obu_type,
+        err = ff_cbs_insert_unit_data(frag, -1, header.obu_type,
                                       data, obu_length, frag->data_ref);
         if (err < 0)
             goto fail;
@@ -887,7 +887,7 @@ static int cbs_av1_read_unit(CodedBitstreamContext *ctx,
     GetBitContext gbc;
     int err, start_pos, end_pos;
 
-    err = ff_cbs_alloc_unit_content(ctx, unit, sizeof(*obu),
+    err = ff_cbs_alloc_unit_content(unit, sizeof(*obu),
                                     &cbs_av1_free_obu);
     if (err < 0)
         return err;
@@ -1039,6 +1039,7 @@ static int cbs_av1_read_unit(CodedBitstreamContext *ctx,
 
     if (obu->obu_size > 0 &&
         obu->header.obu_type != AV1_OBU_TILE_GROUP &&
+        obu->header.obu_type != AV1_OBU_TILE_LIST &&
         obu->header.obu_type != AV1_OBU_FRAME) {
         int nb_bits = obu->obu_size * 8 + start_pos - end_pos;
 

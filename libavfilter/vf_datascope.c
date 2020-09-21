@@ -35,6 +35,7 @@ typedef struct DatascopeContext {
     int ow, oh;
     int x, y;
     int mode;
+    int dformat;
     int axis;
     float opacity;
 
@@ -67,6 +68,9 @@ static const AVOption datascope_options[] = {
     {   "color2", NULL, 0, AV_OPT_TYPE_CONST, {.i64=2}, 0, 0, FLAGS, "mode" },
     { "axis",    "draw column/row numbers", OFFSET(axis), AV_OPT_TYPE_BOOL, {.i64=0}, 0, 1, FLAGS },
     { "opacity", "set background opacity", OFFSET(opacity), AV_OPT_TYPE_FLOAT, {.dbl=0.75}, 0, 1, FLAGS },
+    { "format", "set display number format", OFFSET(dformat), AV_OPT_TYPE_INT, {.i64=0}, 0, 1, FLAGS, "format" },
+    {   "hex",  NULL, 0, AV_OPT_TYPE_CONST, {.i64=0}, 0, 0, FLAGS, "format" },
+    {   "dec",  NULL, 0, AV_OPT_TYPE_CONST, {.i64=1}, 0, 0, FLAGS, "format" },
     { NULL }
 };
 
@@ -180,9 +184,10 @@ static int filter_color2(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs
     const int yoff = td->yoff;
     const int P = FFMAX(s->nb_planes, s->nb_comps);
     const int C = s->chars;
+    const int D = ((s->chars - s->dformat) >> 2) + s->dformat * 2;
     const int W = (outlink->w - xoff) / (C * 10);
     const int H = (outlink->h - yoff) / (P * 12);
-    const char *format[2] = {"%02X\n", "%04X\n"};
+    const char *format[4] = {"%02X\n", "%04X\n", "%03d\n", "%05d\n"};
     const int slice_start = (W * jobnr) / nb_jobs;
     const int slice_end = (W * (jobnr+1)) / nb_jobs;
     int x, y, p;
@@ -201,7 +206,7 @@ static int filter_color2(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs
             for (p = 0; p < P; p++) {
                 char text[256];
 
-                snprintf(text, sizeof(text), format[C>>2], value[p]);
+                snprintf(text, sizeof(text), format[D], value[p]);
                 draw_text(&s->draw, out, &reverse, xoff + x * C * 10 + 2, yoff + y * P * 12 + p * 10 + 2, text, 0);
             }
         }
@@ -222,9 +227,10 @@ static int filter_color(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
     const int yoff = td->yoff;
     const int P = FFMAX(s->nb_planes, s->nb_comps);
     const int C = s->chars;
+    const int D = ((s->chars - s->dformat) >> 2) + s->dformat * 2;
     const int W = (outlink->w - xoff) / (C * 10);
     const int H = (outlink->h - yoff) / (P * 12);
-    const char *format[2] = {"%02X\n", "%04X\n"};
+    const char *format[4] = {"%02X\n", "%04X\n", "%03d\n", "%05d\n"};
     const int slice_start = (W * jobnr) / nb_jobs;
     const int slice_end = (W * (jobnr+1)) / nb_jobs;
     int x, y, p;
@@ -239,7 +245,7 @@ static int filter_color(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
             for (p = 0; p < P; p++) {
                 char text[256];
 
-                snprintf(text, sizeof(text), format[C>>2], value[p]);
+                snprintf(text, sizeof(text), format[D], value[p]);
                 draw_text(&s->draw, out, &color, xoff + x * C * 10 + 2, yoff + y * P * 12 + p * 10 + 2, text, 0);
             }
         }
@@ -260,9 +266,10 @@ static int filter_mono(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
     const int yoff = td->yoff;
     const int P = FFMAX(s->nb_planes, s->nb_comps);
     const int C = s->chars;
+    const int D = ((s->chars - s->dformat) >> 2) + s->dformat * 2;
     const int W = (outlink->w - xoff) / (C * 10);
     const int H = (outlink->h - yoff) / (P * 12);
-    const char *format[2] = {"%02X\n", "%04X\n"};
+    const char *format[4] = {"%02X\n", "%04X\n", "%03d\n", "%05d\n"};
     const int slice_start = (W * jobnr) / nb_jobs;
     const int slice_end = (W * (jobnr+1)) / nb_jobs;
     int x, y, p;
@@ -276,7 +283,7 @@ static int filter_mono(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
             for (p = 0; p < P; p++) {
                 char text[256];
 
-                snprintf(text, sizeof(text), format[C>>2], value[p]);
+                snprintf(text, sizeof(text), format[D], value[p]);
                 draw_text(&s->draw, out, &s->white, xoff + x * C * 10 + 2, yoff + y * P * 12 + p * 10 + 2, text, 0);
             }
         }
@@ -360,7 +367,7 @@ static int config_input(AVFilterLink *inlink)
     ff_draw_color(&s->draw, &s->black,  (uint8_t[]){ 0, 0, 0, alpha} );
     ff_draw_color(&s->draw, &s->yellow, (uint8_t[]){ 255, 255, 0, 255} );
     ff_draw_color(&s->draw, &s->gray,   (uint8_t[]){ 77, 77, 77, 255} );
-    s->chars = (s->draw.desc->comp[0].depth + 7) / 8 * 2;
+    s->chars = (s->draw.desc->comp[0].depth + 7) / 8 * 2 + s->dformat;
     s->nb_comps = s->draw.desc->nb_components;
 
     switch (s->mode) {
@@ -445,6 +452,8 @@ typedef struct PixscopeContext {
     FFDrawColor   red;
     FFDrawColor  *colors[4];
 
+    uint16_t values[4][80][80];
+
     void (*pick_color)(FFDrawContext *draw, FFDrawColor *color, AVFrame *in, int x, int y, int *value);
 } PixscopeContext;
 
@@ -519,6 +528,8 @@ static int pixscope_config_input(AVFilterLink *inlink)
     return 0;
 }
 
+#define SQR(x) ((x)*(x))
+
 static int pixscope_filter_frame(AVFilterLink *inlink, AVFrame *in)
 {
     AVFilterContext *ctx  = inlink->dst;
@@ -527,7 +538,7 @@ static int pixscope_filter_frame(AVFilterLink *inlink, AVFrame *in)
     AVFrame *out = ff_get_video_buffer(outlink, in->width, in->height);
     int max[4] = { 0 }, min[4] = { INT_MAX, INT_MAX, INT_MAX, INT_MAX };
     float average[4] = { 0 };
-    double rms[4] = { 0 };
+    double std[4] = { 0 }, rms[4] = { 0 };
     const char rgba[4] = { 'R', 'G', 'B', 'A' };
     const char yuva[4] = { 'Y', 'U', 'V', 'A' };
     int x, y, X, Y, i, w, h;
@@ -584,6 +595,7 @@ static int pixscope_filter_frame(AVFilterLink *inlink, AVFrame *in)
             ff_fill_rectangle(&s->draw, &color, out->data, out->linesize,
                               x * w + (s->ww - 4 - (s->w * w)) / 2 + X, y * h + 2 + Y, w, h);
             for (i = 0; i < 4; i++) {
+                s->values[i][x][y] = value[i];
                 rms[i]     += (double)value[i] * (double)value[i];
                 average[i] += value[i];
                 min[i]      = FFMIN(min[i], value[i]);
@@ -630,13 +642,33 @@ static int pixscope_filter_frame(AVFilterLink *inlink, AVFrame *in)
         average[i] /= s->w * s->h;
     }
 
+    for (y = 0; y < s->h; y++) {
+        for (x = 0; x < s->w; x++) {
+            for (i = 0; i < 4; i++)
+                std[i] += SQR(s->values[i][x][y] - average[i]);
+        }
+    }
+
+    for (i = 0; i < 4; i++) {
+        std[i] /= s->w * s->h;
+        std[i]  = sqrt(std[i]);
+    }
+
     snprintf(text, sizeof(text), "CH   AVG    MIN    MAX    RMS\n");
-    draw_text(&s->draw, out, &s->white,        X + 28, Y + s->ww + 20,           text, 0);
+    draw_text(&s->draw, out, &s->white,        X + 28, Y + s->ww +  5,           text, 0);
     for (i = 0; i < s->nb_comps; i++) {
         int c = s->rgba_map[i];
 
         snprintf(text, sizeof(text), "%c  %07.1f %05d %05d %07.1f\n", s->is_rgb ? rgba[i] : yuva[i], average[c], min[c], max[c], rms[c]);
-        draw_text(&s->draw, out, s->colors[i], X + 28, Y + s->ww + 20 * (i + 2), text, 0);
+        draw_text(&s->draw, out, s->colors[i], X + 28, Y + s->ww + 15 * (i + 1), text, 0);
+    }
+    snprintf(text, sizeof(text), "CH   STD\n");
+    draw_text(&s->draw, out, &s->white,        X + 28, Y + s->ww + 15 * (0 + 5), text, 0);
+    for (i = 0; i < s->nb_comps; i++) {
+        int c = s->rgba_map[i];
+
+        snprintf(text, sizeof(text), "%c  %07.2f\n", s->is_rgb ? rgba[i] : yuva[i], std[c]);
+        draw_text(&s->draw, out, s->colors[i], X + 28, Y + s->ww + 15 * (i + 6), text, 0);
     }
 
     av_frame_free(&in);

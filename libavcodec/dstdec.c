@@ -56,7 +56,6 @@ static const int8_t probs_code_pred_coeff[3][3] = {
 typedef struct ArithCoder {
     unsigned int a;
     unsigned int c;
-    int overread;
 } ArithCoder;
 
 typedef struct Table {
@@ -83,6 +82,16 @@ static av_cold int decode_init(AVCodecContext *avctx)
 
     if (avctx->channels > DST_MAX_CHANNELS) {
         avpriv_request_sample(avctx, "Channel count %d", avctx->channels);
+        return AVERROR_PATCHWELCOME;
+    }
+
+    // the sample rate is only allowed to be 64,128,256 * 44100 by ISO/IEC 14496-3:2005(E)
+    // We are a bit more tolerant here, but this check is needed to bound the size and duration
+    if (avctx->sample_rate > 512 * 44100)
+        return AVERROR_INVALIDDATA;
+
+
+    if (DST_SAMPLES_PER_FRAME(avctx->sample_rate) & 7) {
         return AVERROR_PATCHWELCOME;
     }
 
@@ -121,7 +130,7 @@ static int read_map(GetBitContext *gb, Table *t, unsigned int map[DST_MAX_CHANNE
 
 static av_always_inline int get_sr_golomb_dst(GetBitContext *gb, unsigned int k)
 {
-    int v = get_ur_golomb(gb, k, get_bits_left(gb), 0);
+    int v = get_ur_golomb_jpegls(gb, k, get_bits_left(gb), 0);
     if (v && get_bits1(gb))
         v = -v;
     return v;
@@ -156,7 +165,7 @@ static int read_table(GetBitContext *gb, Table *t, const int8_t code_pred_coeff[
             for (j = method + 1; j < t->length[i]; j++) {
                 int c, x = 0;
                 for (k = 0; k < method + 1; k++)
-                    x += code_pred_coeff[method][k] * t->coeff[i][j - k - 1];
+                    x += code_pred_coeff[method][k] * (unsigned)t->coeff[i][j - k - 1];
                 c = get_sr_golomb_dst(gb, lsb_size);
                 if (x >= 0)
                     c -= (x + 4) / 8;
@@ -177,7 +186,6 @@ static void ac_init(ArithCoder *ac, GetBitContext *gb)
 {
     ac->a = 4095;
     ac->c = get_bits(gb, 12);
-    ac->overread = 0;
 }
 
 static av_always_inline void ac_get(ArithCoder *ac, GetBitContext *gb, int p, int *e)
@@ -197,8 +205,6 @@ static av_always_inline void ac_get(ArithCoder *ac, GetBitContext *gb, int p, in
     if (ac->a < 2048) {
         int n = 11 - av_log2(ac->a);
         ac->a <<= n;
-        if (get_bits_left(gb) < n)
-            ac->overread ++;
         ac->c = (ac->c << n) | get_bits(gb, n);
     }
 }
@@ -262,7 +268,7 @@ static int decode_frame(AVCodecContext *avctx, void *data,
         skip_bits1(gb);
         if (get_bits(gb, 6))
             return AVERROR_INVALIDDATA;
-        memcpy(frame->data[0], avpkt->data + 1, FFMIN(avpkt->size - 1, frame->nb_samples * avctx->channels));
+        memcpy(frame->data[0], avpkt->data + 1, FFMIN(avpkt->size - 1, frame->nb_samples * channels));
         goto dsd;
     }
 
@@ -287,7 +293,7 @@ static int decode_frame(AVCodecContext *avctx, void *data,
 
     same_map = get_bits1(gb);
 
-    if ((ret = read_map(gb, &s->fsets, map_ch_to_felem, avctx->channels)) < 0)
+    if ((ret = read_map(gb, &s->fsets, map_ch_to_felem, channels)) < 0)
         return ret;
 
     if (same_map) {
@@ -295,13 +301,13 @@ static int decode_frame(AVCodecContext *avctx, void *data,
         memcpy(map_ch_to_pelem, map_ch_to_felem, sizeof(map_ch_to_felem));
     } else {
         avpriv_request_sample(avctx, "Not Same Mapping");
-        if ((ret = read_map(gb, &s->probs, map_ch_to_pelem, avctx->channels)) < 0)
+        if ((ret = read_map(gb, &s->probs, map_ch_to_pelem, channels)) < 0)
             return ret;
     }
 
     /* Half Probability (10.10) */
 
-    for (ch = 0; ch < avctx->channels; ch++)
+    for (ch = 0; ch < channels; ch++)
         half_prob[ch] = get_bits1(gb);
 
     /* Filter Coef Sets (10.12) */
@@ -325,7 +331,7 @@ static int decode_frame(AVCodecContext *avctx, void *data,
     build_filter(s->filter, &s->fsets);
 
     memset(s->status, 0xAA, sizeof(s->status));
-    memset(dsd, 0, frame->nb_samples * 4 * avctx->channels);
+    memset(dsd, 0, frame->nb_samples * 4 * channels);
 
     ac_get(ac, gb, prob_dst_x_bit(s->fsets.coeff[0][0]), &dst_x_bit);
 
@@ -351,9 +357,6 @@ static int decode_frame(AVCodecContext *avctx, void *data,
                 prob = 128;
             }
 
-            if (ac->overread > 16)
-                return AVERROR_INVALIDDATA;
-
             ac_get(ac, gb, prob, &residual);
             v = ((predict >> 15) ^ residual) & 1;
             dsd[((i >> 3) * channels + ch) << 2] |= v << (7 - (i & 0x7 ));
@@ -364,10 +367,10 @@ static int decode_frame(AVCodecContext *avctx, void *data,
     }
 
 dsd:
-    for (i = 0; i < avctx->channels; i++) {
+    for (i = 0; i < channels; i++) {
         ff_dsd2pcm_translate(&s->dsdctx[i], frame->nb_samples, 0,
                              frame->data[0] + i * 4,
-                             avctx->channels * 4, pcm + i, avctx->channels);
+                             channels * 4, pcm + i, channels);
     }
 
     *got_frame_ptr = 1;

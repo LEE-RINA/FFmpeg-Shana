@@ -56,7 +56,6 @@ typedef struct TeeContext {
     TeeSlave *slaves;
     int use_fifo;
     AVDictionary *fifo_options;
-    char *fifo_options_str;
 } TeeContext;
 
 static const char *const slave_delim     = "|";
@@ -67,8 +66,8 @@ static const char *const slave_select_sep = ",";
 static const AVOption options[] = {
         {"use_fifo", "Use fifo pseudo-muxer to separate actual muxers from encoder",
          OFFSET(use_fifo), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, AV_OPT_FLAG_ENCODING_PARAM},
-        {"fifo_options", "fifo pseudo-muxer options", OFFSET(fifo_options_str),
-         AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, AV_OPT_FLAG_ENCODING_PARAM},
+        {"fifo_options", "fifo pseudo-muxer options", OFFSET(fifo_options),
+         AV_OPT_TYPE_DICT, {.str = NULL}, 0, 0, AV_OPT_FLAG_ENCODING_PARAM},
         {NULL}
 };
 
@@ -296,7 +295,7 @@ static int open_slave(AVFormatContext *avf, char *slave, TeeSlave *tee_slave)
             goto end;
     }
 
-    ret = ff_format_output_open(avf2, filename, NULL);
+    ret = ff_format_output_open(avf2, filename, &options);
     if (ret < 0) {
         av_log(avf, AV_LOG_ERROR, "Slave '%s': error opening: %s\n", slave,
                av_err2str(ret));
@@ -475,12 +474,6 @@ static int tee_write_header(AVFormatContext *avf)
             filename++;
     }
 
-    if (tee->fifo_options_str) {
-        ret = av_dict_parse_string(&tee->fifo_options, tee->fifo_options_str, "=", ":", 0);
-        if (ret < 0)
-            goto fail;
-    }
-
     if (!(tee->slaves = av_mallocz_array(nb_slaves, sizeof(*tee->slaves)))) {
         ret = AVERROR(ENOMEM);
         goto fail;
@@ -571,7 +564,6 @@ static int tee_write_packet(AVFormatContext *avf, AVPacket *pkt)
         if (s2 < 0)
             continue;
 
-        memset(&pkt2, 0, sizeof(AVPacket));
         if ((ret = av_packet_ref(&pkt2, pkt)) < 0)
             if (!ret_all) {
                 ret_all = ret;

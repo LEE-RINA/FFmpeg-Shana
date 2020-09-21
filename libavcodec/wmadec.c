@@ -585,11 +585,14 @@ static int wma_decode_block(WMACodecContext *s)
                     decode_exp_lsp(s, ch);
                 }
                 s->exponents_bsize[ch] = bsize;
+                s->exponents_initialized[ch] = 1;
             }
         }
-        s->exponents_initialized = 1;
-    }else if (!s->exponents_initialized) {
-        return AVERROR_INVALIDDATA;
+    }
+
+    for (ch = 0; ch < s->avctx->channels; ch++) {
+        if (s->channel_coded[ch] && !s->exponents_initialized[ch])
+            return AVERROR_INVALIDDATA;
     }
 
     /* parse spectral coefficients : just RLE encoding */
@@ -892,11 +895,11 @@ static int wma_decode_superframe(AVCodecContext *avctx, void *data,
             q   = s->last_superframe + s->last_superframe_len;
             len = bit_offset;
             while (len > 7) {
-                *q++ = (get_bits) (&s->gb, 8);
+                *q++ = get_bits(&s->gb, 8);
                 len -= 8;
             }
             if (len > 0)
-                *q++ = (get_bits) (&s->gb, len) << (8 - len);
+                *q++ = get_bits(&s->gb, len) << (8 - len);
             memset(q, 0, AV_INPUT_BUFFER_PADDING_SIZE);
 
             /* XXX: bit_offset bits into last frame */

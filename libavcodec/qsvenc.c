@@ -36,6 +36,7 @@
 
 #include "avcodec.h"
 #include "internal.h"
+#include "packet_internal.h"
 #include "qsv.h"
 #include "qsv_internal.h"
 #include "qsvenc.h"
@@ -66,6 +67,7 @@ static const struct {
     { MFX_PROFILE_HEVC_MAIN,                    "main"                  },
     { MFX_PROFILE_HEVC_MAIN10,                  "main10"                },
     { MFX_PROFILE_HEVC_MAINSP,                  "mainsp"                },
+    { MFX_PROFILE_HEVC_REXT,                    "rext"                  },
 #endif
 };
 
@@ -139,6 +141,9 @@ static void dump_video_param(AVCodecContext *avctx, QSVEncContext *q,
 #if QSV_HAVE_CO3
     mfxExtCodingOption3 *co3 = (mfxExtCodingOption3*)coding_opts[2];
 #endif
+#if QSV_HAVE_EXT_HEVC_TILES
+    mfxExtHEVCTiles *exthevctiles = (mfxExtHEVCTiles *)coding_opts[3 + QSV_HAVE_CO_VPS];
+#endif
 
     av_log(avctx, AV_LOG_VERBOSE, "profile: %s; level: %"PRIu16"\n",
            print_profile(info->CodecProfile), info->CodecLevel);
@@ -204,14 +209,20 @@ static void dump_video_param(AVCodecContext *avctx, QSVEncContext *q,
     av_log(avctx, AV_LOG_VERBOSE, "RateDistortionOpt: %s\n",
            print_threestate(co->RateDistortionOpt));
 
+#if QSV_HAVE_EXT_HEVC_TILES
+    if (avctx->codec_id == AV_CODEC_ID_HEVC)
+        av_log(avctx, AV_LOG_VERBOSE, "NumTileColumns: %"PRIu16"; NumTileRows: %"PRIu16"\n",
+               exthevctiles->NumTileColumns, exthevctiles->NumTileRows);
+#endif
+
 #if QSV_HAVE_CO2
     av_log(avctx, AV_LOG_VERBOSE,
            "RecoveryPointSEI: %s IntRefType: %"PRIu16"; IntRefCycleSize: %"PRIu16"; IntRefQPDelta: %"PRId16"\n",
            print_threestate(co->RecoveryPointSEI), co2->IntRefType, co2->IntRefCycleSize, co2->IntRefQPDelta);
 
-    av_log(avctx, AV_LOG_VERBOSE, "MaxFrameSize: %"PRIu16"; ", co2->MaxFrameSize);
+    av_log(avctx, AV_LOG_VERBOSE, "MaxFrameSize: %d; ", co2->MaxFrameSize);
 #if QSV_HAVE_MAX_SLICE_SIZE
-    av_log(avctx, AV_LOG_VERBOSE, "MaxSliceSize: %"PRIu16"; ", co2->MaxSliceSize);
+    av_log(avctx, AV_LOG_VERBOSE, "MaxSliceSize: %d; ", co2->MaxSliceSize);
 #endif
     av_log(avctx, AV_LOG_VERBOSE, "\n");
 
@@ -461,6 +472,12 @@ static int init_video_param_jpeg(AVCodecContext *avctx, QSVEncContext *q)
     q->param.mfx.Quality              = av_clip(avctx->global_quality, 1, 100);
     q->param.mfx.RestartInterval      = 0;
 
+    q->width_align = 16;
+    q->height_align = 16;
+
+    q->param.mfx.FrameInfo.Width = FFALIGN(avctx->width, q->width_align);
+    q->param.mfx.FrameInfo.Height = FFALIGN(avctx->height, q->height_align);
+
     return 0;
 }
 
@@ -529,7 +546,8 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
     q->param.mfx.FrameInfo.CropH          = avctx->height;
     q->param.mfx.FrameInfo.AspectRatioW   = avctx->sample_aspect_ratio.num;
     q->param.mfx.FrameInfo.AspectRatioH   = avctx->sample_aspect_ratio.den;
-    q->param.mfx.FrameInfo.ChromaFormat   = MFX_CHROMAFORMAT_YUV420;
+    q->param.mfx.FrameInfo.ChromaFormat   = MFX_CHROMAFORMAT_YUV420 +
+                                            !desc->log2_chroma_w + !desc->log2_chroma_h;
     q->param.mfx.FrameInfo.BitDepthLuma   = desc->comp[0].depth;
     q->param.mfx.FrameInfo.BitDepthChroma = desc->comp[0].depth;
     q->param.mfx.FrameInfo.Shift          = desc->comp[0].depth > 8;
@@ -672,11 +690,8 @@ FF_ENABLE_DEPRECATION_WARNINGS
 
         q->extparam_internal[q->nb_extparam_internal++] = (mfxExtBuffer *)&q->extco;
 
-        if (avctx->codec_id == AV_CODEC_ID_H264) {
 #if QSV_HAVE_CO2
-            q->extco2.Header.BufferId     = MFX_EXTBUFF_CODING_OPTION2;
-            q->extco2.Header.BufferSz     = sizeof(q->extco2);
-
+        if (avctx->codec_id == AV_CODEC_ID_H264) {
             if (q->int_ref_type >= 0)
                 q->extco2.IntRefType = q->int_ref_type;
             if (q->int_ref_cycle_size >= 0)
@@ -688,8 +703,6 @@ FF_ENABLE_DEPRECATION_WARNINGS
                 q->extco2.BitrateLimit = q->bitrate_limit ? MFX_CODINGOPTION_ON : MFX_CODINGOPTION_OFF;
             if (q->mbbrc >= 0)
                 q->extco2.MBBRC = q->mbbrc ? MFX_CODINGOPTION_ON : MFX_CODINGOPTION_OFF;
-            if (q->extbrc >= 0)
-                q->extco2.ExtBRC = q->extbrc ? MFX_CODINGOPTION_ON : MFX_CODINGOPTION_OFF;
 
             if (q->max_frame_size >= 0)
                 q->extco2.MaxFrameSize = q->max_frame_size;
@@ -722,6 +735,11 @@ FF_ENABLE_DEPRECATION_WARNINGS
             if (q->adaptive_b >= 0)
                 q->extco2.AdaptiveB = q->adaptive_b ? MFX_CODINGOPTION_ON : MFX_CODINGOPTION_OFF;
 #endif
+        }
+
+        if (avctx->codec_id == AV_CODEC_ID_H264 || avctx->codec_id == AV_CODEC_ID_HEVC) {
+            if (q->extbrc >= 0)
+                q->extco2.ExtBRC = q->extbrc ? MFX_CODINGOPTION_ON : MFX_CODINGOPTION_OFF;
 
 #if QSV_VERSION_ATLEAST(1, 9)
             if (avctx->qmin >= 0 && avctx->qmax >= 0 && avctx->qmin > avctx->qmax) {
@@ -737,9 +755,14 @@ FF_ENABLE_DEPRECATION_WARNINGS
                 q->extco2.MaxQPP = q->extco2.MaxQPB = q->extco2.MaxQPI;
             }
 #endif
+            q->extco2.Header.BufferId = MFX_EXTBUFF_CODING_OPTION2;
+            q->extco2.Header.BufferSz = sizeof(q->extco2);
+
             q->extparam_internal[q->nb_extparam_internal++] = (mfxExtBuffer *)&q->extco2;
+        }
 #endif
 
+        if (avctx->codec_id == AV_CODEC_ID_H264) {
 #if QSV_HAVE_MF
             if (QSV_RUNTIME_VERSION_ATLEAST(q->ver, 1, 25)) {
                 q->extmfp.Header.BufferId     = MFX_EXTBUFF_MULTI_FRAME_PARAM;
@@ -768,6 +791,16 @@ FF_ENABLE_DEPRECATION_WARNINGS
         q->extvp9param.Header.BufferSz = sizeof(q->extvp9param);
         q->extvp9param.WriteIVFHeaders = MFX_CODINGOPTION_OFF;
         q->extparam_internal[q->nb_extparam_internal++] = (mfxExtBuffer *)&q->extvp9param;
+    }
+#endif
+
+#if QSV_HAVE_EXT_HEVC_TILES
+    if (avctx->codec_id == AV_CODEC_ID_HEVC) {
+        q->exthevctiles.Header.BufferId = MFX_EXTBUFF_HEVC_TILES;
+        q->exthevctiles.Header.BufferSz = sizeof(q->exthevctiles);
+        q->exthevctiles.NumTileColumns  = q->tile_cols;
+        q->exthevctiles.NumTileRows     = q->tile_rows;
+        q->extparam_internal[q->nb_extparam_internal++] = (mfxExtBuffer *)&q->exthevctiles;
     }
 #endif
 
@@ -889,7 +922,14 @@ static int qsv_retrieve_enc_params(AVCodecContext *avctx, QSVEncContext *q)
     };
 #endif
 
-    mfxExtBuffer *ext_buffers[2 + QSV_HAVE_CO2 + QSV_HAVE_CO3 + QSV_HAVE_CO_VPS];
+#if QSV_HAVE_EXT_HEVC_TILES
+    mfxExtHEVCTiles hevc_tile_buf = {
+         .Header.BufferId = MFX_EXTBUFF_HEVC_TILES,
+         .Header.BufferSz = sizeof(hevc_tile_buf),
+    };
+#endif
+
+    mfxExtBuffer *ext_buffers[2 + QSV_HAVE_CO2 + QSV_HAVE_CO3 + QSV_HAVE_CO_VPS + QSV_HAVE_EXT_HEVC_TILES];
 
     int need_pps = avctx->codec_id != AV_CODEC_ID_MPEG2VIDEO;
     int ret, ext_buf_num = 0, extradata_offset = 0;
@@ -906,6 +946,10 @@ static int qsv_retrieve_enc_params(AVCodecContext *avctx, QSVEncContext *q)
     q->hevc_vps = ((avctx->codec_id == AV_CODEC_ID_HEVC) && QSV_RUNTIME_VERSION_ATLEAST(q->ver, 1, 17));
     if (q->hevc_vps)
         ext_buffers[ext_buf_num++] = (mfxExtBuffer*)&extradata_vps;
+#endif
+#if QSV_HAVE_EXT_HEVC_TILES
+    if (avctx->codec_id == AV_CODEC_ID_HEVC)
+        ext_buffers[ext_buf_num++] = (mfxExtBuffer*)&hevc_tile_buf;
 #endif
 
     q->param.ExtParam    = ext_buffers;
@@ -1610,3 +1654,10 @@ int ff_qsv_enc_close(AVCodecContext *avctx, QSVEncContext *q)
 
     return 0;
 }
+
+const AVCodecHWConfigInternal *ff_qsv_enc_hw_configs[] = {
+    HW_CONFIG_ENCODER_FRAMES(QSV,  QSV),
+    HW_CONFIG_ENCODER_DEVICE(NV12, QSV),
+    HW_CONFIG_ENCODER_DEVICE(P010, QSV),
+    NULL,
+};

@@ -24,6 +24,8 @@
 #include "dnn_backend_native_layer_conv2d.h"
 #include "dnn_backend_native_layer_depth2space.h"
 #include "dnn_backend_native_layer_maximum.h"
+#include "dnn_backend_native_layer_mathbinary.h"
+#include "dnn_backend_native_layer_mathunary.h"
 
 LayerFunc layer_funcs[DLT_COUNT] = {
     {NULL, NULL},
@@ -31,4 +33,6 @@ LayerFunc layer_funcs[DLT_COUNT] = {
     {dnn_execute_layer_depth2space, dnn_load_layer_depth2space},
     {dnn_execute_layer_pad,         dnn_load_layer_pad},
     {dnn_execute_layer_maximum,     dnn_load_layer_maximum},
+    {dnn_execute_layer_math_binary, dnn_load_layer_math_binary},
+    {dnn_execute_layer_math_unary,  dnn_load_layer_math_unary},
 };

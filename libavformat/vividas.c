@@ -278,7 +278,7 @@ static uint8_t *read_sb_block(AVIOContext *src, unsigned *size,
 
 static int track_header(VividasDemuxContext *viv, AVFormatContext *s,  uint8_t *buf, int size)
 {
-    int i,j;
+    int i, j, ret;
     int64_t off;
     int val_1;
     int num_video;
@@ -391,10 +391,9 @@ static int track_header(VividasDemuxContext *viv, AVFormatContext *s,  uint8_t *
                 xd_size += len;
             }
 
-            st->codecpar->extradata_size = 64 + xd_size + xd_size / 255;
-            if (ff_alloc_extradata(st->codecpar, st->codecpar->extradata_size)) {
-                return AVERROR(ENOMEM);
-            }
+            ret = ff_alloc_extradata(st->codecpar, 64 + xd_size + xd_size / 255);
+            if (ret < 0)
+                return ret;
 
             p = st->codecpar->extradata;
             p[0] = 2;
@@ -647,7 +646,7 @@ static int viv_read_packet(AVFormatContext *s,
         pkt->stream_index = 1;
         astream = s->streams[pkt->stream_index];
 
-        pkt->pts = av_rescale(viv->audio_sample, astream->time_base.den, astream->time_base.num) / astream->codecpar->sample_rate;
+        pkt->pts = av_rescale_q(viv->audio_sample, av_make_q(1, astream->codecpar->sample_rate), astream->time_base);
         viv->audio_sample += viv->audio_subpackets[viv->current_audio_subpacket].pcm_bytes / 2 / astream->codecpar->channels;
         pkt->flags |= AV_PKT_FLAG_KEY;
         viv->current_audio_subpacket++;

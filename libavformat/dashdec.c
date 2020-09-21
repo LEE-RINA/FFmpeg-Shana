@@ -29,6 +29,8 @@
 #include "dash.h"
 
 #define INITIAL_BUFFER_SIZE 32768
+#define MAX_MANIFEST_SIZE 50 * 1024
+#define DEFAULT_MANIFEST_SIZE 8 * 1024
 
 struct fragment {
     int64_t url_offset;
@@ -85,6 +87,7 @@ struct representation {
 
     enum AVMediaType type;
     char id[20];
+    char *lang;
     int bandwidth;
     AVRational framerate;
     AVStream *assoc_stream; /* demuxer stream associated with this representation */
@@ -122,19 +125,6 @@ struct representation {
 typedef struct DASHContext {
     const AVClass *class;
     char *base_url;
-    char *adaptionset_contenttype_val;
-    char *adaptionset_par_val;
-    char *adaptionset_lang_val;
-    char *adaptionset_minbw_val;
-    char *adaptionset_maxbw_val;
-    char *adaptionset_minwidth_val;
-    char *adaptionset_maxwidth_val;
-    char *adaptionset_minheight_val;
-    char *adaptionset_maxheight_val;
-    char *adaptionset_minframerate_val;
-    char *adaptionset_maxframerate_val;
-    char *adaptionset_segmentalignment_val;
-    char *adaptionset_bitstreamswitching_val;
 
     int n_videos;
     struct representation **videos;
@@ -156,6 +146,9 @@ typedef struct DASHContext {
     /* Period Attribute */
     uint64_t period_duration;
     uint64_t period_start;
+
+    /* AdaptationSet Attribute */
+    char *adaptionset_lang;
 
     int is_live;
     AVIOInterruptCB *interrupt_callback;
@@ -599,7 +592,7 @@ static struct fragment * get_Fragment(char *range)
         char *str_end_offset;
         char *str_offset = av_strtok(range, "-", &str_end_offset);
         seg->url_offset = strtoll(str_offset, NULL, 10);
-        seg->size = strtoll(str_end_offset, NULL, 10) - seg->url_offset;
+        seg->size = strtoll(str_end_offset, NULL, 10) - seg->url_offset + 1;
     }
 
     return seg;
@@ -885,6 +878,15 @@ static int parse_manifest_representation(AVFormatContext *s, const char *url,
             ret = AVERROR(ENOMEM);
             goto end;
         }
+        if (c->adaptionset_lang) {
+            rep->lang = av_strdup(c->adaptionset_lang);
+            if (!rep->lang) {
+                av_log(s, AV_LOG_ERROR, "alloc language memory failure\n");
+                av_freep(&rep);
+                ret = AVERROR(ENOMEM);
+                goto end;
+            }
+        }
         rep->parent = s;
         representation_segmenttemplate_node = find_child_node_by_name(representation_node, "SegmentTemplate");
         representation_baseurl_node = find_child_node_by_name(representation_node, "BaseURL");
@@ -1116,6 +1118,19 @@ end:
     return ret;
 }
 
+static int parse_manifest_adaptationset_attr(AVFormatContext *s, xmlNodePtr adaptionset_node)
+{
+    DASHContext *c = s->priv_data;
+
+    if (!adaptionset_node) {
+        av_log(s, AV_LOG_WARNING, "Cannot get AdaptionSet\n");
+        return AVERROR(EINVAL);
+    }
+    c->adaptionset_lang = xmlGetProp(adaptionset_node, "lang");
+
+    return 0;
+}
+
 static int parse_manifest_adaptationset(AVFormatContext *s, const char *url,
                                         xmlNodePtr adaptionset_node,
                                         xmlNodePtr mpd_baseurl_node,
@@ -1131,19 +1146,10 @@ static int parse_manifest_adaptationset(AVFormatContext *s, const char *url,
     xmlNodePtr adaptionset_segmentlist_node = NULL;
     xmlNodePtr adaptionset_supplementalproperty_node = NULL;
     xmlNodePtr node = NULL;
-    c->adaptionset_contenttype_val = xmlGetProp(adaptionset_node, "contentType");
-    c->adaptionset_par_val = xmlGetProp(adaptionset_node, "par");
-    c->adaptionset_lang_val = xmlGetProp(adaptionset_node, "lang");
-    c->adaptionset_minbw_val = xmlGetProp(adaptionset_node, "minBandwidth");
-    c->adaptionset_maxbw_val = xmlGetProp(adaptionset_node, "maxBandwidth");
-    c->adaptionset_minwidth_val = xmlGetProp(adaptionset_node, "minWidth");
-    c->adaptionset_maxwidth_val = xmlGetProp(adaptionset_node, "maxWidth");
-    c->adaptionset_minheight_val = xmlGetProp(adaptionset_node, "minHeight");
-    c->adaptionset_maxheight_val = xmlGetProp(adaptionset_node, "maxHeight");
-    c->adaptionset_minframerate_val = xmlGetProp(adaptionset_node, "minFrameRate");
-    c->adaptionset_maxframerate_val = xmlGetProp(adaptionset_node, "maxFrameRate");
-    c->adaptionset_segmentalignment_val = xmlGetProp(adaptionset_node, "segmentAlignment");
-    c->adaptionset_bitstreamswitching_val = xmlGetProp(adaptionset_node, "bitstreamSwitching");
+
+    ret = parse_manifest_adaptationset_attr(s, adaptionset_node);
+    if (ret < 0)
+        return ret;
 
     node = xmlFirstElementChild(adaptionset_node);
     while (node) {
@@ -1169,13 +1175,15 @@ static int parse_manifest_adaptationset(AVFormatContext *s, const char *url,
                                                 adaptionset_baseurl_node,
                                                 adaptionset_segmentlist_node,
                                                 adaptionset_supplementalproperty_node);
-            if (ret < 0) {
-                return ret;
-            }
+            if (ret < 0)
+                goto err;
         }
         node = xmlNextElementSibling(node);
     }
-    return 0;
+
+err:
+    av_freep(&c->adaptionset_lang);
+    return ret;
 }
 
 static int parse_programinformation(AVFormatContext *s, xmlNodePtr node)
@@ -1214,7 +1222,7 @@ static int parse_manifest(AVFormatContext *s, const char *url, AVIOContext *in)
     int close_in = 0;
     uint8_t *new_url = NULL;
     int64_t filesize = 0;
-    char *buffer = NULL;
+    AVBPrint buf;
     AVDictionary *opts = NULL;
     xmlDoc *doc = NULL;
     xmlNodePtr root_element = NULL;
@@ -1248,24 +1256,23 @@ static int parse_manifest(AVFormatContext *s, const char *url, AVIOContext *in)
     }
 
     filesize = avio_size(in);
-    if (filesize <= 0) {
-        filesize = 8 * 1024;
+    if (filesize > MAX_MANIFEST_SIZE) {
+        av_log(s, AV_LOG_ERROR, "Manifest too large: %"PRId64"\n", filesize);
+        return AVERROR_INVALIDDATA;
     }
 
-    buffer = av_mallocz(filesize);
-    if (!buffer) {
-        av_free(c->base_url);
-        return AVERROR(ENOMEM);
-    }
+    av_bprint_init(&buf, (filesize > 0) ? filesize + 1 : DEFAULT_MANIFEST_SIZE, AV_BPRINT_SIZE_UNLIMITED);
 
-    filesize = avio_read(in, buffer, filesize);
-    if (filesize <= 0) {
-        av_log(s, AV_LOG_ERROR, "Unable to read to offset '%s'\n", url);
-        ret = AVERROR_INVALIDDATA;
+    if ((ret = avio_read_to_bprint(in, &buf, MAX_MANIFEST_SIZE)) < 0 ||
+        !avio_feof(in) ||
+        (filesize = buf.len) == 0) {
+        av_log(s, AV_LOG_ERROR, "Unable to read to manifest '%s'\n", url);
+        if (ret == 0)
+            ret = AVERROR_INVALIDDATA;
     } else {
         LIBXML_TEST_VERSION
 
-        doc = xmlReadMemory(buffer, filesize, c->base_url, NULL, 0);
+        doc = xmlReadMemory(buf.str, filesize, c->base_url, NULL, 0);
         root_element = xmlDocGetRootElement(doc);
         node = root_element;
 
@@ -1388,7 +1395,7 @@ cleanup:
     }
 
     av_free(new_url);
-    av_free(buffer);
+    av_bprint_finalize(&buf, NULL);
     if (close_in) {
         avio_close(in);
     }
@@ -1851,7 +1858,7 @@ static int save_avio_options(AVFormatContext *s)
 {
     DASHContext *c = s->priv_data;
     const char *opts[] = {
-        "headers", "user_agent", "cookies", "http_proxy", "referer", "rw_timeout", NULL };
+        "headers", "user_agent", "cookies", "http_proxy", "referer", "rw_timeout", "icy", NULL };
     const char **opt = opts;
     uint8_t *buf = NULL;
     int ret = 0;
@@ -1934,7 +1941,7 @@ static int reopen_demux_for_component(AVFormatContext *s, struct representation 
         goto fail;
 
     pls->ctx->flags = AVFMT_FLAG_CUSTOM_IO;
-    pls->ctx->probesize = s->probesize > 0 ? s->probesize : 1024 * 4;;
+    pls->ctx->probesize = s->probesize > 0 ? s->probesize : 1024 * 4;
     pls->ctx->max_analyze_duration = s->max_analyze_duration > 0 ? s->max_analyze_duration : 4 * AV_TIME_BASE;
     ret = av_probe_input_buffer(&pls->pb, &in_fmt, "", NULL, 0, 0);
     if (ret < 0) {
@@ -1994,6 +2001,20 @@ static int open_demux_for_component(AVFormatContext *s, struct representation *p
         st->id = i;
         avcodec_parameters_copy(st->codecpar, ist->codecpar);
         avpriv_set_pts_info(st, ist->pts_wrap_bits, ist->time_base.num, ist->time_base.den);
+
+        // copy disposition
+        st->disposition = ist->disposition;
+
+        // copy side data
+        for (int i = 0; i < ist->nb_side_data; i++) {
+            const AVPacketSideData *sd_src = &ist->side_data[i];
+            uint8_t *dst_data;
+
+            dst_data = av_stream_new_side_data(st, sd_src->type, sd_src->size);
+            if (!dst_data)
+                return AVERROR(ENOMEM);
+            memcpy(dst_data, sd_src->data, sd_src->size);
+        }
     }
 
     return 0;
@@ -2148,6 +2169,10 @@ static int dash_read_header(AVFormatContext *s)
                 av_dict_set_int(&rep->assoc_stream->metadata, "variant_bitrate", rep->bandwidth, 0);
             if (rep->id[0])
                 av_dict_set(&rep->assoc_stream->metadata, "id", rep->id, 0);
+            if (rep->lang) {
+                av_dict_set(&rep->assoc_stream->metadata, "language", rep->lang, 0);
+                av_freep(&rep->lang);
+            }
         }
         for (i = 0; i < c->n_subtitles; i++) {
             rep = c->subtitles[i];
@@ -2155,6 +2180,10 @@ static int dash_read_header(AVFormatContext *s)
             rep->assoc_stream = s->streams[rep->stream_index];
             if (rep->id[0])
                 av_dict_set(&rep->assoc_stream->metadata, "id", rep->id, 0);
+            if (rep->lang) {
+                av_dict_set(&rep->assoc_stream->metadata, "language", rep->lang, 0);
+                av_freep(&rep->lang);
+            }
         }
     }
 
@@ -2361,7 +2390,8 @@ static int dash_probe(const AVProbeData *p)
     if (av_stristr(p->buf, "dash:profile:isoff-on-demand:2011") ||
         av_stristr(p->buf, "dash:profile:isoff-live:2011") ||
         av_stristr(p->buf, "dash:profile:isoff-live:2012") ||
-        av_stristr(p->buf, "dash:profile:isoff-main:2011")) {
+        av_stristr(p->buf, "dash:profile:isoff-main:2011") ||
+        av_stristr(p->buf, "3GPP:PSS:profile:DASH1")) {
         return AVPROBE_SCORE_MAX;
     }
     if (av_stristr(p->buf, "dash:profile")) {
@@ -2376,7 +2406,7 @@ static int dash_probe(const AVProbeData *p)
 static const AVOption dash_options[] = {
     {"allowed_extensions", "List of file extensions that dash is allowed to access",
         OFFSET(allowed_extensions), AV_OPT_TYPE_STRING,
-        {.str = "aac,m4a,m4s,m4v,mov,mp4,webm"},
+        {.str = "aac,m4a,m4s,m4v,mov,mp4,webm,ts"},
         INT_MIN, INT_MAX, FLAGS},
     {NULL}
 };

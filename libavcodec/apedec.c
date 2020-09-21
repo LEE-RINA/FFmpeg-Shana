@@ -24,6 +24,7 @@
 
 #include "libavutil/avassert.h"
 #include "libavutil/channel_layout.h"
+#include "libavutil/crc.h"
 #include "libavutil/opt.h"
 #include "lossless_audiodsp.h"
 #include "avcodec.h"
@@ -147,7 +148,8 @@ typedef struct APEContext {
     int fset;                                ///< which filter set to use (calculated from compression level)
     int flags;                               ///< global decoder flags
 
-    uint32_t CRC;                            ///< frame CRC
+    uint32_t CRC;                            ///< signalled frame CRC
+    uint32_t CRC_state;                      ///< accumulated CRC
     int frameflags;                          ///< frame flags
     APEPredictor predictor;                  ///< predictor used for final reconstruction
 
@@ -260,9 +262,8 @@ static av_cold int ape_decode_init(AVCodecContext *avctx)
     for (i = 0; i < APE_FILTER_LEVELS; i++) {
         if (!ape_filter_orders[s->fset][i])
             break;
-        FF_ALLOC_OR_GOTO(avctx, s->filterbuf[i],
-                         (ape_filter_orders[s->fset][i] * 3 + HISTORY_SIZE) * 4,
-                         filter_alloc_fail);
+        if (!(s->filterbuf[i] = av_malloc((ape_filter_orders[s->fset][i] * 3 + HISTORY_SIZE) * 4)))
+            return AVERROR(ENOMEM);
     }
 
     if (s->fileversion < 3860) {
@@ -298,9 +299,6 @@ static av_cold int ape_decode_init(AVCodecContext *avctx)
     avctx->channel_layout = (avctx->channels==2) ? AV_CH_LAYOUT_STEREO : AV_CH_LAYOUT_MONO;
 
     return 0;
-filter_alloc_fail:
-    ape_decode_close(avctx);
-    return AVERROR(ENOMEM);
 }
 
 /**
@@ -496,6 +494,7 @@ static inline int ape_decode_value_3860(APEContext *ctx, GetBitContext *gb,
         x = (overflow << rice->k) + get_bits(gb, rice->k);
     } else {
         av_log(ctx->avctx, AV_LOG_ERROR, "Too many bits: %"PRIu32"\n", rice->k);
+        ctx->error = 1;
         return AVERROR_INVALIDDATA;
     }
     rice->ksum += x - (rice->ksum + 8 >> 4);
@@ -585,6 +584,11 @@ static inline int ape_decode_value_3990(APEContext *ctx, APERice *rice)
     return ((x >> 1) ^ ((x & 1) - 1)) + 1;
 }
 
+static int get_k(int ksum)
+{
+    return av_log2(ksum) + !!ksum;
+}
+
 static void decode_array_0000(APEContext *ctx, GetBitContext *gb,
                               int32_t *out, APERice *rice, int blockstodecode)
 {
@@ -596,25 +600,34 @@ static void decode_array_0000(APEContext *ctx, GetBitContext *gb,
         out[i] = get_rice_ook(&ctx->gb, 10);
         rice->ksum += out[i];
     }
-    rice->k = av_log2(rice->ksum / 10) + 1;
+
+    if (blockstodecode <= 5)
+        goto end;
+
+    rice->k = get_k(rice->ksum / 10);
     if (rice->k >= 24)
         return;
     for (; i < FFMIN(blockstodecode, 64); i++) {
         out[i] = get_rice_ook(&ctx->gb, rice->k);
         rice->ksum += out[i];
-        rice->k = av_log2(rice->ksum / ((i + 1) * 2)) + 1;
+        rice->k = get_k(rice->ksum / ((i + 1) * 2));
         if (rice->k >= 24)
             return;
     }
+
+    if (blockstodecode <= 64)
+        goto end;
+
+    rice->k = get_k(rice->ksum >> 7);
     ksummax = 1 << rice->k + 7;
     ksummin = rice->k ? (1 << rice->k + 6) : 0;
     for (; i < blockstodecode; i++) {
         if (get_bits_left(&ctx->gb) < 1) {
             ctx->error = 1;
-            return ;
+            return;
         }
         out[i] = get_rice_ook(&ctx->gb, rice->k);
-        rice->ksum += out[i] - out[i - 64];
+        rice->ksum += out[i] - (unsigned)out[i - 64];
         while (rice->ksum < ksummin) {
             rice->k--;
             ksummin = rice->k ? ksummin >> 1 : 0;
@@ -629,6 +642,7 @@ static void decode_array_0000(APEContext *ctx, GetBitContext *gb,
         }
     }
 
+end:
     for (i = 0; i < blockstodecode; i++)
         out[i] = ((out[i] >> 1) ^ ((out[i] & 1) - 1)) + 1;
 }
@@ -734,6 +748,7 @@ static int init_entropy_decoder(APEContext *ctx)
 
     /* Read the frame flags if they exist */
     ctx->frameflags = 0;
+    ctx->CRC_state = UINT32_MAX;
     if ((ctx->fileversion > 3820) && (ctx->CRC & 0x80000000)) {
         ctx->CRC &= ~0x80000000;
 
@@ -1207,14 +1222,14 @@ static void predictor_decode_mono_3950(APEContext *ctx, int count)
         A = *decoded0;
 
         p->buf[YDELAYA] = currentA;
-        p->buf[YDELAYA - 1] = p->buf[YDELAYA] - p->buf[YDELAYA - 1];
+        p->buf[YDELAYA - 1] = p->buf[YDELAYA] - (unsigned)p->buf[YDELAYA - 1];
 
         predictionA = p->buf[YDELAYA    ] * p->coeffsA[0][0] +
                       p->buf[YDELAYA - 1] * p->coeffsA[0][1] +
                       p->buf[YDELAYA - 2] * p->coeffsA[0][2] +
                       p->buf[YDELAYA - 3] * p->coeffsA[0][3];
 
-        currentA = A + (predictionA >> 10);
+        currentA = A + (unsigned)(predictionA >> 10);
 
         p->buf[YADAPTCOEFFSA]     = APESIGN(p->buf[YDELAYA    ]);
         p->buf[YADAPTCOEFFSA - 1] = APESIGN(p->buf[YDELAYA - 1]);
@@ -1234,7 +1249,7 @@ static void predictor_decode_mono_3950(APEContext *ctx, int count)
             p->buf = p->historybuffer;
         }
 
-        p->filterA[0] = currentA + ((int)(p->filterA[0] * 31U) >> 5);
+        p->filterA[0] = currentA + (unsigned)((int)(p->filterA[0] * 31U) >> 5);
         *(decoded0++) = p->filterA[0];
     }
 
@@ -1302,7 +1317,7 @@ static void do_apply_filter(APEContext *ctx, int version, APEFilter *f,
             else
                 *f->adaptcoeffs = 0;
 
-            f->avg += (absres - f->avg) / 16;
+            f->avg += (int)(absres - (unsigned)f->avg) / 16;
 
             f->adaptcoeffs[-1] >>= 1;
             f->adaptcoeffs[-2] >>= 1;
@@ -1554,12 +1569,33 @@ static int ape_decode_frame(AVCodecContext *avctx, void *data,
         for (ch = 0; ch < s->channels; ch++) {
             sample24 = (int32_t *)frame->data[ch];
             for (i = 0; i < blockstodecode; i++)
-                *sample24++ = s->decoded[ch][i] << 8;
+                *sample24++ = s->decoded[ch][i] * 256U;
         }
         break;
     }
 
     s->samples -= blockstodecode;
+
+    if (avctx->err_recognition & AV_EF_CRCCHECK &&
+        s->fileversion >= 3900 && s->bps < 24) {
+        uint32_t crc = s->CRC_state;
+        const AVCRC *crc_tab = av_crc_get_table(AV_CRC_32_IEEE_LE);
+        for (i = 0; i < blockstodecode; i++) {
+            for (ch = 0; ch < s->channels; ch++) {
+                uint8_t *smp = frame->data[ch] + (i*(s->bps >> 3));
+                crc = av_crc(crc_tab, crc, smp, s->bps >> 3);
+            }
+        }
+
+        if (!s->samples && (~crc >> 1) ^ s->CRC) {
+            av_log(avctx, AV_LOG_ERROR, "CRC mismatch! Previously decoded "
+                   "frames may have been affected as well.\n");
+            if (avctx->err_recognition & AV_EF_EXPLODE)
+                return AVERROR_INVALIDDATA;
+        }
+
+        s->CRC_state = crc;
+    }
 
     *got_frame_ptr = 1;
 
@@ -1598,6 +1634,7 @@ AVCodec ff_ape_decoder = {
     .decode         = ape_decode_frame,
     .capabilities   = AV_CODEC_CAP_SUBFRAMES | AV_CODEC_CAP_DELAY |
                       AV_CODEC_CAP_DR1,
+    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
     .flush          = ape_flush,
     .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_U8P,
                                                       AV_SAMPLE_FMT_S16P,

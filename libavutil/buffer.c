@@ -20,6 +20,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "avassert.h"
 #include "buffer_internal.h"
 #include "common.h"
 #include "mem.h"
@@ -43,8 +44,7 @@ AVBufferRef *av_buffer_create(uint8_t *data, int size,
 
     atomic_init(&buf->refcount, 1);
 
-    if (flags & AV_BUFFER_FLAG_READONLY)
-        buf->flags |= BUFFER_FLAG_READONLY;
+    buf->flags = flags;
 
     ref = av_mallocz(sizeof(*ref));
     if (!ref) {
@@ -184,14 +184,14 @@ int av_buffer_realloc(AVBufferRef **pbuf, int size)
             return AVERROR(ENOMEM);
         }
 
-        buf->buffer->flags |= BUFFER_FLAG_REALLOCATABLE;
+        buf->buffer->flags_internal |= BUFFER_FLAG_REALLOCATABLE;
         *pbuf = buf;
 
         return 0;
     } else if (buf->size == size)
         return 0;
 
-    if (!(buf->buffer->flags & BUFFER_FLAG_REALLOCATABLE) ||
+    if (!(buf->buffer->flags_internal & BUFFER_FLAG_REALLOCATABLE) ||
         !av_buffer_is_writable(buf) || buf->data != buf->buffer->data) {
         /* cannot realloc, allocate a new reallocable buffer and copy data */
         AVBufferRef *new = NULL;
@@ -228,6 +228,7 @@ AVBufferPool *av_buffer_pool_init2(int size, void *opaque,
     pool->size      = size;
     pool->opaque    = opaque;
     pool->alloc2    = alloc;
+    pool->alloc     = av_buffer_alloc; // fallback
     pool->pool_free = pool_free;
 
     atomic_init(&pool->refcount, 1);
@@ -309,6 +310,8 @@ static AVBufferRef *pool_alloc_buffer(AVBufferPool *pool)
     BufferPoolEntry *buf;
     AVBufferRef     *ret;
 
+    av_assert0(pool->alloc || pool->alloc2);
+
     ret = pool->alloc2 ? pool->alloc2(pool->opaque, pool->size) :
                          pool->alloc(pool->size);
     if (!ret)
@@ -354,4 +357,11 @@ AVBufferRef *av_buffer_pool_get(AVBufferPool *pool)
         atomic_fetch_add_explicit(&pool->refcount, 1, memory_order_relaxed);
 
     return ret;
+}
+
+void *av_buffer_pool_buffer_get_opaque(AVBufferRef *ref)
+{
+    BufferPoolEntry *buf = ref->buffer->opaque;
+    av_assert0(buf);
+    return buf->opaque;
 }

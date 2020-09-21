@@ -398,6 +398,8 @@ static av_always_inline int smk_get_code(GetBitContext *gb, int *recode, int *la
     int v;
 
     while(*table & SMK_NODE) {
+        if (get_bits_left(gb) < 1)
+            return AVERROR_INVALIDDATA;
         if(get_bits1(gb))
             table += (*table) & (~SMK_NODE);
         table++;
@@ -462,6 +464,8 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
         uint16_t pix;
 
         type = smk_get_code(&gb, smk->type_tbl, smk->type_last);
+        if (type < 0)
+            return type;
         run = block_runs[(type >> 2) & 0x3F];
         switch(type & 3){
         case SMK_BLK_MONO:
@@ -596,13 +600,11 @@ static av_cold int decode_init(AVCodecContext *avctx)
     /* decode huffman trees from extradata */
     if(avctx->extradata_size < 16){
         av_log(avctx, AV_LOG_ERROR, "Extradata missing!\n");
-        decode_end(avctx);
         return AVERROR(EINVAL);
     }
 
     ret = decode_header_trees(c);
     if (ret < 0) {
-        decode_end(avctx);
         return ret;
     }
 
@@ -836,6 +838,7 @@ AVCodec ff_smacker_decoder = {
     .close          = decode_end,
     .decode         = decode_frame,
     .capabilities   = AV_CODEC_CAP_DR1,
+    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
 };
 
 AVCodec ff_smackaud_decoder = {

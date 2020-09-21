@@ -56,8 +56,8 @@ static void read_id3(AVFormatContext *s, uint64_t id3pos)
 
     ff_id3v2_read(s, ID3v2_DEFAULT_MAGIC, &id3v2_extra_meta, 0);
     if (id3v2_extra_meta) {
-        ff_id3v2_parse_apic(s, &id3v2_extra_meta);
-        ff_id3v2_parse_chapters(s, &id3v2_extra_meta);
+        ff_id3v2_parse_apic(s, id3v2_extra_meta);
+        ff_id3v2_parse_chapters(s, id3v2_extra_meta);
     }
     ff_id3v2_free_extra_meta(&id3v2_extra_meta);
 }
@@ -169,8 +169,8 @@ static int dsf_read_packet(AVFormatContext *s, AVPacket *pkt)
             if (packet_size <= 0 || skip_size <= 0)
                 return AVERROR_INVALIDDATA;
 
-            if (av_new_packet(pkt, packet_size) < 0)
-                return AVERROR(ENOMEM);
+            if ((ret = av_new_packet(pkt, packet_size)) < 0)
+                return ret;
             dst = pkt->data;
             for (ch = 0; ch < st->codecpar->channels; ch++) {
                 ret = avio_read(pb, dst,  packet_size / st->codecpar->channels);
