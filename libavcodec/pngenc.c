@@ -25,29 +25,26 @@
 #include "png.h"
 
 #include "libavutil/avassert.h"
-
-/* TODO:
- * - add 2, 4 and 16 bit depth support
- */
+#include "libavutil/opt.h"
 
 #include <zlib.h>
-
-//#define DEBUG
 
 #define IOBUF_SIZE 4096
 
 typedef struct PNGEncContext {
+    AVClass *class;
     DSPContext dsp;
 
     uint8_t *bytestream;
     uint8_t *bytestream_start;
     uint8_t *bytestream_end;
-    AVFrame picture;
 
     int filter_type;
 
     z_stream zstream;
     uint8_t buf[IOBUF_SIZE];
+    int dpi;                     ///< Physical pixel density, in dots per inch, if set
+    int dpm;                     ///< Physical pixel density, in dots per meter, if set
 } PNGEncContext;
 
 static void png_get_interlaced_row(uint8_t *dst, int row_size,
@@ -220,7 +217,7 @@ static int encode_frame(AVCodecContext *avctx, AVPacket *pkt,
                         const AVFrame *pict, int *got_packet)
 {
     PNGEncContext *s = avctx->priv_data;
-    AVFrame * const p= &s->picture;
+    const AVFrame * const p = pict;
     int bit_depth, color_type, y, len, row_size, ret, is_progressive;
     int bits_per_pixel, pass_row_size, enc_row_size;
     int64_t max_packet_size;
@@ -229,10 +226,6 @@ static int encode_frame(AVCodecContext *avctx, AVPacket *pkt,
     uint8_t *crow_base = NULL, *crow_buf, *crow;
     uint8_t *progressive_buf = NULL;
     uint8_t *top_buf = NULL;
-
-    *p = *pict;
-    p->pict_type= AV_PICTURE_TYPE_I;
-    p->key_frame= 1;
 
     is_progressive = !!(avctx->flags & CODEC_FLAG_INTERLACED_DCT);
     switch(avctx->pix_fmt) {
@@ -331,9 +324,15 @@ static int encode_frame(AVCodecContext *avctx, AVPacket *pkt,
 
     png_write_chunk(&s->bytestream, MKTAG('I', 'H', 'D', 'R'), s->buf, 13);
 
-    AV_WB32(s->buf, avctx->sample_aspect_ratio.num);
-    AV_WB32(s->buf + 4, avctx->sample_aspect_ratio.den);
-    s->buf[8] = 0; /* unit specifier is unknown */
+    if (s->dpm) {
+      AV_WB32(s->buf, s->dpm);
+      AV_WB32(s->buf + 4, s->dpm);
+      s->buf[8] = 1; /* unit specifier is meter */
+    } else {
+      AV_WB32(s->buf, avctx->sample_aspect_ratio.num);
+      AV_WB32(s->buf + 4, avctx->sample_aspect_ratio.den);
+      s->buf[8] = 0; /* unit specifier is unknown */
+    }
     png_write_chunk(&s->bytestream, MKTAG('p', 'H', 'Y', 's'), s->buf, 9);
 
     /* put the palette if needed */
@@ -450,23 +449,58 @@ static av_cold int png_enc_init(AVCodecContext *avctx){
         avctx->bits_per_coded_sample = 8;
     }
 
-    avcodec_get_frame_defaults(&s->picture);
-    avctx->coded_frame= &s->picture;
+    avctx->coded_frame = av_frame_alloc();
+    if (!avctx->coded_frame)
+        return AVERROR(ENOMEM);
+
+    avctx->coded_frame->pict_type = AV_PICTURE_TYPE_I;
+    avctx->coded_frame->key_frame = 1;
+
     ff_dsputil_init(&s->dsp, avctx);
 
     s->filter_type = av_clip(avctx->prediction_method, PNG_FILTER_VALUE_NONE, PNG_FILTER_VALUE_MIXED);
     if(avctx->pix_fmt == AV_PIX_FMT_MONOBLACK)
         s->filter_type = PNG_FILTER_VALUE_NONE;
 
+    if (s->dpi && s->dpm) {
+      av_log(avctx, AV_LOG_ERROR, "Only one of 'dpi' or 'dpm' options should be set\n");
+      return AVERROR(EINVAL);
+    } else if (s->dpi) {
+      s->dpm = s->dpi * 10000 / 254;
+    }
+
     return 0;
 }
 
+static av_cold int png_enc_close(AVCodecContext *avctx)
+{
+    av_frame_free(&avctx->coded_frame);
+    return 0;
+}
+
+#define OFFSET(x) offsetof(PNGEncContext, x)
+#define VE AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM
+static const AVOption options[] = {
+    {"dpi", "Set image resolution (in dots per inch)",  OFFSET(dpi), AV_OPT_TYPE_INT, {.i64 = 0}, 0, 0x10000, VE},
+    {"dpm", "Set image resolution (in dots per meter)", OFFSET(dpm), AV_OPT_TYPE_INT, {.i64 = 0}, 0, 0x10000, VE},
+    { NULL }
+};
+
+static const AVClass pngenc_class = {
+    .class_name = "PNG encoder",
+    .item_name  = av_default_item_name,
+    .option     = options,
+    .version    = LIBAVUTIL_VERSION_INT,
+};
+
 AVCodec ff_png_encoder = {
     .name           = "png",
+    .long_name      = NULL_IF_CONFIG_SMALL("PNG (Portable Network Graphics) image"),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_PNG,
     .priv_data_size = sizeof(PNGEncContext),
     .init           = png_enc_init,
+    .close          = png_enc_close,
     .encode2        = encode_frame,
     .capabilities   = CODEC_CAP_FRAME_THREADS | CODEC_CAP_INTRA_ONLY,
     .pix_fmts       = (const enum AVPixelFormat[]){
@@ -477,5 +511,5 @@ AVCodec ff_png_encoder = {
         AV_PIX_FMT_GRAY16BE,
         AV_PIX_FMT_MONOBLACK, AV_PIX_FMT_NONE
     },
-    .long_name      = NULL_IF_CONFIG_SMALL("PNG (Portable Network Graphics) image"),
+    .priv_class     = &pngenc_class,
 };

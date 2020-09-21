@@ -58,7 +58,7 @@ void ff_register_dynamic_payload_handler(RTPDynamicProtocolHandler *handler)
     rtp_first_dynamic_payload_handler = handler;
 }
 
-void av_register_rtp_dynamic_payload_handlers(void)
+void ff_register_rtp_dynamic_payload_handlers(void)
 {
     ff_register_dynamic_payload_handler(&ff_amr_nb_dynamic_handler);
     ff_register_dynamic_payload_handler(&ff_amr_wb_dynamic_handler);
@@ -78,8 +78,8 @@ void av_register_rtp_dynamic_payload_handlers(void)
     ff_register_dynamic_payload_handler(&ff_mpeg_video_dynamic_handler);
     ff_register_dynamic_payload_handler(&ff_mpeg4_generic_dynamic_handler);
     ff_register_dynamic_payload_handler(&ff_mpegts_dynamic_handler);
-    ff_register_dynamic_payload_handler(&ff_ms_rtp_asf_pfv_handler);
     ff_register_dynamic_payload_handler(&ff_ms_rtp_asf_pfa_handler);
+    ff_register_dynamic_payload_handler(&ff_ms_rtp_asf_pfv_handler);
     ff_register_dynamic_payload_handler(&ff_qcelp_dynamic_handler);
     ff_register_dynamic_payload_handler(&ff_qdm2_dynamic_handler);
     ff_register_dynamic_payload_handler(&ff_qt_rtp_aud_handler);

@@ -710,7 +710,7 @@ static void search_for_quantizers_twoloop(AVCodecContext *avctx,
                                           const float lambda)
 {
     int start = 0, i, w, w2, g;
-    int destbits = avctx->bit_rate * 1024.0 / avctx->sample_rate / avctx->channels;
+    int destbits = avctx->bit_rate * 1024.0 / avctx->sample_rate / avctx->channels * (lambda / 120.f);
     float dists[128] = { 0 }, uplims[128];
     float maxvals[128];
     int fflag, minscaler;
@@ -1113,25 +1113,25 @@ static void search_for_ms(AACEncContext *s, ChannelElement *cpe,
 }
 
 AACCoefficientsEncoder ff_aac_coders[AAC_CODER_NB] = {
-    {
+    [AAC_CODER_FAAC] = {
         search_for_quantizers_faac,
         encode_window_bands_info,
         quantize_and_encode_band,
         search_for_ms,
     },
-    {
+    [AAC_CODER_ANMR] = {
         search_for_quantizers_anmr,
         encode_window_bands_info,
         quantize_and_encode_band,
         search_for_ms,
     },
-    {
+    [AAC_CODER_TWOLOOP] = {
         search_for_quantizers_twoloop,
         codebook_trellis_rate,
         quantize_and_encode_band,
         search_for_ms,
     },
-    {
+    [AAC_CODER_FAST] = {
         search_for_quantizers_fast,
         encode_window_bands_info,
         quantize_and_encode_band,

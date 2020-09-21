@@ -27,6 +27,7 @@
  * DSP utils
  */
 
+#include "libavutil/attributes.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/internal.h"
 #include "avcodec.h"
@@ -107,7 +108,9 @@ static const uint8_t simple_mmx_permutation[64]={
 
 static const uint8_t idct_sse2_row_perm[8] = {0, 4, 1, 5, 2, 6, 3, 7};
 
-void ff_init_scantable(uint8_t *permutation, ScanTable *st, const uint8_t *src_scantable){
+av_cold void ff_init_scantable(uint8_t *permutation, ScanTable *st,
+                               const uint8_t *src_scantable)
+{
     int i;
     int end;
 
@@ -128,8 +131,8 @@ void ff_init_scantable(uint8_t *permutation, ScanTable *st, const uint8_t *src_s
     }
 }
 
-void ff_init_scantable_permutation(uint8_t *idct_permutation,
-                                   int idct_permutation_type)
+av_cold void ff_init_scantable_permutation(uint8_t *idct_permutation,
+                                           int idct_permutation_type)
 {
     int i;
 
@@ -1513,80 +1516,6 @@ static void put_mspel8_mc22_c(uint8_t *dst, uint8_t *src, ptrdiff_t stride)
     wmv2_mspel8_v_lowpass(dst, halfH+8, stride, 8, 8);
 }
 
-static void h263_v_loop_filter_c(uint8_t *src, int stride, int qscale){
-    if(CONFIG_H263_DECODER || CONFIG_H263_ENCODER) {
-    int x;
-    const int strength= ff_h263_loop_filter_strength[qscale];
-
-    for(x=0; x<8; x++){
-        int d1, d2, ad1;
-        int p0= src[x-2*stride];
-        int p1= src[x-1*stride];
-        int p2= src[x+0*stride];
-        int p3= src[x+1*stride];
-        int d = (p0 - p3 + 4*(p2 - p1)) / 8;
-
-        if     (d<-2*strength) d1= 0;
-        else if(d<-  strength) d1=-2*strength - d;
-        else if(d<   strength) d1= d;
-        else if(d< 2*strength) d1= 2*strength - d;
-        else                   d1= 0;
-
-        p1 += d1;
-        p2 -= d1;
-        if(p1&256) p1= ~(p1>>31);
-        if(p2&256) p2= ~(p2>>31);
-
-        src[x-1*stride] = p1;
-        src[x+0*stride] = p2;
-
-        ad1= FFABS(d1)>>1;
-
-        d2= av_clip((p0-p3)/4, -ad1, ad1);
-
-        src[x-2*stride] = p0 - d2;
-        src[x+  stride] = p3 + d2;
-    }
-    }
-}
-
-static void h263_h_loop_filter_c(uint8_t *src, int stride, int qscale){
-    if(CONFIG_H263_DECODER || CONFIG_H263_ENCODER) {
-    int y;
-    const int strength= ff_h263_loop_filter_strength[qscale];
-
-    for(y=0; y<8; y++){
-        int d1, d2, ad1;
-        int p0= src[y*stride-2];
-        int p1= src[y*stride-1];
-        int p2= src[y*stride+0];
-        int p3= src[y*stride+1];
-        int d = (p0 - p3 + 4*(p2 - p1)) / 8;
-
-        if     (d<-2*strength) d1= 0;
-        else if(d<-  strength) d1=-2*strength - d;
-        else if(d<   strength) d1= d;
-        else if(d< 2*strength) d1= 2*strength - d;
-        else                   d1= 0;
-
-        p1 += d1;
-        p2 -= d1;
-        if(p1&256) p1= ~(p1>>31);
-        if(p2&256) p2= ~(p2>>31);
-
-        src[y*stride-1] = p1;
-        src[y*stride+0] = p2;
-
-        ad1= FFABS(d1)>>1;
-
-        d2= av_clip((p0-p3)/4, -ad1, ad1);
-
-        src[y*stride-2] = p0 - d2;
-        src[y*stride+1] = p3 + d2;
-    }
-    }
-}
-
 static inline int pix_abs16_c(void *v, uint8_t *pix1, uint8_t *pix2, int line_size, int h)
 {
     int s, i;
@@ -1928,7 +1857,7 @@ void ff_set_cmp(DSPContext* c, me_cmp_func *cmp, int type){
 
 static void add_bytes_c(uint8_t *dst, uint8_t *src, int w){
     long i;
-    for(i=0; i<=w-sizeof(long); i+=sizeof(long)){
+    for(i=0; i<=w-(int)sizeof(long); i+=sizeof(long)){
         long a = *(long*)(src+i);
         long b = *(long*)(dst+i);
         *(long*)(dst+i) = ((a&pb_7f) + (b&pb_7f)) ^ ((a^b)&pb_80);
@@ -1953,7 +1882,7 @@ static void diff_bytes_c(uint8_t *dst, const uint8_t *src1, const uint8_t *src2,
         }
     }else
 #endif
-    for(i=0; i<=w-sizeof(long); i+=sizeof(long)){
+    for(i=0; i<=w-(int)sizeof(long); i+=sizeof(long)){
         long a = *(long*)(src1+i);
         long b = *(long*)(src2+i);
         *(long*)(dst+i) = ((a|pb_80) - (b&pb_7f)) ^ ((a^b^pb_80)&pb_80);
@@ -2598,12 +2527,12 @@ static void vector_clip_int32_c(int32_t *dst, const int32_t *src, int32_t min,
     } while (len > 0);
 }
 
-static void ff_jref_idct_put(uint8_t *dest, int line_size, int16_t *block)
+static void jref_idct_put(uint8_t *dest, int line_size, int16_t *block)
 {
     ff_j_rev_dct (block);
     put_pixels_clamped_c(block, dest, line_size);
 }
-static void ff_jref_idct_add(uint8_t *dest, int line_size, int16_t *block)
+static void jref_idct_add(uint8_t *dest, int line_size, int16_t *block)
 {
     ff_j_rev_dct (block);
     add_pixels_clamped_c(block, dest, line_size);
@@ -2717,10 +2646,15 @@ av_cold void ff_dsputil_init(DSPContext* c, AVCodecContext *avctx)
             c->idct_add              = ff_simple_idct_add_10;
             c->idct                  = ff_simple_idct_10;
             c->idct_permutation_type = FF_NO_IDCT_PERM;
+        } else if (avctx->bits_per_raw_sample == 12) {
+            c->idct_put              = ff_simple_idct_put_12;
+            c->idct_add              = ff_simple_idct_add_12;
+            c->idct                  = ff_simple_idct_12;
+            c->idct_permutation_type = FF_NO_IDCT_PERM;
         } else {
         if(avctx->idct_algo==FF_IDCT_INT){
-            c->idct_put= ff_jref_idct_put;
-            c->idct_add= ff_jref_idct_add;
+            c->idct_put= jref_idct_put;
+            c->idct_add= jref_idct_add;
             c->idct    = ff_j_rev_dct;
             c->idct_permutation_type= FF_LIBMPEG2_IDCT_PERM;
         }else if(avctx->idct_algo==FF_IDCT_FAAN){
@@ -2864,11 +2798,6 @@ av_cold void ff_dsputil_init(DSPContext* c, AVCodecContext *avctx)
     c->bswap_buf= bswap_buf;
     c->bswap16_buf = bswap16_buf;
 
-    if (CONFIG_H263_DECODER || CONFIG_H263_ENCODER) {
-        c->h263_h_loop_filter= h263_h_loop_filter_c;
-        c->h263_v_loop_filter= h263_v_loop_filter_c;
-    }
-
     c->try_8x8basis= try_8x8basis_c;
     c->add_8x8basis= add_8x8basis_c;
 
@@ -2912,13 +2841,20 @@ av_cold void ff_dsputil_init(DSPContext* c, AVCodecContext *avctx)
     }
 
 
-    if (HAVE_MMX)        ff_dsputil_init_mmx   (c, avctx);
-    if (ARCH_ARM)        ff_dsputil_init_arm   (c, avctx);
-    if (HAVE_VIS)        ff_dsputil_init_vis   (c, avctx);
-    if (ARCH_ALPHA)      ff_dsputil_init_alpha (c, avctx);
-    if (ARCH_PPC)        ff_dsputil_init_ppc   (c, avctx);
-    if (ARCH_SH4)        ff_dsputil_init_sh4   (c, avctx);
-    if (ARCH_BFIN)       ff_dsputil_init_bfin  (c, avctx);
+    if (ARCH_ALPHA)
+        ff_dsputil_init_alpha(c, avctx);
+    if (ARCH_ARM)
+        ff_dsputil_init_arm(c, avctx);
+    if (ARCH_BFIN)
+        ff_dsputil_init_bfin(c, avctx);
+    if (ARCH_PPC)
+        ff_dsputil_init_ppc(c, avctx);
+    if (ARCH_SH4)
+        ff_dsputil_init_sh4(c, avctx);
+    if (HAVE_VIS)
+        ff_dsputil_init_vis(c, avctx);
+    if (ARCH_X86)
+        ff_dsputil_init_x86(c, avctx);
 
     ff_init_scantable_permutation(c->idct_permutation,
                                   c->idct_permutation_type);

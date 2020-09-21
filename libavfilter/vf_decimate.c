@@ -43,6 +43,7 @@ typedef struct {
     AVFrame **clean_src;    ///< frame queue for the clean source
     int got_frame[2];       ///< frame request flag for each input stream
     double ts_unit;         ///< timestamp units for the output frames
+    int64_t start_pts;      ///< base for output timestamps
     uint32_t eof;           ///< bitmask for end of stream
     int hsub, vsub;         ///< chroma subsampling values
     int depth;
@@ -86,14 +87,14 @@ static void calc_diffs(const DecimateContext *dm, struct qitem *q,
 
     memset(bdiffs, 0, dm->bdiffsize * sizeof(*bdiffs));
 
-    for (plane = 0; plane < (dm->chroma ? 3 : 1); plane++) {
+    for (plane = 0; plane < (dm->chroma && f1->data[2] ? 3 : 1); plane++) {
         int x, y, xl;
         const int linesize1 = f1->linesize[plane];
         const int linesize2 = f2->linesize[plane];
         const uint8_t *f1p = f1->data[plane];
         const uint8_t *f2p = f2->data[plane];
-        int width    = plane ? f1->width  >> dm->hsub : f1->width;
-        int height   = plane ? f1->height >> dm->vsub : f1->height;
+        int width    = plane ? FF_CEIL_RSHIFT(f1->width,  dm->hsub) : f1->width;
+        int height   = plane ? FF_CEIL_RSHIFT(f1->height, dm->vsub) : f1->height;
         int hblockx  = dm->blockx / 2;
         int hblocky  = dm->blocky / 2;
 
@@ -210,11 +211,14 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
             av_frame_free(&dm->queue[i].frame);
         } else {
             AVFrame *frame = dm->queue[i].frame;
+            if (frame->pts != AV_NOPTS_VALUE && dm->start_pts == AV_NOPTS_VALUE)
+                dm->start_pts = frame->pts;
             if (dm->ppsrc) {
                 av_frame_free(&frame);
                 frame = dm->clean_src[i];
             }
-            frame->pts = outlink->frame_count * dm->ts_unit;
+            frame->pts = outlink->frame_count * dm->ts_unit +
+                         (dm->start_pts == AV_NOPTS_VALUE ? 0 : dm->start_pts);
             ret = ff_filter_frame(outlink, frame);
             if (ret < 0)
                 break;
@@ -259,7 +263,7 @@ static int config_input(AVFilterLink *inlink)
 
 static av_cold int decimate_init(AVFilterContext *ctx)
 {
-    const DecimateContext *dm = ctx->priv;
+    DecimateContext *dm = ctx->priv;
     AVFilterPad pad = {
         .name         = av_strdup("main"),
         .type         = AVMEDIA_TYPE_VIDEO,
@@ -284,6 +288,8 @@ static av_cold int decimate_init(AVFilterContext *ctx)
         av_log(ctx, AV_LOG_ERROR, "blockx and blocky settings must be power of two\n");
         return AVERROR(EINVAL);
     }
+
+    dm->start_pts = AV_NOPTS_VALUE;
 
     return 0;
 }
@@ -340,8 +346,8 @@ static int query_formats(AVFilterContext *ctx)
 #define PF_ALPHA(suf)   AV_PIX_FMT_YUVA420##suf, AV_PIX_FMT_YUVA422##suf, AV_PIX_FMT_YUVA444##suf
 #define PF(suf)         PF_NOALPHA(suf), PF_ALPHA(suf)
         PF(P), PF(P9), PF(P10), PF_NOALPHA(P12), PF_NOALPHA(P14), PF(P16),
-        AV_PIX_FMT_YUV411P, AV_PIX_FMT_YUV410P,
-        AV_PIX_FMT_GRAY8,
+        AV_PIX_FMT_YUV440P, AV_PIX_FMT_YUV411P, AV_PIX_FMT_YUV410P,
+        AV_PIX_FMT_GRAY8, AV_PIX_FMT_GRAY16,
         AV_PIX_FMT_NONE
     };
     ff_set_common_formats(ctx, ff_make_format_list(pix_fmts));
@@ -384,7 +390,7 @@ static const AVFilterPad decimate_outputs[] = {
     { NULL }
 };
 
-AVFilter avfilter_vf_decimate = {
+AVFilter ff_vf_decimate = {
     .name          = "decimate",
     .description   = NULL_IF_CONFIG_SMALL("Decimate frames (post field matching filter)."),
     .init          = decimate_init,

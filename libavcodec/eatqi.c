@@ -111,8 +111,9 @@ static int tqi_decode_frame(AVCodecContext *avctx,
     tqi_calculate_qtable(s, buf[4]);
     buf += 8;
 
-    if (s->avctx->width!=s->width || s->avctx->height!=s->height)
-        avcodec_set_dimensions(s->avctx, s->width, s->height);
+    ret = ff_set_dimensions(s->avctx, s->width, s->height);
+    if (ret < 0)
+        return ret;
 
     if ((ret = ff_get_buffer(avctx, frame, 0)) < 0)
         return ret;
@@ -147,6 +148,7 @@ static av_cold int tqi_decode_end(AVCodecContext *avctx)
 
 AVCodec ff_eatqi_decoder = {
     .name           = "eatqi",
+    .long_name      = NULL_IF_CONFIG_SMALL("Electronic Arts TQI Video"),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_TQI,
     .priv_data_size = sizeof(TqiContext),
@@ -154,5 +156,4 @@ AVCodec ff_eatqi_decoder = {
     .close          = tqi_decode_end,
     .decode         = tqi_decode_frame,
     .capabilities   = CODEC_CAP_DR1,
-    .long_name      = NULL_IF_CONFIG_SMALL("Electronic Arts TQI Video"),
 };

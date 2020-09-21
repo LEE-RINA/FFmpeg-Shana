@@ -254,6 +254,9 @@ static int decode_wdlt(GetByteContext *gb, uint8_t *frame, int width, int height
             y        += skip_lines;
             segments = bytestream2_get_le16(gb);
         }
+
+        if (frame_end <= frame)
+            return AVERROR_INVALIDDATA;
         if (segments & 0x8000) {
             frame[width - 1] = segments & 0xFF;
             segments = bytestream2_get_le16(gb);
@@ -405,6 +408,7 @@ static av_cold int dfa_decode_end(AVCodecContext *avctx)
 
 AVCodec ff_dfa_decoder = {
     .name           = "dfa",
+    .long_name      = NULL_IF_CONFIG_SMALL("Chronomaster DFA"),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_DFA,
     .priv_data_size = sizeof(DfaContext),
@@ -412,5 +416,4 @@ AVCodec ff_dfa_decoder = {
     .close          = dfa_decode_end,
     .decode         = dfa_decode_frame,
     .capabilities   = CODEC_CAP_DR1,
-    .long_name      = NULL_IF_CONFIG_SMALL("Chronomaster DFA"),
 };

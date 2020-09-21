@@ -26,6 +26,8 @@
 
 #include <stddef.h>
 
+#include "libavutil/attributes.h"
+
 #undef PREFETCH
 #undef MOVNTQ
 #undef EMMS
@@ -1852,7 +1854,7 @@ static inline void RENAME(rgb24toyv12)(const uint8_t *src, uint8_t *ydst, uint8_
 #endif /* HAVE_7REGS */
 #endif /* !COMPILE_TEMPLATE_SSE2 */
 
-#if !COMPILE_TEMPLATE_AMD3DNOW
+#if !COMPILE_TEMPLATE_AMD3DNOW && !COMPILE_TEMPLATE_AVX
 static void RENAME(interleaveBytes)(const uint8_t *src1, const uint8_t *src2, uint8_t *dest,
                                     int width, int height, int src1Stride,
                                     int src2Stride, int dstStride)
@@ -1915,6 +1917,32 @@ static void RENAME(interleaveBytes)(const uint8_t *src1, const uint8_t *src2, ui
         dest += dstStride;
         src1 += src1Stride;
         src2 += src2Stride;
+    }
+    __asm__(
+            EMMS"       \n\t"
+            SFENCE"     \n\t"
+            ::: "memory"
+            );
+}
+#endif /* !COMPILE_TEMPLATE_AMD3DNOW && !COMPILE_TEMPLATE_AVX*/
+
+#if !COMPILE_TEMPLATE_AMD3DNOW && (ARCH_X86_32 || COMPILE_TEMPLATE_SSE2) && COMPILE_TEMPLATE_MMXEXT == COMPILE_TEMPLATE_SSE2 && HAVE_YASM
+void RENAME(ff_nv12ToUV)(uint8_t *dstU, uint8_t *dstV,
+                                const uint8_t *unused0,
+                                const uint8_t *src1,
+                                const uint8_t *src2,
+                                int w, uint32_t *unused);
+static void RENAME(deinterleaveBytes)(const uint8_t *src, uint8_t *dst1, uint8_t *dst2,
+                                      int width, int height, int srcStride,
+                                      int dst1Stride, int dst2Stride)
+{
+    int h;
+
+    for (h=0; h < height; h++) {
+        RENAME(ff_nv12ToUV)(dst1, dst2, NULL, src, NULL, width, NULL);
+        src += srcStride;
+        dst1 += dst1Stride;
+        dst2 += dst2Stride;
     }
     __asm__(
             EMMS"       \n\t"
@@ -2352,7 +2380,7 @@ static void RENAME(yuyvtoyuv420)(uint8_t *ydst, uint8_t *udst, uint8_t *vdst, co
                                  int lumStride, int chromStride, int srcStride)
 {
     int y;
-    const int chromWidth= -((-width)>>1);
+    const int chromWidth = FF_CEIL_RSHIFT(width, 1);
 
     for (y=0; y<height; y++) {
         RENAME(extract_even)(src, ydst, width);
@@ -2378,7 +2406,7 @@ static void RENAME(yuyvtoyuv422)(uint8_t *ydst, uint8_t *udst, uint8_t *vdst, co
                                  int lumStride, int chromStride, int srcStride)
 {
     int y;
-    const int chromWidth= -((-width)>>1);
+    const int chromWidth = FF_CEIL_RSHIFT(width, 1);
 
     for (y=0; y<height; y++) {
         RENAME(extract_even)(src, ydst, width);
@@ -2402,7 +2430,7 @@ static void RENAME(uyvytoyuv420)(uint8_t *ydst, uint8_t *udst, uint8_t *vdst, co
                                  int lumStride, int chromStride, int srcStride)
 {
     int y;
-    const int chromWidth= -((-width)>>1);
+    const int chromWidth = FF_CEIL_RSHIFT(width, 1);
 
     for (y=0; y<height; y++) {
         RENAME(extract_even)(src+1, ydst, width);
@@ -2428,7 +2456,7 @@ static void RENAME(uyvytoyuv422)(uint8_t *ydst, uint8_t *udst, uint8_t *vdst, co
                                  int lumStride, int chromStride, int srcStride)
 {
     int y;
-    const int chromWidth= -((-width)>>1);
+    const int chromWidth = FF_CEIL_RSHIFT(width, 1);
 
     for (y=0; y<height; y++) {
         RENAME(extract_even)(src+1, ydst, width);
@@ -2448,7 +2476,7 @@ static void RENAME(uyvytoyuv422)(uint8_t *ydst, uint8_t *udst, uint8_t *vdst, co
 #endif /* !COMPILE_TEMPLATE_AMD3DNOW */
 #endif /* !COMPILE_TEMPLATE_SSE2 */
 
-static inline void RENAME(rgb2rgb_init)(void)
+static av_cold void RENAME(rgb2rgb_init)(void)
 {
 #if !COMPILE_TEMPLATE_SSE2
 #if !COMPILE_TEMPLATE_AMD3DNOW
@@ -2492,7 +2520,10 @@ static inline void RENAME(rgb2rgb_init)(void)
     uyvytoyuv420       = RENAME(uyvytoyuv420);
 #endif /* !COMPILE_TEMPLATE_SSE2 */
 
-#if !COMPILE_TEMPLATE_AMD3DNOW
+#if !COMPILE_TEMPLATE_AMD3DNOW && !COMPILE_TEMPLATE_AVX
     interleaveBytes    = RENAME(interleaveBytes);
-#endif /* !COMPILE_TEMPLATE_AMD3DNOW */
+#endif /* !COMPILE_TEMPLATE_AMD3DNOW  && !COMPILE_TEMPLATE_AVX*/
+#if !COMPILE_TEMPLATE_AMD3DNOW && (ARCH_X86_32 || COMPILE_TEMPLATE_SSE2) && COMPILE_TEMPLATE_MMXEXT == COMPILE_TEMPLATE_SSE2 && HAVE_YASM
+    deinterleaveBytes  = RENAME(deinterleaveBytes);
+#endif
 }

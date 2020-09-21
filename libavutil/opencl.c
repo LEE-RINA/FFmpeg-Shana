@@ -1,7 +1,8 @@
 /*
- * Copyright (C) 2012 Peng Gao <peng@multicorewareinc.com>
- * Copyright (C) 2012 Li   Cao <li@multicorewareinc.com>
- * Copyright (C) 2012 Wei  Gao <weigao@multicorewareinc.com>
+ * Copyright (C) 2012 Peng  Gao     <peng@multicorewareinc.com>
+ * Copyright (C) 2012 Li    Cao     <li@multicorewareinc.com>
+ * Copyright (C) 2012 Wei   Gao     <weigao@multicorewareinc.com>
+ * Copyright (C) 2013 Lenny Wang    <lwanghpc@gmail.com>
  *
  * This file is part of FFmpeg.
  *
@@ -31,16 +32,14 @@
 #include <pthread.h>
 static pthread_mutex_t atomic_opencl_lock = PTHREAD_MUTEX_INITIALIZER;
 
-#define LOCK_OPENCL pthread_mutex_lock(&atomic_opencl_lock);
-#define UNLOCK_OPENCL pthread_mutex_unlock(&atomic_opencl_lock);
+#define LOCK_OPENCL pthread_mutex_lock(&atomic_opencl_lock)
+#define UNLOCK_OPENCL pthread_mutex_unlock(&atomic_opencl_lock)
 
 #elif !HAVE_THREADS
 #define LOCK_OPENCL
 #define UNLOCK_OPENCL
 #endif
 
-
-#define MAX_KERNEL_NUM 500
 #define MAX_KERNEL_CODE_NUM 200
 
 typedef struct {
@@ -61,17 +60,19 @@ typedef struct {
     int is_user_created;
     int platform_idx;
     int device_idx;
-    char *build_options;
     cl_platform_id platform_id;
     cl_device_type device_type;
     cl_context context;
     cl_device_id device_id;
     cl_command_queue command_queue;
+#if FF_API_OLD_OPENCL
+    char *build_options;
     int program_count;
     cl_program programs[MAX_KERNEL_CODE_NUM];
+    int kernel_count;
+#endif
     int kernel_code_count;
     KernelCode kernel_code[MAX_KERNEL_CODE_NUM];
-    int kernel_count;
     AVOpenCLDeviceList device_list;
 } OpenclContext;
 
@@ -80,7 +81,10 @@ typedef struct {
 static const AVOption opencl_options[] = {
      { "platform_idx",        "set platform index value",  OFFSET(platform_idx),  AV_OPT_TYPE_INT,    {.i64=-1}, -1, INT_MAX},
      { "device_idx",          "set device index value",    OFFSET(device_idx),    AV_OPT_TYPE_INT,    {.i64=-1}, -1, INT_MAX},
+#if FF_API_OLD_OPENCL
      { "build_options",       "build options of opencl",   OFFSET(build_options), AV_OPT_TYPE_STRING, {.str="-I."},  CHAR_MIN, CHAR_MAX},
+#endif
+     { NULL }
 };
 
 static const AVClass openclutils_class = {
@@ -162,7 +166,7 @@ static const OpenclErrorMsg opencl_err_msg[] = {
     {CL_INVALID_DEVICE_PARTITION_COUNT,                 "INVALID DEVICE PARTITION COUNT"},
 };
 
-static const char *opencl_errstr(cl_int status)
+const char *av_opencl_errstr(cl_int status)
 {
     int i;
     for (i = 0; i < sizeof(opencl_err_msg); i++) {
@@ -193,7 +197,7 @@ static void free_device_list(AVOpenCLDeviceList *device_list)
 static int get_device_list(AVOpenCLDeviceList *device_list)
 {
     cl_int status;
-    int i, j, k, device_num, total_devices_num,ret = 0;
+    int i, j, k, device_num, total_devices_num, ret = 0;
     int *devices_num;
     cl_platform_id *platform_ids = NULL;
     cl_device_id *device_ids = NULL;
@@ -201,7 +205,7 @@ static int get_device_list(AVOpenCLDeviceList *device_list)
     status = clGetPlatformIDs(0, NULL, &device_list->platform_num);
     if (status != CL_SUCCESS) {
         av_log(&opencl_ctx, AV_LOG_ERROR,
-               "Could not get OpenCL platform ids: %s\n", opencl_errstr(status));
+               "Could not get OpenCL platform ids: %s\n", av_opencl_errstr(status));
         return AVERROR_EXTERNAL;
     }
     platform_ids = av_mallocz(device_list->platform_num * sizeof(cl_platform_id));
@@ -210,7 +214,7 @@ static int get_device_list(AVOpenCLDeviceList *device_list)
     status = clGetPlatformIDs(device_list->platform_num, platform_ids, NULL);
     if (status != CL_SUCCESS) {
         av_log(&opencl_ctx, AV_LOG_ERROR,
-                "Could not get OpenCL platform ids: %s\n", opencl_errstr(status));
+                "Could not get OpenCL platform ids: %s\n", av_opencl_errstr(status));
         ret = AVERROR_EXTERNAL;
         goto end;
     }
@@ -256,7 +260,7 @@ static int get_device_list(AVOpenCLDeviceList *device_list)
                                         devices_num[j], device_ids, NULL);
                 if (status != CL_SUCCESS) {
                     av_log(&opencl_ctx, AV_LOG_WARNING,
-                            "Could not get device ID: %s:\n", opencl_errstr(status));
+                            "Could not get device ID: %s:\n", av_opencl_errstr(status));
                     av_freep(&device_ids);
                     continue;
                 }
@@ -275,7 +279,7 @@ static int get_device_list(AVOpenCLDeviceList *device_list)
                                              NULL);
                     if (status != CL_SUCCESS) {
                         av_log(&opencl_ctx, AV_LOG_WARNING,
-                                "Could not get device name: %s\n", opencl_errstr(status));
+                                "Could not get device name: %s\n", av_opencl_errstr(status));
                         continue;
                     }
                     device_list->platform_node[i]->device_num++;
@@ -320,31 +324,31 @@ void av_opencl_free_device_list(AVOpenCLDeviceList **device_list)
 int av_opencl_set_option(const char *key, const char *val)
 {
     int ret = 0;
-    LOCK_OPENCL
+    LOCK_OPENCL;
     if (!opencl_ctx.opt_init_flag) {
         av_opt_set_defaults(&opencl_ctx);
         opencl_ctx.opt_init_flag = 1;
     }
     ret = av_opt_set(&opencl_ctx, key, val, 0);
-    UNLOCK_OPENCL
+    UNLOCK_OPENCL;
     return ret;
 }
 
 int av_opencl_get_option(const char *key, uint8_t **out_val)
 {
     int ret = 0;
-    LOCK_OPENCL
+    LOCK_OPENCL;
     ret = av_opt_get(&opencl_ctx, key, 0, out_val);
-    UNLOCK_OPENCL
+    UNLOCK_OPENCL;
     return ret;
 }
 
 void av_opencl_free_option(void)
 {
     /*FIXME: free openclutils context*/
-    LOCK_OPENCL
+    LOCK_OPENCL;
     av_opt_free(&opencl_ctx);
-    UNLOCK_OPENCL
+    UNLOCK_OPENCL;
 }
 
 AVOpenCLExternalEnv *av_opencl_alloc_external_env(void)
@@ -387,66 +391,72 @@ end:
     return ret;
 }
 
-int av_opencl_create_kernel(AVOpenCLKernelEnv *env, const char *kernel_name)
+cl_program av_opencl_compile(const char *program_name, const char *build_opts)
 {
+    int i;
     cl_int status;
-    int i, ret = 0;
+    int kernel_code_idx = 0;
+    const char *kernel_source;
+    size_t kernel_code_len;
+    char* ptr = NULL;
+    cl_program program = NULL;
+
     LOCK_OPENCL;
-    if (strlen(kernel_name) + 1 > AV_OPENCL_MAX_KERNEL_NAME_SIZE) {
-        av_log(&opencl_ctx, AV_LOG_ERROR, "Created kernel name %s is too long\n", kernel_name);
-        ret = AVERROR(EINVAL);
+    for (i = 0; i < opencl_ctx.kernel_code_count; i++) {
+        // identify a program using a unique name within the kernel source
+        ptr = av_stristr(opencl_ctx.kernel_code[i].kernel_string, program_name);
+        if (ptr && !opencl_ctx.kernel_code[i].is_compiled) {
+            kernel_source = opencl_ctx.kernel_code[i].kernel_string;
+            kernel_code_len = strlen(opencl_ctx.kernel_code[i].kernel_string);
+            kernel_code_idx = i;
+            break;
+        }
+    }
+    if (!kernel_source) {
+        av_log(&opencl_ctx, AV_LOG_ERROR,
+               "Unable to find OpenCL kernel source '%s'\n", program_name);
         goto end;
     }
-    if (!env->kernel) {
-        if (opencl_ctx.kernel_count >= MAX_KERNEL_NUM) {
-            av_log(&opencl_ctx, AV_LOG_ERROR,
-                   "Could not create kernel with name '%s', maximum number of kernels %d already reached\n",
-                   kernel_name, MAX_KERNEL_NUM);
-            ret = AVERROR(EINVAL);
-            goto end;
-        }
-        if (opencl_ctx.program_count == 0) {
-            av_log(&opencl_ctx, AV_LOG_ERROR, "Program count of OpenCL is 0, can not create kernel\n");
-            ret = AVERROR(EINVAL);
-            goto end;
-        }
-        for (i = 0; i < opencl_ctx.program_count; i++) {
-            env->kernel = clCreateKernel(opencl_ctx.programs[i], kernel_name, &status);
-            if (status == CL_SUCCESS)
-                break;
-        }
-        if (status != CL_SUCCESS) {
-            av_log(&opencl_ctx, AV_LOG_ERROR, "Could not create OpenCL kernel: %s\n", opencl_errstr(status));
-            ret = AVERROR_EXTERNAL;
-            goto end;
-        }
-        opencl_ctx.kernel_count++;
-        env->command_queue = opencl_ctx.command_queue;
-        av_strlcpy(env->kernel_name, kernel_name, sizeof(env->kernel_name));
+
+    /* create a CL program from kernel source */
+    program = clCreateProgramWithSource(opencl_ctx.context, 1, &kernel_source, &kernel_code_len, &status);
+    if(status != CL_SUCCESS) {
+        av_log(&opencl_ctx, AV_LOG_ERROR,
+               "Unable to create OpenCL program '%s': %s\n", program_name, av_opencl_errstr(status));
+        program = NULL;
+        goto end;
     }
+    status = clBuildProgram(program, 1, &(opencl_ctx.device_id), build_opts, NULL, NULL);
+    if (status != CL_SUCCESS) {
+        av_log(&opencl_ctx, AV_LOG_ERROR,
+               "Compilation failed with OpenCL program: %s\n", program_name);
+        program = NULL;
+        goto end;
+    }
+
+    opencl_ctx.kernel_code[kernel_code_idx].is_compiled = 1;
 end:
     UNLOCK_OPENCL;
-    return ret;
+    return program;
+}
+
+cl_command_queue av_opencl_get_command_queue(void)
+{
+    return opencl_ctx.command_queue;
+}
+
+#if FF_API_OLD_OPENCL
+int av_opencl_create_kernel(AVOpenCLKernelEnv *env, const char *kernel_name)
+{
+    av_log(&opencl_ctx, AV_LOG_ERROR, "Could not create OpenCL kernel %s, please update libavfilter.\n", kernel_name);
+    return AVERROR(EINVAL);
 }
 
 void av_opencl_release_kernel(AVOpenCLKernelEnv *env)
 {
-    cl_int status;
-    LOCK_OPENCL
-    if (!env->kernel)
-        goto end;
-    status = clReleaseKernel(env->kernel);
-    if (status != CL_SUCCESS) {
-        av_log(&opencl_ctx, AV_LOG_ERROR, "Could not release kernel: %s\n",
-              opencl_errstr(status));
-    }
-    env->kernel = NULL;
-    env->command_queue = NULL;
-    env->kernel_name[0] = 0;
-    opencl_ctx.kernel_count--;
-end:
-    UNLOCK_OPENCL
+    av_log(&opencl_ctx, AV_LOG_ERROR, "Could not release OpenCL kernel, please update libavfilter.\n");
 }
+#endif
 
 static int init_opencl_env(OpenclContext *opencl_ctx, AVOpenCLExternalEnv *ext_opencl_env)
 {
@@ -515,9 +525,9 @@ static int init_opencl_env(OpenclContext *opencl_ctx, AVOpenCLExternalEnv *ext_o
             /*
              * Use available platform.
              */
-            av_log(opencl_ctx, AV_LOG_VERBOSE, "Platform Name: %s, device id: 0x%x\n",
+            av_log(opencl_ctx, AV_LOG_VERBOSE, "Platform Name: %s, Device Name: %s\n",
                    opencl_ctx->device_list.platform_node[opencl_ctx->platform_idx]->platform_name,
-                   (unsigned int)opencl_ctx->device_id);
+                   device_node->device_name);
             cps[0] = CL_CONTEXT_PLATFORM;
             cps[1] = (cl_context_properties)opencl_ctx->platform_id;
             cps[2] = 0;
@@ -526,14 +536,14 @@ static int init_opencl_env(OpenclContext *opencl_ctx, AVOpenCLExternalEnv *ext_o
                                                        NULL, NULL, &status);
             if (status != CL_SUCCESS) {
                 av_log(opencl_ctx, AV_LOG_ERROR,
-                       "Could not get OpenCL context from device type: %s\n", opencl_errstr(status));
+                       "Could not get OpenCL context from device type: %s\n", av_opencl_errstr(status));
                 return AVERROR_EXTERNAL;
             }
             opencl_ctx->command_queue = clCreateCommandQueue(opencl_ctx->context, opencl_ctx->device_id,
                                                           0, &status);
             if (status != CL_SUCCESS) {
                 av_log(opencl_ctx, AV_LOG_ERROR,
-                       "Could not create OpenCL command queue: %s\n", opencl_errstr(status));
+                       "Could not create OpenCL command queue: %s\n", av_opencl_errstr(status));
                 return AVERROR_EXTERNAL;
             }
         }
@@ -541,53 +551,10 @@ static int init_opencl_env(OpenclContext *opencl_ctx, AVOpenCLExternalEnv *ext_o
     return ret;
 }
 
-static int compile_kernel_file(OpenclContext *opencl_ctx)
-{
-    cl_int status;
-    int i, kernel_code_count = 0;
-    const char *kernel_code[MAX_KERNEL_CODE_NUM] = {NULL};
-    size_t kernel_code_len[MAX_KERNEL_CODE_NUM] = {0};
-
-    for (i = 0; i < opencl_ctx->kernel_code_count; i++) {
-        if (!opencl_ctx->kernel_code[i].is_compiled) {
-            kernel_code[kernel_code_count] = opencl_ctx->kernel_code[i].kernel_string;
-            kernel_code_len[kernel_code_count] = strlen(opencl_ctx->kernel_code[i].kernel_string);
-            opencl_ctx->kernel_code[i].is_compiled = 1;
-            kernel_code_count++;
-        }
-    }
-    if (!kernel_code_count)
-        return 0;
-    /* create a CL program using the kernel source */
-    opencl_ctx->programs[opencl_ctx->program_count] = clCreateProgramWithSource(opencl_ctx->context,
-                                                                                kernel_code_count,
-                                                                                kernel_code,
-                                                                                kernel_code_len,
-                                                                                &status);
-    if(status != CL_SUCCESS) {
-        av_log(opencl_ctx, AV_LOG_ERROR,
-               "Could not create OpenCL program with source code: %s\n", opencl_errstr(status));
-        return AVERROR_EXTERNAL;
-    }
-    if (!opencl_ctx->programs[opencl_ctx->program_count]) {
-        av_log(opencl_ctx, AV_LOG_ERROR, "Created program is NULL\n");
-        return AVERROR_EXTERNAL;
-    }
-    status = clBuildProgram(opencl_ctx->programs[opencl_ctx->program_count], 1, &(opencl_ctx->device_id),
-                            opencl_ctx->build_options, NULL, NULL);
-    if (status != CL_SUCCESS) {
-        av_log(opencl_ctx, AV_LOG_ERROR,
-               "Could not compile OpenCL kernel: %s\n", opencl_errstr(status));
-        return AVERROR_EXTERNAL;
-    }
-    opencl_ctx->program_count++;
-    return 0;
-}
-
 int av_opencl_init(AVOpenCLExternalEnv *ext_opencl_env)
 {
     int ret = 0;
-    LOCK_OPENCL
+    LOCK_OPENCL;
     if (!opencl_ctx.init_count) {
         if (!opencl_ctx.opt_init_flag) {
             av_opt_set_defaults(&opencl_ctx);
@@ -596,48 +563,33 @@ int av_opencl_init(AVOpenCLExternalEnv *ext_opencl_env)
         ret = init_opencl_env(&opencl_ctx, ext_opencl_env);
         if (ret < 0)
             goto end;
-    }
-    ret = compile_kernel_file(&opencl_ctx);
-    if (ret < 0)
-        goto end;
-    if (opencl_ctx.kernel_code_count <= 0) {
-        av_log(&opencl_ctx, AV_LOG_ERROR,
-               "No kernel code is registered, compile kernel file failed\n");
-        ret = AVERROR(EINVAL);
-        goto end;
+        if (opencl_ctx.kernel_code_count <= 0) {
+            av_log(&opencl_ctx, AV_LOG_ERROR,
+                   "No kernel code is registered, compile kernel file failed\n");
+            ret = AVERROR(EINVAL);
+            goto end;
+        }
     }
     opencl_ctx.init_count++;
-
 end:
-    UNLOCK_OPENCL
+    UNLOCK_OPENCL;
     return ret;
 }
 
 void av_opencl_uninit(void)
 {
     cl_int status;
-    int i;
-    LOCK_OPENCL
+    LOCK_OPENCL;
     opencl_ctx.init_count--;
     if (opencl_ctx.is_user_created)
         goto end;
-    if (opencl_ctx.init_count > 0 || opencl_ctx.kernel_count > 0)
+    if (opencl_ctx.init_count > 0)
         goto end;
-    for (i = 0; i < opencl_ctx.program_count; i++) {
-        if (opencl_ctx.programs[i]) {
-            status = clReleaseProgram(opencl_ctx.programs[i]);
-            if (status != CL_SUCCESS) {
-                av_log(&opencl_ctx, AV_LOG_ERROR,
-                       "Could not release OpenCL program: %s\n", opencl_errstr(status));
-            }
-            opencl_ctx.programs[i] = NULL;
-        }
-    }
     if (opencl_ctx.command_queue) {
         status = clReleaseCommandQueue(opencl_ctx.command_queue);
         if (status != CL_SUCCESS) {
             av_log(&opencl_ctx, AV_LOG_ERROR,
-                   "Could not release OpenCL command queue: %s\n", opencl_errstr(status));
+                   "Could not release OpenCL command queue: %s\n", av_opencl_errstr(status));
         }
         opencl_ctx.command_queue = NULL;
     }
@@ -645,15 +597,15 @@ void av_opencl_uninit(void)
         status = clReleaseContext(opencl_ctx.context);
         if (status != CL_SUCCESS) {
             av_log(&opencl_ctx, AV_LOG_ERROR,
-                   "Could not release OpenCL context: %s\n", opencl_errstr(status));
+                   "Could not release OpenCL context: %s\n", av_opencl_errstr(status));
         }
         opencl_ctx.context = NULL;
     }
     free_device_list(&opencl_ctx.device_list);
 end:
-    if ((opencl_ctx.init_count <= 0) && (opencl_ctx.kernel_count <= 0))
+    if (opencl_ctx.init_count <= 0)
         av_opt_free(&opencl_ctx); //FIXME: free openclutils context
-    UNLOCK_OPENCL
+    UNLOCK_OPENCL;
 }
 
 int av_opencl_buffer_create(cl_mem *cl_buf, size_t cl_buf_size, int flags, void *host_ptr)
@@ -661,7 +613,7 @@ int av_opencl_buffer_create(cl_mem *cl_buf, size_t cl_buf_size, int flags, void 
     cl_int status;
     *cl_buf = clCreateBuffer(opencl_ctx.context, flags, cl_buf_size, host_ptr, &status);
     if (status != CL_SUCCESS) {
-        av_log(&opencl_ctx, AV_LOG_ERROR, "Could not create OpenCL buffer: %s\n", opencl_errstr(status));
+        av_log(&opencl_ctx, AV_LOG_ERROR, "Could not create OpenCL buffer: %s\n", av_opencl_errstr(status));
         return AVERROR_EXTERNAL;
     }
     return 0;
@@ -675,7 +627,7 @@ void av_opencl_buffer_release(cl_mem *cl_buf)
     status = clReleaseMemObject(*cl_buf);
     if (status != CL_SUCCESS) {
         av_log(&opencl_ctx, AV_LOG_ERROR,
-               "Could not release OpenCL buffer: %s\n", opencl_errstr(status));
+               "Could not release OpenCL buffer: %s\n", av_opencl_errstr(status));
     }
     memset(cl_buf, 0, sizeof(*cl_buf));
 }
@@ -689,7 +641,7 @@ int av_opencl_buffer_write(cl_mem dst_cl_buf, uint8_t *src_buf, size_t buf_size)
 
     if (status != CL_SUCCESS) {
         av_log(&opencl_ctx, AV_LOG_ERROR,
-               "Could not map OpenCL buffer: %s\n", opencl_errstr(status));
+               "Could not map OpenCL buffer: %s\n", av_opencl_errstr(status));
         return AVERROR_EXTERNAL;
     }
     memcpy(mapped, src_buf, buf_size);
@@ -697,7 +649,7 @@ int av_opencl_buffer_write(cl_mem dst_cl_buf, uint8_t *src_buf, size_t buf_size)
     status = clEnqueueUnmapMemObject(opencl_ctx.command_queue, dst_cl_buf, mapped, 0, NULL, NULL);
     if (status != CL_SUCCESS) {
         av_log(&opencl_ctx, AV_LOG_ERROR,
-               "Could not unmap OpenCL buffer: %s\n", opencl_errstr(status));
+               "Could not unmap OpenCL buffer: %s\n", av_opencl_errstr(status));
         return AVERROR_EXTERNAL;
     }
     return 0;
@@ -712,7 +664,7 @@ int av_opencl_buffer_read(uint8_t *dst_buf, cl_mem src_cl_buf, size_t buf_size)
 
     if (status != CL_SUCCESS) {
         av_log(&opencl_ctx, AV_LOG_ERROR,
-               "Could not map OpenCL buffer: %s\n", opencl_errstr(status));
+               "Could not map OpenCL buffer: %s\n", av_opencl_errstr(status));
         return AVERROR_EXTERNAL;
     }
     memcpy(dst_buf, mapped, buf_size);
@@ -720,7 +672,7 @@ int av_opencl_buffer_read(uint8_t *dst_buf, cl_mem src_cl_buf, size_t buf_size)
     status = clEnqueueUnmapMemObject(opencl_ctx.command_queue, src_cl_buf, mapped, 0, NULL, NULL);
     if (status != CL_SUCCESS) {
         av_log(&opencl_ctx, AV_LOG_ERROR,
-               "Could not unmap OpenCL buffer: %s\n", opencl_errstr(status));
+               "Could not unmap OpenCL buffer: %s\n", av_opencl_errstr(status));
         return AVERROR_EXTERNAL;
     }
     return 0;
@@ -749,7 +701,7 @@ int av_opencl_buffer_write_image(cl_mem dst_cl_buf, size_t cl_buffer_size, int d
                                 0, NULL, NULL, &status);
     if (status != CL_SUCCESS) {
         av_log(&opencl_ctx, AV_LOG_ERROR,
-               "Could not map OpenCL buffer: %s\n", opencl_errstr(status));
+               "Could not map OpenCL buffer: %s\n", av_opencl_errstr(status));
         return AVERROR_EXTERNAL;
     }
     temp = mapped;
@@ -761,7 +713,7 @@ int av_opencl_buffer_write_image(cl_mem dst_cl_buf, size_t cl_buffer_size, int d
     status = clEnqueueUnmapMemObject(opencl_ctx.command_queue, dst_cl_buf, mapped, 0, NULL, NULL);
     if (status != CL_SUCCESS) {
         av_log(&opencl_ctx, AV_LOG_ERROR,
-               "Could not unmap OpenCL buffer: %s\n", opencl_errstr(status));
+               "Could not unmap OpenCL buffer: %s\n", av_opencl_errstr(status));
         return AVERROR_EXTERNAL;
     }
     return 0;
@@ -791,7 +743,7 @@ int av_opencl_buffer_read_image(uint8_t **dst_data, int *plane_size, int plane_n
 
     if (status != CL_SUCCESS) {
         av_log(&opencl_ctx, AV_LOG_ERROR,
-               "Could not map OpenCL buffer: %s\n", opencl_errstr(status));
+               "Could not map OpenCL buffer: %s\n", av_opencl_errstr(status));
         return AVERROR_EXTERNAL;
     }
     temp = mapped;
@@ -804,7 +756,7 @@ int av_opencl_buffer_read_image(uint8_t **dst_data, int *plane_size, int plane_n
     status = clEnqueueUnmapMemObject(opencl_ctx.command_queue, src_cl_buf, mapped, 0, NULL, NULL);
     if (status != CL_SUCCESS) {
         av_log(&opencl_ctx, AV_LOG_ERROR,
-               "Could not unmap OpenCL buffer: %s\n", opencl_errstr(status));
+               "Could not unmap OpenCL buffer: %s\n", av_opencl_errstr(status));
         return AVERROR_EXTERNAL;
     }
     return 0;

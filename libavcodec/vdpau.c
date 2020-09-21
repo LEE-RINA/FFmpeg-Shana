@@ -38,13 +38,22 @@
  * @{
  */
 
-int ff_vdpau_common_start_frame(AVCodecContext *avctx,
+AVVDPAUContext *av_alloc_vdpaucontext(void)
+{
+    return av_vdpau_alloc_context();
+}
+
+MAKE_ACCESSORS(AVVDPAUContext, vdpau_hwaccel, AVVDPAU_Render2, render2)
+
+int ff_vdpau_common_start_frame(Picture *pic,
                                 av_unused const uint8_t *buffer,
                                 av_unused uint32_t size)
 {
-    AVVDPAUContext *hwctx = avctx->hwaccel_context;
+    struct vdpau_picture_context *pic_ctx = pic->hwaccel_picture_private;
 
-    hwctx->bitstream_buffers_used = 0;
+    pic_ctx->bitstream_buffers_allocated = 0;
+    pic_ctx->bitstream_buffers_used      = 0;
+    pic_ctx->bitstream_buffers           = NULL;
     return 0;
 }
 
@@ -53,33 +62,39 @@ int ff_vdpau_common_start_frame(AVCodecContext *avctx,
     CONFIG_VC1_VDPAU_HWACCEL   || CONFIG_WMV3_VDPAU_HWACCEL
 int ff_vdpau_mpeg_end_frame(AVCodecContext *avctx)
 {
+    int res = 0;
     AVVDPAUContext *hwctx = avctx->hwaccel_context;
     MpegEncContext *s = avctx->priv_data;
-    VdpVideoSurface surf = ff_vdpau_get_surface_id(s->current_picture_ptr);
+    Picture *pic = s->current_picture_ptr;
+    struct vdpau_picture_context *pic_ctx = pic->hwaccel_picture_private;
+    VdpVideoSurface surf = ff_vdpau_get_surface_id(pic);
 
-    hwctx->render(hwctx->decoder, surf, (void *)&hwctx->info,
-                  hwctx->bitstream_buffers_used, hwctx->bitstream_buffers);
+    if (!hwctx->render) {
+        res = hwctx->render2(avctx, &pic->f, (void *)&pic_ctx->info,
+                             pic_ctx->bitstream_buffers_used, pic_ctx->bitstream_buffers);
+    } else
+    hwctx->render(hwctx->decoder, surf, (void *)&pic_ctx->info,
+                  pic_ctx->bitstream_buffers_used, pic_ctx->bitstream_buffers);
 
     ff_mpeg_draw_horiz_band(s, 0, s->avctx->height);
-    hwctx->bitstream_buffers_used = 0;
+    av_freep(&pic_ctx->bitstream_buffers);
 
-    return 0;
+    return res;
 }
 #endif
 
-int ff_vdpau_add_buffer(AVCodecContext *avctx,
-                        const uint8_t *buf, uint32_t size)
+int ff_vdpau_add_buffer(Picture *pic, const uint8_t *buf, uint32_t size)
 {
-    AVVDPAUContext *hwctx = avctx->hwaccel_context;
-    VdpBitstreamBuffer *buffers = hwctx->bitstream_buffers;
+    struct vdpau_picture_context *pic_ctx = pic->hwaccel_picture_private;
+    VdpBitstreamBuffer *buffers = pic_ctx->bitstream_buffers;
 
-    buffers = av_fast_realloc(buffers, &hwctx->bitstream_buffers_allocated,
-                              (hwctx->bitstream_buffers_used + 1) * sizeof(*buffers));
+    buffers = av_fast_realloc(buffers, &pic_ctx->bitstream_buffers_allocated,
+                              (pic_ctx->bitstream_buffers_used + 1) * sizeof(*buffers));
     if (!buffers)
         return AVERROR(ENOMEM);
 
-    hwctx->bitstream_buffers = buffers;
-    buffers += hwctx->bitstream_buffers_used++;
+    pic_ctx->bitstream_buffers = buffers;
+    buffers += pic_ctx->bitstream_buffers_used++;
 
     buffers->struct_version  = VDP_BITSTREAM_BUFFER_VERSION;
     buffers->bitstream       = buf;
@@ -307,7 +322,7 @@ void ff_vdpau_vc1_decode_picture(MpegEncContext *s, const uint8_t *buf,
     assert(render);
 
     /*  fill LvPictureInfoVC1 struct */
-    render->info.vc1.frame_coding_mode  = v->fcm;
+    render->info.vc1.frame_coding_mode  = v->fcm ? v->fcm + 1 : 0;
     render->info.vc1.postprocflag       = v->postprocflag;
     render->info.vc1.pulldown           = v->broadcast;
     render->info.vc1.interlace          = v->interlace;
@@ -422,5 +437,53 @@ void ff_vdpau_mpeg4_decode_picture(MpegEncContext *s, const uint8_t *buf,
     render->bitstream_buffers_used = 0;
 }
 #endif /* CONFIG_MPEG4_VDPAU_DECODER */
+
+int av_vdpau_get_profile(AVCodecContext *avctx, VdpDecoderProfile *profile)
+{
+#define PROFILE(prof)       \
+do {                        \
+    *profile = prof;        \
+    return 0;               \
+} while (0)
+
+    switch (avctx->codec_id) {
+    case AV_CODEC_ID_MPEG1VIDEO:               PROFILE(VDP_DECODER_PROFILE_MPEG1);
+    case AV_CODEC_ID_MPEG2VIDEO:
+        switch (avctx->profile) {
+        case FF_PROFILE_MPEG2_MAIN:            PROFILE(VDP_DECODER_PROFILE_MPEG2_MAIN);
+        case FF_PROFILE_MPEG2_SIMPLE:          PROFILE(VDP_DECODER_PROFILE_MPEG2_SIMPLE);
+        default:                               return AVERROR(EINVAL);
+        }
+    case AV_CODEC_ID_H263:                     PROFILE(VDP_DECODER_PROFILE_MPEG4_PART2_ASP);
+    case AV_CODEC_ID_MPEG4:
+        switch (avctx->profile) {
+        case FF_PROFILE_MPEG4_SIMPLE:          PROFILE(VDP_DECODER_PROFILE_MPEG4_PART2_SP);
+        case FF_PROFILE_MPEG4_ADVANCED_SIMPLE: PROFILE(VDP_DECODER_PROFILE_MPEG4_PART2_ASP);
+        default:                               return AVERROR(EINVAL);
+        }
+    case AV_CODEC_ID_H264:
+        switch (avctx->profile) {
+        case FF_PROFILE_H264_CONSTRAINED_BASELINE:
+        case FF_PROFILE_H264_BASELINE:         PROFILE(VDP_DECODER_PROFILE_H264_BASELINE);
+        case FF_PROFILE_H264_MAIN:             PROFILE(VDP_DECODER_PROFILE_H264_MAIN);
+        case FF_PROFILE_H264_HIGH:             PROFILE(VDP_DECODER_PROFILE_H264_HIGH);
+        default:                               return AVERROR(EINVAL);
+        }
+    case AV_CODEC_ID_WMV3:
+    case AV_CODEC_ID_VC1:
+        switch (avctx->profile) {
+        case FF_PROFILE_VC1_SIMPLE:            PROFILE(VDP_DECODER_PROFILE_VC1_SIMPLE);
+        case FF_PROFILE_VC1_MAIN:              PROFILE(VDP_DECODER_PROFILE_VC1_MAIN);
+        case FF_PROFILE_VC1_ADVANCED:          PROFILE(VDP_DECODER_PROFILE_VC1_ADVANCED);
+        default:                               return AVERROR(EINVAL);
+        }
+    }
+    return AVERROR(EINVAL);
+}
+
+AVVDPAUContext *av_vdpau_alloc_context(void)
+{
+    return av_mallocz(sizeof(AVVDPAUContext));
+}
 
 /* @}*/

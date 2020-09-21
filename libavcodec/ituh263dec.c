@@ -28,10 +28,9 @@
  */
 
 #define UNCHECKED_BITSTREAM_READER 1
-
-//#define DEBUG
 #include <limits.h>
 
+#include "libavutil/attributes.h"
 #include "libavutil/internal.h"
 #include "libavutil/mathematics.h"
 #include "avcodec.h"
@@ -100,7 +99,7 @@ static VLC cbpc_b_vlc;
 /* init vlcs */
 
 /* XXX: find a better solution to handle static init */
-void ff_h263_decode_init_vlc(void)
+av_cold void ff_h263_decode_init_vlc(void)
 {
     static volatile int done = 0;
 
@@ -875,6 +874,10 @@ int ff_h263_decode_picture_header(MpegEncContext *s)
 
     align_get_bits(&s->gb);
 
+    if (show_bits(&s->gb, 2) == 2 && s->avctx->frame_number == 0) {
+         av_log(s->avctx, AV_LOG_WARNING, "Header looks like RTP instead of H.263\n");
+    }
+
     startcode= get_bits(&s->gb, 22-8);
 
     for(i= get_bits_left(&s->gb); i>24; i-=8) {
@@ -892,7 +895,6 @@ int ff_h263_decode_picture_header(MpegEncContext *s)
     i = get_bits(&s->gb, 8); /* picture timestamp */
     if( (s->picture_number&~0xFF)+i < s->picture_number)
         i+= 256;
-    s->current_picture_ptr->f.pts =
     s->picture_number= (s->picture_number&~0xFF) + i;
 
     /* PTYPE starts here */
@@ -1034,6 +1036,7 @@ int ff_h263_decode_picture_header(MpegEncContext *s)
                 height = ff_h263_format[format][1];
                 s->avctx->sample_aspect_ratio= (AVRational){12,11};
             }
+            s->avctx->sample_aspect_ratio.den <<= s->ehc_mode;
             if ((width == 0) || (height == 0))
                 return -1;
             s->width = width;
@@ -1110,9 +1113,8 @@ int ff_h263_decode_picture_header(MpegEncContext *s)
     }
 
     /* PEI */
-    while (get_bits1(&s->gb) != 0) {
-        skip_bits(&s->gb, 8);
-    }
+    if (skip_1stop_8data_bits(&s->gb) < 0)
+        return AVERROR_INVALIDDATA;
 
     if(s->h263_slice_structured){
         if (get_bits1(&s->gb) != 1) {

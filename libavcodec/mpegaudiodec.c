@@ -24,6 +24,7 @@
  * MPEG Audio decoder
  */
 
+#include "libavutil/attributes.h"
 #include "libavutil/avassert.h"
 #include "libavutil/channel_layout.h"
 #include "libavutil/float_dsp.h"
@@ -166,7 +167,7 @@ static const int32_t scale_factor_mult2[3][3] = {
  * Convert region offsets to region sizes and truncate
  * size to big_values.
  */
-static void ff_region_offset2size(GranuleDef *g)
+static void region_offset2size(GranuleDef *g)
 {
     int i, k, j = 0;
     g->region_size[2] = 576 / 2;
@@ -177,7 +178,7 @@ static void ff_region_offset2size(GranuleDef *g)
     }
 }
 
-static void ff_init_short_region(MPADecodeContext *s, GranuleDef *g)
+static void init_short_region(MPADecodeContext *s, GranuleDef *g)
 {
     if (g->block_type == 2) {
         if (s->sample_rate_index != 8)
@@ -195,7 +196,8 @@ static void ff_init_short_region(MPADecodeContext *s, GranuleDef *g)
     g->region_size[1] = (576 / 2);
 }
 
-static void ff_init_long_region(MPADecodeContext *s, GranuleDef *g, int ra1, int ra2)
+static void init_long_region(MPADecodeContext *s, GranuleDef *g,
+                             int ra1, int ra2)
 {
     int l;
     g->region_size[0] = band_index_long[s->sample_rate_index][ra1 + 1] >> 1;
@@ -204,7 +206,7 @@ static void ff_init_long_region(MPADecodeContext *s, GranuleDef *g, int ra1, int
     g->region_size[1] = band_index_long[s->sample_rate_index][      l] >> 1;
 }
 
-static void ff_compute_band_indexes(MPADecodeContext *s, GranuleDef *g)
+static void compute_band_indexes(MPADecodeContext *s, GranuleDef *g)
 {
     if (g->block_type == 2) {
         if (g->switch_point) {
@@ -1372,7 +1374,7 @@ static int mp_decode_layer3(MPADecodeContext *s)
                     g->table_select[i] = get_bits(&s->gb, 5);
                 for (i = 0; i < 3; i++)
                     g->subblock_gain[i] = get_bits(&s->gb, 3);
-                ff_init_short_region(s, g);
+                init_short_region(s, g);
             } else {
                 int region_address1, region_address2;
                 g->block_type = 0;
@@ -1384,10 +1386,10 @@ static int mp_decode_layer3(MPADecodeContext *s)
                 region_address2 = get_bits(&s->gb, 3);
                 av_dlog(s->avctx, "region1=%d region2=%d\n",
                         region_address1, region_address2);
-                ff_init_long_region(s, g, region_address1, region_address2);
+                init_long_region(s, g, region_address1, region_address2);
             }
-            ff_region_offset2size(g);
-            ff_compute_band_indexes(s, g);
+            region_offset2size(g);
+            compute_band_indexes(s, g);
 
             g->preflag = 0;
             if (!s->lsf)
@@ -1845,7 +1847,7 @@ static av_cold int decode_close_mp3on4(AVCodecContext * avctx)
 }
 
 
-static int decode_init_mp3on4(AVCodecContext * avctx)
+static av_cold int decode_init_mp3on4(AVCodecContext * avctx)
 {
     MP3On4DecodeContext *s = avctx->priv_data;
     MPEG4AudioConfig cfg;
@@ -1961,7 +1963,8 @@ static int decode_frame_mp3on4(AVCodecContext *avctx, void *data,
 
         avpriv_mpegaudio_decode_header((MPADecodeHeader *)m, header);
 
-        if (ch + m->nb_channels > avctx->channels || s->coff[fr] + m->nb_channels > avctx->channels) {
+        if (ch + m->nb_channels > avctx->channels ||
+            s->coff[fr] + m->nb_channels > avctx->channels) {
             av_log(avctx, AV_LOG_ERROR, "frame channel count exceeds codec "
                                         "channel count\n");
             return AVERROR_INVALIDDATA;
@@ -1996,6 +1999,7 @@ static int decode_frame_mp3on4(AVCodecContext *avctx, void *data,
 #if CONFIG_MP1_DECODER
 AVCodec ff_mp1_decoder = {
     .name           = "mp1",
+    .long_name      = NULL_IF_CONFIG_SMALL("MP1 (MPEG audio layer 1)"),
     .type           = AVMEDIA_TYPE_AUDIO,
     .id             = AV_CODEC_ID_MP1,
     .priv_data_size = sizeof(MPADecodeContext),
@@ -2003,7 +2007,6 @@ AVCodec ff_mp1_decoder = {
     .decode         = decode_frame,
     .capabilities   = CODEC_CAP_DR1,
     .flush          = flush,
-    .long_name      = NULL_IF_CONFIG_SMALL("MP1 (MPEG audio layer 1)"),
     .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_S16P,
                                                       AV_SAMPLE_FMT_S16,
                                                       AV_SAMPLE_FMT_NONE },
@@ -2012,6 +2015,7 @@ AVCodec ff_mp1_decoder = {
 #if CONFIG_MP2_DECODER
 AVCodec ff_mp2_decoder = {
     .name           = "mp2",
+    .long_name      = NULL_IF_CONFIG_SMALL("MP2 (MPEG audio layer 2)"),
     .type           = AVMEDIA_TYPE_AUDIO,
     .id             = AV_CODEC_ID_MP2,
     .priv_data_size = sizeof(MPADecodeContext),
@@ -2019,7 +2023,6 @@ AVCodec ff_mp2_decoder = {
     .decode         = decode_frame,
     .capabilities   = CODEC_CAP_DR1,
     .flush          = flush,
-    .long_name      = NULL_IF_CONFIG_SMALL("MP2 (MPEG audio layer 2)"),
     .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_S16P,
                                                       AV_SAMPLE_FMT_S16,
                                                       AV_SAMPLE_FMT_NONE },
@@ -2028,6 +2031,7 @@ AVCodec ff_mp2_decoder = {
 #if CONFIG_MP3_DECODER
 AVCodec ff_mp3_decoder = {
     .name           = "mp3",
+    .long_name      = NULL_IF_CONFIG_SMALL("MP3 (MPEG audio layer 3)"),
     .type           = AVMEDIA_TYPE_AUDIO,
     .id             = AV_CODEC_ID_MP3,
     .priv_data_size = sizeof(MPADecodeContext),
@@ -2035,7 +2039,6 @@ AVCodec ff_mp3_decoder = {
     .decode         = decode_frame,
     .capabilities   = CODEC_CAP_DR1,
     .flush          = flush,
-    .long_name      = NULL_IF_CONFIG_SMALL("MP3 (MPEG audio layer 3)"),
     .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_S16P,
                                                       AV_SAMPLE_FMT_S16,
                                                       AV_SAMPLE_FMT_NONE },
@@ -2044,6 +2047,7 @@ AVCodec ff_mp3_decoder = {
 #if CONFIG_MP3ADU_DECODER
 AVCodec ff_mp3adu_decoder = {
     .name           = "mp3adu",
+    .long_name      = NULL_IF_CONFIG_SMALL("ADU (Application Data Unit) MP3 (MPEG audio layer 3)"),
     .type           = AVMEDIA_TYPE_AUDIO,
     .id             = AV_CODEC_ID_MP3ADU,
     .priv_data_size = sizeof(MPADecodeContext),
@@ -2051,7 +2055,6 @@ AVCodec ff_mp3adu_decoder = {
     .decode         = decode_frame_adu,
     .capabilities   = CODEC_CAP_DR1,
     .flush          = flush,
-    .long_name      = NULL_IF_CONFIG_SMALL("ADU (Application Data Unit) MP3 (MPEG audio layer 3)"),
     .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_S16P,
                                                       AV_SAMPLE_FMT_S16,
                                                       AV_SAMPLE_FMT_NONE },
@@ -2060,6 +2063,7 @@ AVCodec ff_mp3adu_decoder = {
 #if CONFIG_MP3ON4_DECODER
 AVCodec ff_mp3on4_decoder = {
     .name           = "mp3on4",
+    .long_name      = NULL_IF_CONFIG_SMALL("MP3onMP4"),
     .type           = AVMEDIA_TYPE_AUDIO,
     .id             = AV_CODEC_ID_MP3ON4,
     .priv_data_size = sizeof(MP3On4DecodeContext),
@@ -2068,7 +2072,6 @@ AVCodec ff_mp3on4_decoder = {
     .decode         = decode_frame_mp3on4,
     .capabilities   = CODEC_CAP_DR1,
     .flush          = flush_mp3on4,
-    .long_name      = NULL_IF_CONFIG_SMALL("MP3onMP4"),
     .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_S16P,
                                                       AV_SAMPLE_FMT_NONE },
 };

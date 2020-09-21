@@ -192,7 +192,8 @@ static int tscc2_decode_slice(TSCC2Context *c, int mb_y,
     int i, mb_x, q, ret;
     int off;
 
-    init_get_bits(&c->gb, buf, buf_size * 8);
+    if ((ret = init_get_bits8(&c->gb, buf, buf_size)) < 0)
+        return ret;
 
     for (mb_x = 0; mb_x < c->mb_width; mb_x++) {
         q = c->slice_quants[mb_x + c->mb_width * mb_y];
@@ -373,6 +374,7 @@ static av_cold int tscc2_decode_init(AVCodecContext *avctx)
 
 AVCodec ff_tscc2_decoder = {
     .name           = "tscc2",
+    .long_name      = NULL_IF_CONFIG_SMALL("TechSmith Screen Codec 2"),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_TSCC2,
     .priv_data_size = sizeof(TSCC2Context),
@@ -380,5 +382,4 @@ AVCodec ff_tscc2_decoder = {
     .close          = tscc2_decode_end,
     .decode         = tscc2_decode_frame,
     .capabilities   = CODEC_CAP_DR1,
-    .long_name      = NULL_IF_CONFIG_SMALL("TechSmith Screen Codec 2"),
 };

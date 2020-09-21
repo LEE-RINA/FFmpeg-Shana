@@ -125,6 +125,8 @@ static int pp_filter_frame(AVFilterLink *inlink, AVFrame *inbuf)
         return AVERROR(ENOMEM);
     }
     av_frame_copy_props(outbuf, inbuf);
+    outbuf->width  = inbuf->width;
+    outbuf->height = inbuf->height;
     qp_table = av_frame_get_qp_table(inbuf, &qstride, &qp_type);
 
     pp_postprocess((const uint8_t **)inbuf->data, inbuf->linesize,
@@ -169,7 +171,7 @@ static const AVFilterPad pp_outputs[] = {
     { NULL }
 };
 
-AVFilter avfilter_vf_pp = {
+AVFilter ff_vf_pp = {
     .name            = "pp",
     .description     = NULL_IF_CONFIG_SMALL("Filter video using libpostproc."),
     .priv_size       = sizeof(PPFilterContext),
@@ -180,5 +182,5 @@ AVFilter avfilter_vf_pp = {
     .outputs         = pp_outputs,
     .process_command = pp_process_command,
     .priv_class      = &pp_class,
-    .flags           = AVFILTER_FLAG_SUPPORT_TIMELINE,
+    .flags           = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
 };

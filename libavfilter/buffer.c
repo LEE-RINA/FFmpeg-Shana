@@ -24,13 +24,16 @@
 #include "libavutil/avassert.h"
 #include "libavutil/common.h"
 #include "libavutil/imgutils.h"
+#include "libavutil/internal.h"
 #include "libavcodec/avcodec.h"
 
 #include "avfilter.h"
 #include "internal.h"
 #include "audio.h"
 #include "avcodec.h"
+#include "version.h"
 
+#if FF_API_AVFILTERBUFFER
 void ff_avfilter_default_free_buffer(AVFilterBuffer *ptr)
 {
     if (ptr->extended_data != ptr->data)
@@ -111,7 +114,9 @@ void avfilter_unref_buffer(AVFilterBufferRef *ref)
 
 void avfilter_unref_bufferp(AVFilterBufferRef **ref)
 {
+FF_DISABLE_DEPRECATION_WARNINGS
     avfilter_unref_buffer(*ref);
+FF_ENABLE_DEPRECATION_WARNINGS
     *ref = NULL;
 }
 
@@ -165,3 +170,4 @@ void avfilter_copy_buffer_ref_props(AVFilterBufferRef *dst, AVFilterBufferRef *s
     av_dict_free(&dst->metadata);
     av_dict_copy(&dst->metadata, src->metadata, 0);
 }
+#endif /* FF_API_AVFILTERBUFFER */

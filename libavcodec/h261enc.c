@@ -25,11 +25,15 @@
  * H.261 encoder.
  */
 
+#include "libavutil/attributes.h"
 #include "libavutil/avassert.h"
 #include "avcodec.h"
 #include "mpegvideo.h"
 #include "h263.h"
 #include "h261.h"
+
+static uint8_t uni_h261_rl_len [64*64*2*2];
+#define UNI_ENC_INDEX(last,run,level) ((last)*128*64 + (run)*128 + (level))
 
 int ff_h261_get_picture_format(int width, int height)
 {
@@ -312,7 +316,47 @@ void ff_h261_encode_mb(MpegEncContext *s, int16_t block[6][64],
     }
 }
 
-void ff_h261_encode_init(MpegEncContext *s)
+static av_cold void init_uni_h261_rl_tab(RLTable *rl, uint32_t *bits_tab,
+                                         uint8_t *len_tab)
+{
+    int slevel, run, last;
+
+    av_assert0(MAX_LEVEL >= 64);
+    av_assert0(MAX_RUN   >= 63);
+
+    for(slevel=-64; slevel<64; slevel++){
+        if(slevel==0) continue;
+        for(run=0; run<64; run++){
+            for(last=0; last<=1; last++){
+                const int index= UNI_ENC_INDEX(last, run, slevel+64);
+                int level= slevel < 0 ? -slevel : slevel;
+                int len, code;
+
+                len_tab[index]= 100;
+
+                /* ESC0 */
+                code= get_rl_index(rl, 0, run, level);
+                len=  rl->table_vlc[code][1] + 1;
+                if(last)
+                    len += 2;
+
+                if(code!=rl->n && len < len_tab[index]){
+                    len_tab [index]= len;
+                }
+                /* ESC */
+                len = rl->table_vlc[rl->n][1];
+                if(last)
+                    len += 2;
+
+                if(len < len_tab[index]){
+                    len_tab [index]= len;
+                }
+            }
+        }
+    }
+}
+
+av_cold void ff_h261_encode_init(MpegEncContext *s)
 {
     ff_h261_common_init();
 
@@ -320,12 +364,19 @@ void ff_h261_encode_init(MpegEncContext *s)
     s->max_qcoeff       = 127;
     s->y_dc_scale_table =
     s->c_dc_scale_table = ff_mpeg1_dc_scale_table;
+    s->ac_esc_length    = 6+6+8;
+
+    init_uni_h261_rl_tab(&ff_h261_rl_tcoeff, NULL, uni_h261_rl_len);
+
+    s->intra_ac_vlc_length      = s->inter_ac_vlc_length      = uni_h261_rl_len;
+    s->intra_ac_vlc_last_length = s->inter_ac_vlc_last_length = uni_h261_rl_len + 128*64;
 }
 
 FF_MPV_GENERIC_CLASS(h261)
 
 AVCodec ff_h261_encoder = {
     .name           = "h261",
+    .long_name      = NULL_IF_CONFIG_SMALL("H.261"),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_H261,
     .priv_data_size = sizeof(H261Context),
@@ -334,6 +385,5 @@ AVCodec ff_h261_encoder = {
     .close          = ff_MPV_encode_end,
     .pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P,
                                                      AV_PIX_FMT_NONE },
-    .long_name      = NULL_IF_CONFIG_SMALL("H.261"),
     .priv_class     = &h261_class,
 };

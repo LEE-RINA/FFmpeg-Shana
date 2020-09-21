@@ -34,6 +34,7 @@
 
 #include "avcodec.h"
 #include "get_bits.h"
+#include "h263.h"
 #include "hpeldsp.h"
 #include "internal.h"
 #include "mathops.h"
@@ -41,8 +42,6 @@
 
 #undef NDEBUG
 #include <assert.h>
-
-extern const uint8_t ff_mvtab[33][2];
 
 static VLC svq1_block_type;
 static VLC svq1_motion_component;
@@ -555,7 +554,7 @@ static int svq1_decode_frame_header(AVCodecContext *avctx, AVFrame *frame)
             svq1_parse_string(bitbuf, msg);
 
             av_log(avctx, AV_LOG_INFO,
-                   "embedded message: \"%s\"\n", (char *)msg);
+                   "embedded message:\n%s\n", (char *)msg);
         }
 
         skip_bits(bitbuf, 2);
@@ -594,8 +593,8 @@ static int svq1_decode_frame_header(AVCodecContext *avctx, AVFrame *frame)
         skip_bits1(bitbuf);
         skip_bits(bitbuf, 2);
 
-        while (get_bits1(bitbuf))
-            skip_bits(bitbuf, 8);
+        if (skip_1stop_8data_bits(bitbuf) < 0)
+            return AVERROR_INVALIDDATA;
     }
 
     s->width  = width;
@@ -615,7 +614,7 @@ static int svq1_decode_frame(AVCodecContext *avctx, void *data,
     svq1_pmv *pmv;
 
     /* initialize bit buffer */
-    init_get_bits(&s->gb, buf, buf_size * 8);
+    init_get_bits8(&s->gb, buf, buf_size);
 
     /* decode frame header */
     s->frame_code = get_bits(&s->gb, 22);
@@ -639,7 +638,10 @@ static int svq1_decode_frame(AVCodecContext *avctx, void *data,
         av_dlog(avctx, "Error in svq1_decode_frame_header %i\n", result);
         return result;
     }
-    avcodec_set_dimensions(avctx, s->width, s->height);
+
+    result = ff_set_dimensions(avctx, s->width, s->height);
+    if (result < 0)
+        return result;
 
     if ((avctx->skip_frame >= AVDISCARD_NONREF && s->nonref) ||
         (avctx->skip_frame >= AVDISCARD_NONKEY &&
@@ -740,7 +742,7 @@ static av_cold int svq1_decode_init(AVCodecContext *avctx)
     int i;
     int offset = 0;
 
-    s->prev = avcodec_alloc_frame();
+    s->prev = av_frame_alloc();
     if (!s->prev)
         return AVERROR(ENOMEM);
 
@@ -807,6 +809,7 @@ static void svq1_flush(AVCodecContext *avctx)
 
 AVCodec ff_svq1_decoder = {
     .name           = "svq1",
+    .long_name      = NULL_IF_CONFIG_SMALL("Sorenson Vector Quantizer 1 / Sorenson Video 1 / SVQ1"),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_SVQ1,
     .priv_data_size = sizeof(SVQ1Context),
@@ -817,5 +820,4 @@ AVCodec ff_svq1_decoder = {
     .flush          = svq1_flush,
     .pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV410P,
                                                      AV_PIX_FMT_NONE },
-    .long_name      = NULL_IF_CONFIG_SMALL("Sorenson Vector Quantizer 1 / Sorenson Video 1 / SVQ1"),
 };

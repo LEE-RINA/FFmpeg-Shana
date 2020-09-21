@@ -23,9 +23,9 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-//#define DEBUG
 #define RC_VARIANCE 1 // use variance or ssd for fast rc
 
+#include "libavutil/attributes.h"
 #include "libavutil/internal.h"
 #include "libavutil/opt.h"
 #include "avcodec.h"
@@ -33,7 +33,6 @@
 #include "internal.h"
 #include "mpegvideo.h"
 #include "dnxhdenc.h"
-#include "internal.h"
 
 #define VE AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM
 #define DNX10BIT_QMAT_SHIFT 18 // The largest value that will not lead to overflow for 10bit samples.
@@ -43,7 +42,7 @@ static const AVOption options[]={
 {NULL}
 };
 
-static const AVClass class = {
+static const AVClass dnxhd_class = {
     .class_name = "dnxhd",
     .item_name  = av_default_item_name,
     .option     = options,
@@ -115,7 +114,7 @@ static int dnxhd_10bit_dct_quantize(MpegEncContext *ctx, int16_t *block,
     return last_non_zero;
 }
 
-static int dnxhd_init_vlc(DNXHDEncContext *ctx)
+static av_cold int dnxhd_init_vlc(DNXHDEncContext *ctx)
 {
     int i, j, level, run;
     int max_level = 1<<(ctx->cid_table->bit_depth+2);
@@ -170,7 +169,7 @@ static int dnxhd_init_vlc(DNXHDEncContext *ctx)
     return -1;
 }
 
-static int dnxhd_init_qmat(DNXHDEncContext *ctx, int lbias, int cbias)
+static av_cold int dnxhd_init_qmat(DNXHDEncContext *ctx, int lbias, int cbias)
 {
     // init first elem to 1 to avoid div by 0 in convert_matrix
     uint16_t weight_matrix[64] = {1,}; // convert_matrix needs uint16_t*
@@ -234,7 +233,7 @@ static int dnxhd_init_qmat(DNXHDEncContext *ctx, int lbias, int cbias)
     return -1;
 }
 
-static int dnxhd_init_rc(DNXHDEncContext *ctx)
+static av_cold int dnxhd_init_rc(DNXHDEncContext *ctx)
 {
     FF_ALLOCZ_OR_GOTO(ctx->m.avctx, ctx->mb_rc, 8160*ctx->m.avctx->qmax*sizeof(RCEntry), fail);
     if (ctx->m.avctx->mb_decision != FF_MB_DECISION_RD)
@@ -248,7 +247,7 @@ static int dnxhd_init_rc(DNXHDEncContext *ctx)
     return -1;
 }
 
-static int dnxhd_encode_init(AVCodecContext *avctx)
+static av_cold int dnxhd_encode_init(AVCodecContext *avctx)
 {
     DNXHDEncContext *ctx = avctx->priv_data;
     int i, index, bit_depth;
@@ -330,9 +329,12 @@ static int dnxhd_encode_init(AVCodecContext *avctx)
     FF_ALLOCZ_OR_GOTO(ctx->m.avctx, ctx->mb_bits,    ctx->m.mb_num   *sizeof(uint16_t), fail);
     FF_ALLOCZ_OR_GOTO(ctx->m.avctx, ctx->mb_qscale,  ctx->m.mb_num   *sizeof(uint8_t),  fail);
 
-    ctx->frame.key_frame = 1;
-    ctx->frame.pict_type = AV_PICTURE_TYPE_I;
-    ctx->m.avctx->coded_frame = &ctx->frame;
+    avctx->coded_frame = av_frame_alloc();
+    if (!avctx->coded_frame)
+        return AVERROR(ENOMEM);
+
+    avctx->coded_frame->key_frame = 1;
+    avctx->coded_frame->pict_type = AV_PICTURE_TYPE_I;
 
     if (avctx->thread_count > MAX_THREADS) {
         av_log(avctx, AV_LOG_ERROR, "too many threads\n");
@@ -353,7 +355,7 @@ static int dnxhd_encode_init(AVCodecContext *avctx)
 static int dnxhd_write_header(AVCodecContext *avctx, uint8_t *buf)
 {
     DNXHDEncContext *ctx = avctx->priv_data;
-    const uint8_t header_prefix[5] = { 0x00,0x00,0x02,0x80,0x01 };
+    static const uint8_t header_prefix[5] = { 0x00,0x00,0x02,0x80,0x01 };
 
     memset(buf, 0, 640);
 
@@ -923,19 +925,14 @@ static void dnxhd_load_picture(DNXHDEncContext *ctx, const AVFrame *frame)
 {
     int i;
 
-    for (i = 0; i < 3; i++) {
-        ctx->frame.data[i]     = frame->data[i];
-        ctx->frame.linesize[i] = frame->linesize[i];
-    }
-
     for (i = 0; i < ctx->m.avctx->thread_count; i++) {
-        ctx->thread[i]->m.linesize    = ctx->frame.linesize[0]<<ctx->interlaced;
-        ctx->thread[i]->m.uvlinesize  = ctx->frame.linesize[1]<<ctx->interlaced;
+        ctx->thread[i]->m.linesize    = frame->linesize[0] << ctx->interlaced;
+        ctx->thread[i]->m.uvlinesize  = frame->linesize[1] << ctx->interlaced;
         ctx->thread[i]->dct_y_offset  = ctx->m.linesize  *8;
         ctx->thread[i]->dct_uv_offset = ctx->m.uvlinesize*8;
     }
 
-    ctx->frame.interlaced_frame = frame->interlaced_frame;
+    ctx->m.avctx->coded_frame->interlaced_frame = frame->interlaced_frame;
     ctx->cur_field = frame->interlaced_frame && !frame->top_field_first;
 }
 
@@ -955,9 +952,9 @@ static int dnxhd_encode_picture(AVCodecContext *avctx, AVPacket *pkt,
 
  encode_coding_unit:
     for (i = 0; i < 3; i++) {
-        ctx->src[i] = ctx->frame.data[i];
+        ctx->src[i] = frame->data[i];
         if (ctx->interlaced && ctx->cur_field)
-            ctx->src[i] += ctx->frame.linesize[i];
+            ctx->src[i] += frame->linesize[i];
     }
 
     dnxhd_write_header(avctx, buf);
@@ -995,14 +992,14 @@ static int dnxhd_encode_picture(AVCodecContext *avctx, AVPacket *pkt,
         goto encode_coding_unit;
     }
 
-    ctx->frame.quality = ctx->qscale*FF_QP2LAMBDA;
+    avctx->coded_frame->quality = ctx->qscale * FF_QP2LAMBDA;
 
     pkt->flags |= AV_PKT_FLAG_KEY;
     *got_packet = 1;
     return 0;
 }
 
-static int dnxhd_encode_end(AVCodecContext *avctx)
+static av_cold int dnxhd_encode_end(AVCodecContext *avctx)
 {
     DNXHDEncContext *ctx = avctx->priv_data;
     int max_level = 1<<(ctx->cid_table->bit_depth+2);
@@ -1028,6 +1025,8 @@ static int dnxhd_encode_end(AVCodecContext *avctx)
     for (i = 1; i < avctx->thread_count; i++)
         av_freep(&ctx->thread[i]);
 
+    av_frame_free(&avctx->coded_frame);
+
     return 0;
 }
 
@@ -1038,6 +1037,7 @@ static const AVCodecDefault dnxhd_defaults[] = {
 
 AVCodec ff_dnxhd_encoder = {
     .name           = "dnxhd",
+    .long_name      = NULL_IF_CONFIG_SMALL("VC3/DNxHD"),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_DNXHD,
     .priv_data_size = sizeof(DNXHDEncContext),
@@ -1048,7 +1048,6 @@ AVCodec ff_dnxhd_encoder = {
     .pix_fmts       = (const enum AVPixelFormat[]){ AV_PIX_FMT_YUV422P,
                                                   AV_PIX_FMT_YUV422P10,
                                                   AV_PIX_FMT_NONE },
-    .long_name      = NULL_IF_CONFIG_SMALL("VC3/DNxHD"),
-    .priv_class     = &class,
+    .priv_class     = &dnxhd_class,
     .defaults       = dnxhd_defaults,
 };

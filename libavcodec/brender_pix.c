@@ -128,11 +128,8 @@ static int brpix_decode_frame(AVCodecContext *avctx,
         return AVERROR_PATCHWELCOME;
     }
 
-    if (av_image_check_size(hdr.width, hdr.height, 0, avctx) < 0)
-        return AVERROR_INVALIDDATA;
-
-    if (hdr.width != avctx->width || hdr.height != avctx->height)
-        avcodec_set_dimensions(avctx, hdr.width, hdr.height);
+    if ((ret = ff_set_dimensions(avctx, hdr.width, hdr.height)) < 0)
+        return ret;
 
     if ((ret = ff_get_buffer(avctx, frame, 0)) < 0)
         return ret;
@@ -211,9 +208,9 @@ static int brpix_decode_frame(AVCodecContext *avctx,
 
 AVCodec ff_brender_pix_decoder = {
     .name           = "brender_pix",
+    .long_name      = NULL_IF_CONFIG_SMALL("BRender PIX image"),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_BRENDER_PIX,
     .decode         = brpix_decode_frame,
     .capabilities   = CODEC_CAP_DR1,
-    .long_name      = NULL_IF_CONFIG_SMALL("BRender PIX image"),
 };

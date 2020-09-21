@@ -26,6 +26,8 @@
 #include "avi.h"
 #include "avio_internal.h"
 #include "riff.h"
+#include "libavformat/avlanguage.h"
+#include "libavutil/avstring.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/dict.h"
 #include "libavutil/avassert.h"
@@ -309,6 +311,16 @@ static int avi_write_header(AVFormatContext *s)
             ff_riff_write_info_tag(s->pb, "strn", t->value);
             t = NULL;
         }
+        if(stream->codec_id == AV_CODEC_ID_XSUB
+           && (t = av_dict_get(s->streams[i]->metadata, "language", NULL, 0))) {
+            const char* langstr = av_convert_lang_to(t->value, AV_LANG_ISO639_1);
+            t = NULL;
+            if (langstr) {
+                char* str = av_asprintf("Subtitle - %s-xx;02", langstr);
+                ff_riff_write_info_tag(s->pb, "strn", str);
+                av_free(str);
+            }
+        }
       }
 
         if (pb->seekable) {
@@ -523,7 +535,7 @@ static int avi_write_packet(AVFormatContext *s, AVPacket *pkt)
     int size= pkt->size;
 
     av_dlog(s, "dts:%s packet_count:%d stream_index:%d\n", av_ts2str(pkt->dts), avist->packet_count, stream_index);
-    while(enc->block_align==0 && pkt->dts != AV_NOPTS_VALUE && pkt->dts > avist->packet_count && enc->codec_id != AV_CODEC_ID_XSUB){
+    while(enc->block_align==0 && pkt->dts != AV_NOPTS_VALUE && pkt->dts > avist->packet_count && enc->codec_id != AV_CODEC_ID_XSUB && avist->packet_count){
         AVPacket empty_packet;
 
         if(pkt->dts - avist->packet_count > 60000){
@@ -567,8 +579,11 @@ static int avi_write_packet(AVFormatContext *s, AVPacket *pkt)
         int id = idx->entry % AVI_INDEX_CLUSTER_SIZE;
         if (idx->ents_allocated <= idx->entry) {
             idx->cluster = av_realloc_f(idx->cluster, sizeof(void*), cl+1);
-            if (!idx->cluster)
+            if (!idx->cluster) {
+                idx->ents_allocated = 0;
+                idx->entry = 0;
                 return AVERROR(ENOMEM);
+            }
             idx->cluster[cl] = av_malloc(AVI_INDEX_CLUSTER_SIZE*sizeof(AVIIentry));
             if (!idx->cluster[cl])
                 return AVERROR(ENOMEM);
@@ -636,7 +651,7 @@ static int avi_write_trailer(AVFormatContext *s)
     for (i=0; i<s->nb_streams; i++) {
          AVIStream *avist= s->streams[i]->priv_data;
          for (j=0; j<avist->indexes.ents_allocated/AVI_INDEX_CLUSTER_SIZE; j++)
-              av_free(avist->indexes.cluster[j]);
+              av_freep(&avist->indexes.cluster[j]);
          av_freep(&avist->indexes.cluster);
          avist->indexes.ents_allocated = avist->indexes.entry = 0;
     }
@@ -658,5 +673,4 @@ AVOutputFormat ff_avi_muxer = {
     .codec_tag         = (const AVCodecTag* const []){
         ff_codec_bmp_tags, ff_codec_wav_tags, 0
     },
-    .flags             = AVFMT_VARIABLE_FPS,
 };

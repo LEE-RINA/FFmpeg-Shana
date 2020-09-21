@@ -28,6 +28,9 @@ static int dfa_probe(AVProbeData *p)
     if (p->buf_size < 4 || AV_RL32(p->buf) != MKTAG('D', 'F', 'I', 'A'))
         return 0;
 
+    if (AV_RL32(p->buf + 16) != 0x80)
+        return AVPROBE_SCORE_MAX / 4;
+
     return AVPROBE_SCORE_MAX;
 }
 
@@ -64,8 +67,8 @@ static int dfa_read_header(AVFormatContext *s)
     avio_skip(pb, 128 - 16); // padding
     st->duration = frames;
 
-    st->codec->extradata = av_malloc(2);
-    st->codec->extradata_size = 2;
+    if (ff_alloc_extradata(st->codec, 2))
+        return AVERROR(ENOMEM);
     AV_WL16(st->codec->extradata, version);
     if (version == 0x100)
         st->sample_aspect_ratio = (AVRational){2, 1};

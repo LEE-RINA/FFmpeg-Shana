@@ -47,7 +47,7 @@
 typedef struct Msvideo1Context {
 
     AVCodecContext *avctx;
-    AVFrame frame;
+    AVFrame *frame;
 
     const unsigned char *buf;
     int size;
@@ -72,7 +72,9 @@ static av_cold int msvideo1_decode_init(AVCodecContext *avctx)
         avctx->pix_fmt = AV_PIX_FMT_RGB555;
     }
 
-    avcodec_get_frame_defaults(&s->frame);
+    s->frame = av_frame_alloc();
+    if (!s->frame)
+        return AVERROR(ENOMEM);
 
     return 0;
 }
@@ -93,8 +95,8 @@ static void msvideo1_decode_8bit(Msvideo1Context *s)
     unsigned short flags;
     int skip_blocks;
     unsigned char colors[8];
-    unsigned char *pixels = s->frame.data[0];
-    int stride = s->frame.linesize[0];
+    unsigned char *pixels = s->frame->data[0];
+    int stride = s->frame->linesize[0];
 
     stream_ptr = 0;
     skip_blocks = 0;
@@ -174,7 +176,7 @@ static void msvideo1_decode_8bit(Msvideo1Context *s)
 
     /* make the palette available on the way out */
     if (s->avctx->pix_fmt == AV_PIX_FMT_PAL8)
-        memcpy(s->frame.data[1], s->pal, AVPALETTE_SIZE);
+        memcpy(s->frame->data[1], s->pal, AVPALETTE_SIZE);
 }
 
 static void msvideo1_decode_16bit(Msvideo1Context *s)
@@ -193,8 +195,8 @@ static void msvideo1_decode_16bit(Msvideo1Context *s)
     unsigned short flags;
     int skip_blocks;
     unsigned short colors[8];
-    unsigned short *pixels = (unsigned short *)s->frame.data[0];
-    int stride = s->frame.linesize[0] / 2;
+    unsigned short *pixels = (unsigned short *)s->frame->data[0];
+    int stride = s->frame->linesize[0] / 2;
 
     stream_ptr = 0;
     skip_blocks = 0;
@@ -298,7 +300,7 @@ static int msvideo1_decode_frame(AVCodecContext *avctx,
     s->buf = buf;
     s->size = buf_size;
 
-    if ((ret = ff_reget_buffer(avctx, &s->frame)) < 0)
+    if ((ret = ff_reget_buffer(avctx, s->frame)) < 0)
         return ret;
 
     if (s->mode_8bit) {
@@ -306,7 +308,7 @@ static int msvideo1_decode_frame(AVCodecContext *avctx,
 
         if (pal) {
             memcpy(s->pal, pal, AVPALETTE_SIZE);
-            s->frame.palette_has_changed = 1;
+            s->frame->palette_has_changed = 1;
         }
     }
 
@@ -315,7 +317,7 @@ static int msvideo1_decode_frame(AVCodecContext *avctx,
     else
         msvideo1_decode_16bit(s);
 
-    if ((ret = av_frame_ref(data, &s->frame)) < 0)
+    if ((ret = av_frame_ref(data, s->frame)) < 0)
         return ret;
 
     *got_frame      = 1;
@@ -328,13 +330,14 @@ static av_cold int msvideo1_decode_end(AVCodecContext *avctx)
 {
     Msvideo1Context *s = avctx->priv_data;
 
-    av_frame_unref(&s->frame);
+    av_frame_free(&s->frame);
 
     return 0;
 }
 
 AVCodec ff_msvideo1_decoder = {
     .name           = "msvideo1",
+    .long_name      = NULL_IF_CONFIG_SMALL("Microsoft Video 1"),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_MSVIDEO1,
     .priv_data_size = sizeof(Msvideo1Context),
@@ -342,5 +345,4 @@ AVCodec ff_msvideo1_decoder = {
     .close          = msvideo1_decode_end,
     .decode         = msvideo1_decode_frame,
     .capabilities   = CODEC_CAP_DR1,
-    .long_name      = NULL_IF_CONFIG_SMALL("Microsoft Video 1"),
 };

@@ -51,7 +51,7 @@ typedef struct {
     ASS_Renderer *renderer;
     ASS_Track    *track;
     char *filename;
-    char *font_filename;
+    char *fontname;
     char *charenc;
     uint8_t rgba_map[4];
     int     pix_step[4];       ///< steps per pixel for each plane of the main output
@@ -67,9 +67,8 @@ typedef struct {
     {"filename",       "set the filename of file to read",                         OFFSET(filename),   AV_OPT_TYPE_STRING,     {.str = NULL},  CHAR_MIN, CHAR_MAX, FLAGS }, \
     {"f",              "set the filename of file to read",                         OFFSET(filename),   AV_OPT_TYPE_STRING,     {.str = NULL},  CHAR_MIN, CHAR_MAX, FLAGS }, \
     {"original_size",  "set the size of the original video (used to scale fonts)", OFFSET(original_w), AV_OPT_TYPE_IMAGE_SIZE, {.str = NULL},  CHAR_MIN, CHAR_MAX, FLAGS }, \
-    {"assfile",  "set subtitle filename to read",                                  OFFSET(filename), FF_OPT_TYPE_STRING, {.str=NULL}, CHAR_MIN, CHAR_MAX, FLAGS }, \
-    {"fontfile",  "set font filename",                                             OFFSET(font_filename), FF_OPT_TYPE_STRING, {.str=NULL}, CHAR_MIN, CHAR_MAX, FLAGS }, \
-    {"subdelay",  "set delay",                                                     OFFSET(subdelay), AV_OPT_TYPE_DOUBLE, {.dbl=0.0}, INT_MIN, INT_MAX, FLAGS }, \
+    {"fontname",       "set the fontname",                                         OFFSET(fontname), FF_OPT_TYPE_STRING,       {.str=NULL}  ,  CHAR_MIN, CHAR_MAX, FLAGS }, \
+    {"subdelay",       "set delay",                                                OFFSET(subdelay), AV_OPT_TYPE_DOUBLE,       {.dbl=0.0}   ,  INT_MIN,  INT_MAX,  FLAGS }, \
 
 /* libass supports a log level ranging from 0 to 7 */
 static const int ass_libavfilter_log_level_map[] = {
@@ -94,8 +93,6 @@ static void ass_log(int ass_level, const char *fmt, va_list args, void *ctx)
 static av_cold int init(AVFilterContext *ctx)
 {
     AssContext *ass = ctx->priv;
-    char font_filename_char[1024] = { 0 };
-    wchar_t font_filename_wchar[1024] = { 0 };
 
     if (!ass->filename) {
         av_log(ctx, AV_LOG_ERROR, "No filename provided!\n");
@@ -115,11 +112,8 @@ static av_cold int init(AVFilterContext *ctx)
         return AVERROR(EINVAL);
     }
 
-    /* can't accept UTF-8 font_filename */
-    if (ass->font_filename[1] == '0') ass->font_filename[1]=':';
-    MultiByteToWideChar(CP_UTF8, 0, ass->font_filename, -1, font_filename_wchar, 1024);
-    WideCharToMultiByte(CP_THREAD_ACP, 0, font_filename_wchar, -1, font_filename_char, 1024, NULL, NULL);
-    ass_set_fonts(ass->renderer, font_filename_char, NULL, 1, NULL, 1);
+    ass_second_fontname(ass->fontname);
+    ass_set_fonts(ass->renderer, NULL, NULL, 1, NULL, 1);
 
     return 0;
 }
@@ -248,7 +242,7 @@ static av_cold int init_ass(AVFilterContext *ctx)
     return 0;
 }
 
-AVFilter avfilter_vf_ass = {
+AVFilter ff_vf_ass = {
     .name          = "ass",
     .description   = NULL_IF_CONFIG_SMALL("Render ASS subtitles onto input video using the libass library."),
     .priv_size     = sizeof(AssContext),
@@ -372,7 +366,7 @@ end:
     return ret;
 }
 
-AVFilter avfilter_vf_subtitles = {
+AVFilter ff_vf_subtitles = {
     .name          = "subtitles",
     .description   = NULL_IF_CONFIG_SMALL("Render text subtitles onto input video using the libass library."),
     .priv_size     = sizeof(AssContext),

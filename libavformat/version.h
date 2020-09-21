@@ -30,7 +30,7 @@
 #include "libavutil/avutil.h"
 
 #define LIBAVFORMAT_VERSION_MAJOR 55
-#define LIBAVFORMAT_VERSION_MINOR  3
+#define LIBAVFORMAT_VERSION_MINOR 21
 #define LIBAVFORMAT_VERSION_MICRO 100
 
 #define LIBAVFORMAT_VERSION_INT AV_VERSION_INT(LIBAVFORMAT_VERSION_MAJOR, \
@@ -41,20 +41,18 @@
                                            LIBAVFORMAT_VERSION_MICRO)
 #define LIBAVFORMAT_BUILD       LIBAVFORMAT_VERSION_INT
 
-#define LIBAVFORMAT_IDENT       "ShanaEncoder"
+#define LIBAVFORMAT_IDENT       "ShanaEncoder 2.1"
+#define LIBAVFORMAT_IDENT_LAVF  "Lavf" AV_STRINGIFY(LIBAVFORMAT_VERSION)
 
 /**
  * FF_API_* defines may be placed below to indicate public API that will be
  * dropped at a future version bump. The defines themselves are not part of
  * the public API and may change, break or disappear at any time.
  */
+#ifndef FF_API_REFERENCE_DTS
+#define FF_API_REFERENCE_DTS            (LIBAVFORMAT_VERSION_MAJOR < 56)
+#endif
 
-#ifndef FF_API_OLD_AVIO
-#define FF_API_OLD_AVIO                (LIBAVFORMAT_VERSION_MAJOR < 55)
-#endif
-#ifndef FF_API_PKT_DUMP
-#define FF_API_PKT_DUMP                (LIBAVFORMAT_VERSION_MAJOR < 54)
-#endif
 #ifndef FF_API_ALLOC_OUTPUT_CONTEXT
 #define FF_API_ALLOC_OUTPUT_CONTEXT    (LIBAVFORMAT_VERSION_MAJOR < 56)
 #endif

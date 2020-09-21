@@ -57,7 +57,7 @@ static int xbm_decode_frame(AVCodecContext *avctx, void *data,
         int number, len;
 
         ptr += strcspn(ptr, "#");
-        if (sscanf(ptr, "#define %256s %u", name, &number) != 2) {
+        if (sscanf(ptr, "#define %255s %u", name, &number) != 2) {
             av_log(avctx, AV_LOG_ERROR, "Unexpected preprocessor directive\n");
             return AVERROR_INVALIDDATA;
         }
@@ -110,10 +110,10 @@ static int xbm_decode_frame(AVCodecContext *avctx, void *data,
 
 AVCodec ff_xbm_decoder = {
     .name         = "xbm",
+    .long_name    = NULL_IF_CONFIG_SMALL("XBM (X BitMap) image"),
     .type         = AVMEDIA_TYPE_VIDEO,
     .id           = AV_CODEC_ID_XBM,
     .init         = xbm_decode_init,
     .decode       = xbm_decode_frame,
     .capabilities = CODEC_CAP_DR1,
-    .long_name    = NULL_IF_CONFIG_SMALL("XBM (X BitMap) image"),
 };

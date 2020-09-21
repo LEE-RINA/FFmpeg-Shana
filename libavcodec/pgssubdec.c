@@ -27,6 +27,8 @@
 #include "avcodec.h"
 #include "dsputil.h"
 #include "bytestream.h"
+#include "internal.h"
+
 #include "libavutil/colorspace.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/opt.h"
@@ -98,7 +100,7 @@ static av_cold int close_decoder(AVCodecContext *avctx)
 /**
  * Decode the RLE data.
  *
- * The subtitle is stored as an Run Length Encoded image.
+ * The subtitle is stored as a Run Length Encoded image.
  *
  * @param avctx contains the current codec context
  * @param sub pointer to the processed subtitle data
@@ -294,11 +296,12 @@ static void parse_palette_segment(AVCodecContext *avctx,
  * @param buf_size size of packet to process
  * @todo TODO: Implement cropping
  */
-static void parse_presentation_segment(AVCodecContext *avctx,
-                                       const uint8_t *buf, int buf_size,
-                                       int64_t pts)
+static int parse_presentation_segment(AVCodecContext *avctx,
+                                      const uint8_t *buf, int buf_size,
+                                      int64_t pts)
 {
     PGSSubContext *ctx = avctx->priv_data;
+    int ret;
 
     int w = bytestream_get_be16(&buf);
     int h = bytestream_get_be16(&buf);
@@ -309,8 +312,9 @@ static void parse_presentation_segment(AVCodecContext *avctx,
 
     av_dlog(avctx, "Video Dimensions %dx%d\n",
             w, h);
-    if (av_image_check_size(w, h, 0, avctx) >= 0)
-        avcodec_set_dimensions(avctx, w, h);
+    ret = ff_set_dimensions(avctx, w, h);
+    if (ret < 0)
+        return ret;
 
     /* Skip 1 bytes of unknown, frame rate? */
     buf++;
@@ -327,20 +331,20 @@ static void parse_presentation_segment(AVCodecContext *avctx,
 
     ctx->presentation.object_count = bytestream_get_byte(&buf);
     if (!ctx->presentation.object_count)
-        return;
+        return 0;
 
     /* Verify that enough bytes are remaining for all of the objects. */
     buf_size -= 11;
     if (buf_size < ctx->presentation.object_count * 8) {
         ctx->presentation.object_count = 0;
-        return;
+        return AVERROR_INVALIDDATA;
     }
 
     av_freep(&ctx->presentation.objects);
     ctx->presentation.objects = av_malloc(sizeof(PGSSubPictureReference) * ctx->presentation.object_count);
     if (!ctx->presentation.objects) {
         ctx->presentation.object_count = 0;
-        return;
+        return AVERROR(ENOMEM);
     }
 
     for (object_index = 0; object_index < ctx->presentation.object_count; ++object_index) {
@@ -365,6 +369,8 @@ static void parse_presentation_segment(AVCodecContext *avctx,
             reference->y = 0;
         }
     }
+
+    return 0;
 }
 
 /**
@@ -456,7 +462,7 @@ static int decode(AVCodecContext *avctx, void *data, int *data_size,
     const uint8_t *buf_end;
     uint8_t       segment_type;
     int           segment_length;
-    int i;
+    int i, ret;
 
     av_dlog(avctx, "PGS sub packet:\n");
 
@@ -495,7 +501,9 @@ static int decode(AVCodecContext *avctx, void *data, int *data_size,
             parse_picture_segment(avctx, buf, segment_length);
             break;
         case PRESENTATION_SEGMENT:
-            parse_presentation_segment(avctx, buf, segment_length, sub->pts);
+            ret = parse_presentation_segment(avctx, buf, segment_length, sub->pts);
+            if (ret < 0)
+                return ret;
             break;
         case WINDOW_SEGMENT:
             /*
@@ -538,12 +546,12 @@ static const AVClass pgsdec_class = {
 
 AVCodec ff_pgssub_decoder = {
     .name           = "pgssub",
+    .long_name      = NULL_IF_CONFIG_SMALL("HDMV Presentation Graphic Stream subtitles"),
     .type           = AVMEDIA_TYPE_SUBTITLE,
     .id             = AV_CODEC_ID_HDMV_PGS_SUBTITLE,
     .priv_data_size = sizeof(PGSSubContext),
     .init           = init_decoder,
     .close          = close_decoder,
     .decode         = decode,
-    .long_name      = NULL_IF_CONFIG_SMALL("HDMV Presentation Graphic Stream subtitles"),
     .priv_class     = &pgsdec_class,
 };

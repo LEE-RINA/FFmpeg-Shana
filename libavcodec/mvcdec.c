@@ -39,6 +39,7 @@ static av_cold int mvc_decode_init(AVCodecContext *avctx)
     MvcContext *s = avctx->priv_data;
     int width  = avctx->width;
     int height = avctx->height;
+    int ret;
 
     if (avctx->codec_id == AV_CODEC_ID_MVC1) {
         width  += 3;
@@ -46,8 +47,8 @@ static av_cold int mvc_decode_init(AVCodecContext *avctx)
     }
     width  &= ~3;
     height &= ~3;
-    if (width != avctx->width || height != avctx->height)
-        avcodec_set_dimensions(avctx, width, height);
+    if ((ret = ff_set_dimensions(avctx, width, height)) < 0)
+        return ret;
 
     avctx->pix_fmt = (avctx->codec_id == AV_CODEC_ID_MVC1) ? AV_PIX_FMT_RGB555 : AV_PIX_FMT_BGRA;
     s->frame = av_frame_alloc();
@@ -260,6 +261,7 @@ static av_cold int mvc_decode_end(AVCodecContext *avctx)
 #if CONFIG_MVC1_DECODER
 AVCodec ff_mvc1_decoder = {
     .name           = "mvc1",
+    .long_name      = NULL_IF_CONFIG_SMALL("Silicon Graphics Motion Video Compressor 1"),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_MVC1,
     .priv_data_size = sizeof(MvcContext),
@@ -267,13 +269,13 @@ AVCodec ff_mvc1_decoder = {
     .close          = mvc_decode_end,
     .decode         = mvc_decode_frame,
     .capabilities   = CODEC_CAP_DR1,
-    .long_name      = NULL_IF_CONFIG_SMALL("Silicon Graphics Motion Video Compressor 1"),
 };
 #endif
 
 #if CONFIG_MVC2_DECODER
 AVCodec ff_mvc2_decoder = {
     .name           = "mvc2",
+    .long_name      = NULL_IF_CONFIG_SMALL("Silicon Graphics Motion Video Compressor 2"),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_MVC2,
     .priv_data_size = sizeof(MvcContext),
@@ -281,6 +283,5 @@ AVCodec ff_mvc2_decoder = {
     .close          = mvc_decode_end,
     .decode         = mvc_decode_frame,
     .capabilities   = CODEC_CAP_DR1,
-    .long_name      = NULL_IF_CONFIG_SMALL("Silicon Graphics Motion Video Compressor 2"),
 };
 #endif

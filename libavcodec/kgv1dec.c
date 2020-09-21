@@ -31,15 +31,14 @@
 #include "internal.h"
 
 typedef struct {
-    AVCodecContext *avctx;
-    AVFrame prev;
+    AVFrame *prev;
 } KgvContext;
 
 static void decode_flush(AVCodecContext *avctx)
 {
     KgvContext * const c = avctx->priv_data;
 
-    av_frame_unref(&c->prev);
+    av_frame_free(&c->prev);
 }
 
 static int decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
@@ -61,12 +60,10 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
     h = (buf[1] + 1) * 8;
     buf += 2;
 
-    if ((res = av_image_check_size(w, h, 0, avctx)) < 0)
-        return res;
-
     if (w != avctx->width || h != avctx->height) {
-        av_frame_unref(&c->prev);
-        avcodec_set_dimensions(avctx, w, h);
+        av_frame_unref(c->prev);
+        if ((res = ff_set_dimensions(avctx, w, h)) < 0)
+            return res;
     }
 
     maxcnt = w * h;
@@ -74,8 +71,8 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
     if ((res = ff_get_buffer(avctx, frame, AV_GET_BUFFER_FLAG_REF)) < 0)
         return res;
     out  = frame->data[0];
-    if (c->prev.data[0]) {
-        prev = c->prev.data[0];
+    if (c->prev->data[0]) {
+        prev = c->prev->data[0];
     } else {
         prev = NULL;
     }
@@ -145,8 +142,8 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
     if (outcnt - maxcnt)
         av_log(avctx, AV_LOG_DEBUG, "frame finished with %d diff\n", outcnt - maxcnt);
 
-    av_frame_unref(&c->prev);
-    if ((res = av_frame_ref(&c->prev, frame)) < 0)
+    av_frame_unref(c->prev);
+    if ((res = av_frame_ref(c->prev, frame)) < 0)
         return res;
 
     *got_frame = 1;
@@ -158,7 +155,10 @@ static av_cold int decode_init(AVCodecContext *avctx)
 {
     KgvContext * const c = avctx->priv_data;
 
-    c->avctx = avctx;
+    c->prev = av_frame_alloc();
+    if (!c->prev)
+        return AVERROR(ENOMEM);
+
     avctx->pix_fmt = AV_PIX_FMT_RGB555;
     avctx->flags  |= CODEC_FLAG_EMU_EDGE;
 
@@ -167,12 +167,14 @@ static av_cold int decode_init(AVCodecContext *avctx)
 
 static av_cold int decode_end(AVCodecContext *avctx)
 {
-    decode_flush(avctx);
+    KgvContext * const c = avctx->priv_data;
+    av_frame_free(&c->prev);
     return 0;
 }
 
 AVCodec ff_kgv1_decoder = {
     .name           = "kgv1",
+    .long_name      = NULL_IF_CONFIG_SMALL("Kega Game Video"),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_KGV1,
     .priv_data_size = sizeof(KgvContext),
@@ -180,6 +182,5 @@ AVCodec ff_kgv1_decoder = {
     .close          = decode_end,
     .decode         = decode_frame,
     .flush          = decode_flush,
-    .long_name      = NULL_IF_CONFIG_SMALL("Kega Game Video"),
     .capabilities   = CODEC_CAP_DR1,
 };

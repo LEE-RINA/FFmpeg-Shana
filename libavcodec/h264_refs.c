@@ -31,7 +31,6 @@
 #include "h264.h"
 #include "golomb.h"
 
-//#undef NDEBUG
 #include <assert.h>
 
 #define COPY_PICTURE(dst, src) \
@@ -142,7 +141,9 @@ int ff_h264_fill_default_ref_list(H264Context *h)
         }
 
         if (lens[0] == lens[1] && lens[1] > 1) {
-            for (i = 0; h->default_ref_list[0][i].f.data[0] == h->default_ref_list[1][i].f.data[0] && i < lens[0]; i++);
+            for (i = 0; i < lens[0] &&
+                        h->default_ref_list[0][i].f.buf[0]->buffer ==
+                        h->default_ref_list[1][i].f.buf[0]->buffer; i++);
             if (i == lens[0]) {
                 Picture tmp;
                 COPY_PICTURE(&tmp, &h->default_ref_list[1][0]);
@@ -305,13 +306,13 @@ int ff_h264_decode_ref_pic_list_reordering(H264Context *h)
     }
     for (list = 0; list < h->list_count; list++) {
         for (index = 0; index < h->ref_count[list]; index++) {
-            if (   !h->ref_list[list][index].f.data[0]
+            if (   !h->ref_list[list][index].f.buf[0]
                 || (!FIELD_PICTURE(h) && (h->ref_list[list][index].reference&3) != 3)) {
                 int i;
                 av_log(h->avctx, AV_LOG_ERROR, "Missing reference picture, default is %d\n", h->default_ref_list[list][0].poc);
                 for (i = 0; i < FF_ARRAY_ELEMS(h->last_pocs); i++)
                     h->last_pocs[i] = INT_MIN;
-                if (h->default_ref_list[list][0].f.data[0]
+                if (h->default_ref_list[list][0].f.buf[0]
                     && !(!FIELD_PICTURE(h) && (h->default_ref_list[list][0].reference&3) != 3))
                     COPY_PICTURE(&h->ref_list[list][index], &h->default_ref_list[list][0]);
                 else
@@ -583,7 +584,7 @@ int ff_h264_execute_ref_pic_marking(H264Context *h, MMCO *mmco, int mmco_count)
                 if (mmco[i].opcode != MMCO_SHORT2LONG ||
                     !h->long_ref[mmco[i].long_arg]    ||
                     h->long_ref[mmco[i].long_arg]->frame_num != frame_num) {
-                    av_log(h->avctx, AV_LOG_ERROR, "mmco: unref short failure\n");
+                    av_log(h->avctx, h->short_ref_count ? AV_LOG_ERROR : AV_LOG_DEBUG, "mmco: unref short failure\n");
                     err = AVERROR_INVALIDDATA;
                 }
                 continue;
@@ -733,10 +734,10 @@ int ff_h264_execute_ref_pic_marking(H264Context *h, MMCO *mmco, int mmco_count)
     print_short_term(h);
     print_long_term(h);
 
-    if(err >= 0 && h->long_ref_count==0 && h->short_ref_count<=2 && h->pps.ref_count[0]<=1 + (h->picture_structure != PICT_FRAME) && h->cur_pic_ptr->f.pict_type == AV_PICTURE_TYPE_I){
-        h->cur_pic_ptr->sync |= 1;
+    if(err >= 0 && h->long_ref_count==0 && h->short_ref_count<=2 && h->pps.ref_count[0]<=2 + (h->picture_structure != PICT_FRAME) && h->cur_pic_ptr->f.pict_type == AV_PICTURE_TYPE_I){
+        h->cur_pic_ptr->recovered |= 1;
         if(!h->avctx->has_b_frames)
-            h->sync = 2;
+            h->frame_recovered |= FRAME_RECOVERED_SEI;
     }
 
     return (h->avctx->err_recognition & AV_EF_EXPLODE) ? err : 0;
@@ -746,7 +747,7 @@ int ff_h264_decode_ref_pic_marking(H264Context *h, GetBitContext *gb,
                                    int first_slice)
 {
     int i, ret;
-    MMCO mmco_temp[MAX_MMCO_COUNT], *mmco = first_slice ? h->mmco : mmco_temp;
+    MMCO mmco_temp[MAX_MMCO_COUNT], *mmco = mmco_temp;
     int mmco_index = 0;
 
     if (h->nal_unit_type == NAL_IDR_SLICE) { // FIXME fields
@@ -812,6 +813,7 @@ int ff_h264_decode_ref_pic_marking(H264Context *h, GetBitContext *gb,
     }
 
     if (first_slice && mmco_index != -1) {
+        memcpy(h->mmco, mmco_temp, sizeof(h->mmco));
         h->mmco_index = mmco_index;
     } else if (!first_slice && mmco_index >= 0 &&
                (mmco_index != h->mmco_index ||

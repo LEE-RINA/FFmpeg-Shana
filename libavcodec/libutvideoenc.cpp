@@ -21,7 +21,8 @@
 /**
  * @file
  * Known FOURCCs:
- *     'ULY0' (YCbCr 4:2:0), 'ULY2' (YCbCr 4:2:2), 'ULRG' (RGB), 'ULRA' (RGBA)
+ *     'ULY0' (YCbCr 4:2:0), 'ULY2' (YCbCr 4:2:2), 'ULRG' (RGB), 'ULRA' (RGBA),
+ *     'ULH0' (YCbCr 4:2:0 BT.709), 'ULH2' (YCbCr 4:2:2 BT.709)
  */
 
 extern "C" {
@@ -73,7 +74,7 @@ static av_cold int utvideo_encode_init(AVCodecContext *avctx)
     flags = ((avctx->prediction_method + 1) << 8) | (avctx->thread_count - 1);
 
     avctx->priv_data = utv;
-    avctx->coded_frame = avcodec_alloc_frame();
+    avctx->coded_frame = av_frame_alloc();
 
     /* Alloc extradata buffer */
     info = (UtVideoExtra *)av_malloc(sizeof(*info));
