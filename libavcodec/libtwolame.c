@@ -60,7 +60,6 @@ static av_cold int twolame_encode_init(AVCodecContext *avctx)
     int ret;
 
     avctx->frame_size = TWOLAME_SAMPLES_PER_FRAME;
-    avctx->delay      = 512 - 32 + 1;
 
     s->glopts = twolame_init();
     if (!s->glopts)

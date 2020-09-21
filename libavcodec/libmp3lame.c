@@ -194,7 +194,6 @@ static av_cold int mp3lame_encode_init(AVCodecContext *avctx)
     }
 
     /* get encoder delay */
-    avctx->delay = lame_get_encoder_delay(s->gfp) + 528 + 1;
     ff_af_queue_init(avctx, &s->afq);
 
     avctx->frame_size  = lame_get_framesize(s->gfp);

@@ -342,19 +342,8 @@ static int libvorbis_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
     avpkt->pts = ff_samples_to_time_base(avctx, op.granulepos);
 
     duration = avpriv_vorbis_parse_frame(&s->vp, avpkt->data, avpkt->size);
-    if (duration > 0) {
-        /* we do not know encoder delay until we get the first packet from
-         * libvorbis, so we have to update the AudioFrameQueue counts */
-        if (!avctx->delay && s->afq.frames) {
-            avctx->delay              = duration;
-            av_assert0(!s->afq.remaining_delay);
-            s->afq.frames->duration  += duration;
-            if (s->afq.frames->pts != AV_NOPTS_VALUE)
-                s->afq.frames->pts       -= duration;
-            s->afq.remaining_samples += duration;
-        }
+    if (duration > 0)
         ff_af_queue_remove(&s->afq, duration, &avpkt->pts, &avpkt->duration);
-    }
 
     *got_packet_ptr = 1;
     return 0;
