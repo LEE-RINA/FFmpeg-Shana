@@ -3227,7 +3227,7 @@ static void mov_build_index(MOVContext *mov, AVStream *st)
     uint64_t stream_size = 0;
 
     if (sc->elst_count) {
-        int i, edit_start_index = 0;
+        int i, edit_start_index = 0, unsupported = 0;
         int64_t empty_duration = 0; // empty duration of the first edit list entry
         int64_t start_time = 0; // start time of the media
 
@@ -3240,15 +3240,23 @@ static void mov_build_index(MOVContext *mov, AVStream *st)
                 edit_start_index = 1;
             } else if (i == edit_start_index && e->time >= 0) {
                 start_time = e->time;
-            }
+            } else
+                unsupported = 1;
         }
+        if (unsupported)
+            av_log(mov->fc, AV_LOG_WARNING, "multiple edit list entries, "
+                   "a/v desync might occur, patch welcome\n");
 
         /* adjust first dts according to edit list */
         if ((empty_duration || start_time) && mov->time_scale > 0) {
             if (empty_duration)
                 empty_duration = av_rescale(empty_duration, sc->time_scale, mov->time_scale);
             sc->time_offset = start_time - empty_duration;
+            current_dts = -sc->time_offset;
         }
+
+        if (!unsupported && st->codecpar->codec_id == AV_CODEC_ID_AAC && start_time > 0)
+            sc->start_pad = start_time;
     }
 
     /* only use old uncompressed audio chunk demuxing when stts specifies it */
@@ -3481,9 +3489,8 @@ static void mov_build_index(MOVContext *mov, AVStream *st)
             }
         }
     }
-
     // Fix index according to edit lists.
-    mov_fix_index(mov, st);
+    //mov_fix_index(mov, st);
 }
 
 static int test_same_origin(const char *src, const char *ref) {
