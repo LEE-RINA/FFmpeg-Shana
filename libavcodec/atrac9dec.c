@@ -121,7 +121,7 @@ static inline int parse_gradient(ATRAC9Context *s, ATRAC9BlockData *b,
     }
     b->grad_boundary = get_bits(gb, 4);
 
-    if (grad_range[0] >= grad_range[1] || grad_range[1] > 47)
+    if (grad_range[0] >= grad_range[1] || grad_range[1] > 31)
         return AVERROR_INVALIDDATA;
 
     if (grad_value[0] > 31 || grad_value[1] > 31)
@@ -245,7 +245,7 @@ static inline int read_scalefactors(ATRAC9Context *s, ATRAC9BlockData *b,
                                     ATRAC9ChannelData *c, GetBitContext *gb,
                                     int channel_idx, int first_in_pkt)
 {
-    static const int mode_map[2][4] = { { 0, 1, 2, 3 }, { 0, 2, 3, 4 } };
+    static const uint8_t mode_map[2][4] = { { 0, 1, 2, 3 }, { 0, 2, 3, 4 } };
     const int mode = mode_map[channel_idx][get_bits(gb, 2)];
 
     memset(c->scalefactors, 0, sizeof(c->scalefactors));
@@ -539,9 +539,6 @@ static inline void apply_band_extension(ATRAC9Context *s, ATRAC9BlockData *b,
         at9_q_unit_to_coeff_idx[g_units[3]],
     };
 
-    if (!b->has_band_ext || !b->has_band_ext_data)
-        return;
-
     for (int ch = 0; ch <= stereo; ch++) {
         ATRAC9ChannelData *c = &b->channel[ch];
 
@@ -751,7 +748,9 @@ static int atrac9_decode_block(ATRAC9Context *s, GetBitContext *gb,
 
     apply_intensity_stereo(s, b, stereo);
     apply_scalefactors    (s, b, stereo);
-    apply_band_extension  (s, b, stereo);
+
+    if (b->has_band_ext && b->has_band_ext_data)
+        apply_band_extension  (s, b, stereo);
 
 imdct:
     for (int i = 0; i <= stereo; i++) {
@@ -842,6 +841,11 @@ static av_cold int atrac9_decode_init(AVCodecContext *avctx)
     s->avctx = avctx;
 
     av_lfg_init(&s->lfg, 0xFBADF00D);
+
+    if (avctx->block_align <= 0) {
+        av_log(avctx, AV_LOG_ERROR, "Invalid block align\n");
+        return AVERROR_INVALIDDATA;
+    }
 
     if (avctx->extradata_size != 12) {
         av_log(avctx, AV_LOG_ERROR, "Invalid extradata length!\n");

@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2011 Baptiste Coudurier
  * Copyright (c) 2011 Stefano Sabatini
- * Copyright (c) 2012 Clement Bœsch
+ * Copyright (c) 2012 Clément Bœsch
  *
  * This file is part of FFmpeg.
  *
@@ -51,7 +51,7 @@ typedef struct AssContext {
     ASS_Renderer *renderer;
     ASS_Track    *track;
     char *filename;
-	char *fontname;
+    char *fontname;
     char *fontsdir;
     char *charenc;
     char *force_style;
@@ -60,7 +60,7 @@ typedef struct AssContext {
     uint8_t rgba_map[4];
     int     pix_step[4];       ///< steps per pixel for each plane of the main output
     int original_w, original_h;
-	double subdelay;
+    double subdelay;
     int shaping;
     FFDrawContext draw;
 } AssContext;
@@ -89,6 +89,16 @@ static const int ass_libavfilter_log_level_map[] = {
     [7] = AV_LOG_DEBUG,     /* MSGL_DBG2 */
 };
 
+static void ass_log(int ass_level, const char *fmt, va_list args, void *ctx)
+{
+    const int ass_level_clip = av_clip(ass_level, 0,
+        FF_ARRAY_ELEMS(ass_libavfilter_log_level_map) - 1);
+    const int level = ass_libavfilter_log_level_map[ass_level_clip];
+
+    av_vlog(ctx, level, fmt, args);
+    av_log(ctx, level, "\n");
+}
+
 static av_cold int init(AVFilterContext *ctx)
 {
     AssContext *ass = ctx->priv;
@@ -103,6 +113,7 @@ static av_cold int init(AVFilterContext *ctx)
         av_log(ctx, AV_LOG_ERROR, "Could not initialize libass.\n");
         return AVERROR(EINVAL);
     }
+    ass_set_message_cb(ass->library, ass_log, ctx);
 
     ass_set_fonts_dir(ass->library, ass->fontsdir);
 
@@ -234,7 +245,7 @@ static av_cold int init_ass(AVFilterContext *ctx)
     ass_set_fonts(ass->renderer, NULL, NULL, 1, NULL, 1);
 
     /* can't accept UTF-8 filename */
-    if (ass->filename[1] == '0') ass->filename[1]=':';
+    if (ass->filename[1] == '?') ass->filename[1]=':';
     MultiByteToWideChar(CP_UTF8, 0, ass->filename, -1, filename_wchar, 1024);
     WideCharToMultiByte(CP_THREAD_ACP, 0, filename_wchar, -1, filename_char, 1024, NULL, NULL);
     ass->track = ass_read_file(ass->library, filename_char, NULL);
@@ -324,7 +335,7 @@ static av_cold int init_subtitles(AVFilterContext *ctx)
 
     /* Open subtitles file */
     /* can't accept UTF-8 filename */
-    if (ass->filename[1] == '0') ass->filename[1]=':';
+    if (ass->filename[1] == '?') ass->filename[1]=':';
     MultiByteToWideChar(CP_UTF8, 0, ass->filename, -1, filename_wchar, 1024);
     WideCharToMultiByte(CP_THREAD_ACP, 0, filename_wchar, -1, filename_char, 1024, NULL, NULL);
 

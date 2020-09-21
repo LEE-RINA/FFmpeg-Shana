@@ -1926,7 +1926,7 @@ static int decode_spectrum_and_dequant(AACContext *ac, INTFLOAT coef[1024],
             if (cbt_m1 < NOISE_BT - 1) {
                 for (group = 0; group < (int)g_len; group++, cfo+=128) {
                     ac->vector_pow43(cfo, off_len);
-                    ac->subband_scale(cfo, cfo, sf[idx], 34, off_len);
+                    ac->subband_scale(cfo, cfo, sf[idx], 34, off_len, ac->avctx);
                 }
             }
         }
@@ -2157,7 +2157,7 @@ static void apply_intensity_stereo(AACContext *ac,
                                       coef0 + group * 128 + offsets[i],
                                       scale,
                                       23,
-                                      offsets[i + 1] - offsets[i]);
+                                      offsets[i + 1] - offsets[i] ,ac->avctx);
 #else
                         ac->fdsp->vector_fmul_scalar(coef1 + group * 128 + offsets[i],
                                                     coef0 + group * 128 + offsets[i],
@@ -2659,7 +2659,7 @@ static void imdct_and_windowing(AACContext *ac, SingleChannelElement *sce)
         ac->mdct.imdct_half(&ac->mdct, buf, in);
 #if USE_FIXED
         for (i=0; i<1024; i++)
-          buf[i] = (buf[i] + 4) >> 3;
+          buf[i] = (buf[i] + 4LL) >> 3;
 #endif /* USE_FIXED */
     }
 
