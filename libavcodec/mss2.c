@@ -422,7 +422,13 @@ static int decode_wmv9(AVCodecContext *avctx, const uint8_t *buf, int buf_size,
 
     ff_vc1_decode_blocks(v);
 
-    ff_er_frame_end(&s->er);
+    if (v->end_mb_x == s->mb_width && s->end_mb_y == s->mb_height) {
+        ff_er_frame_end(&s->er);
+    } else {
+        av_log(v->s.avctx, AV_LOG_WARNING,
+               "disabling error correction due to block count mismatch %dx%d != %dx%d\n",
+               v->end_mb_x, s->end_mb_y, s->mb_width, s->mb_height);
+    }
 
     ff_mpv_frame_end(s);
 
@@ -481,9 +487,6 @@ static int mss2_decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
 
     Rectangle wmv9rects[MAX_WMV9_RECTANGLES], *r;
     int used_rects = 0, i, implicit_rect = 0, av_uninit(wmv9_mask);
-
-    av_assert0(AV_INPUT_BUFFER_PADDING_SIZE >=
-               ARITH2_PADDING + (MIN_CACHE_BITS + 7) / 8);
 
     if ((ret = init_get_bits8(&gb, buf, buf_size)) < 0)
         return ret;

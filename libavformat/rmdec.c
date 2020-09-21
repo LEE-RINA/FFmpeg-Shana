@@ -207,6 +207,7 @@ static int rm_read_audio_stream_info(AVFormatContext *s, AVIOContext *pb,
             break;
         case AV_CODEC_ID_RA_288:
             st->codecpar->extradata_size= 0;
+            av_freep(&st->codecpar->extradata);
             ast->audio_framesize = st->codecpar->block_align;
             st->codecpar->block_align = coded_framesize;
             break;
@@ -933,6 +934,10 @@ ff_rm_parse_packet (AVFormatContext *s, AVIOContext *pb,
 
              ast->sub_packet_cnt = 0;
              rm->audio_stream_num = st->index;
+            if (st->codecpar->block_align <= 0) {
+                av_log(s, AV_LOG_ERROR, "Invalid block alignment %d\n", st->codecpar->block_align);
+                return AVERROR_INVALIDDATA;
+            }
              rm->audio_pkt_cnt = h * w / st->codecpar->block_align;
         } else if ((ast->deint_id == DEINT_ID_VBRF) ||
                    (ast->deint_id == DEINT_ID_VBRS)) {
@@ -1043,7 +1048,9 @@ static int rm_read_packet(AVFormatContext *s, AVPacket *pkt)
                     st = s->streams[i];
             }
 
-            if (len <= 0 || avio_feof(s->pb))
+            if (avio_feof(s->pb))
+                return AVERROR_EOF;
+            if (len <= 0)
                 return AVERROR(EIO);
 
             res = ff_rm_parse_packet (s, s->pb, st, st->priv_data, len, pkt,

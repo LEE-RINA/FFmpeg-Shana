@@ -1320,6 +1320,7 @@ static int load_input_picture(MpegEncContext *s, const AVFrame *pic_arg)
                                                 EDGE_BOTTOM);
                     }
                 }
+                emms_c();
             }
         }
         ret = av_frame_copy_props(pic->f, pic_arg);
@@ -1735,6 +1736,7 @@ static void frame_end(MpegEncContext *s)
 
 #if FF_API_CODED_FRAME
 FF_DISABLE_DEPRECATION_WARNINGS
+    av_frame_unref(s->avctx->coded_frame);
     av_frame_copy_props(s->avctx->coded_frame, s->current_picture.f);
 FF_ENABLE_DEPRECATION_WARNINGS
 #endif
@@ -2274,7 +2276,7 @@ static av_always_inline void encode_mb_internal(MpegEncContext *s,
              (mb_y * mb_block_height * wrap_c) + mb_x * mb_block_width;
 
     if((mb_x * 16 + 16 > s->width || mb_y * 16 + 16 > s->height) && s->codec_id != AV_CODEC_ID_AMV){
-        uint8_t *ebuf = s->sc.edge_emu_buffer + 36 * wrap_y;
+        uint8_t *ebuf = s->sc.edge_emu_buffer + 38 * wrap_y;
         int cw = (s->width  + s->chroma_x_shift) >> s->chroma_x_shift;
         int ch = (s->height + s->chroma_y_shift) >> s->chroma_y_shift;
         s->vdsp.emulated_edge_mc(ebuf, ptr_y,
@@ -2910,6 +2912,8 @@ int ff_mpv_reallocate_putbitbuffer(MpegEncContext *s, size_t threshold, size_t s
             av_log(s->avctx, AV_LOG_ERROR, "Cannot reallocate putbit buffer\n");
             return AVERROR(ENOMEM);
         }
+
+        emms_c();
 
         av_fast_padded_malloc(&new_buffer, &new_buffer_size,
                               s->avctx->internal->byte_buffer_size + size_increase);

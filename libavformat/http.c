@@ -62,8 +62,8 @@ typedef struct HTTPContext {
     int line_count;
     int http_code;
     /* Used if "Transfer-Encoding: chunked" otherwise -1. */
-    int64_t chunksize;
-    int64_t off, end_off, filesize;
+    uint64_t chunksize;
+    uint64_t off, end_off, filesize;
     char *location;
     HTTPAuthState auth_state;
     HTTPAuthState proxy_auth_state;
@@ -71,6 +71,9 @@ typedef struct HTTPContext {
     char *headers;
     char *mime_type;
     char *user_agent;
+#if FF_API_HTTP_USER_AGENT
+    char *user_agent_deprecated;
+#endif
     char *content_type;
     /* Set if the server correctly handles Connection: close and will close
      * the connection after feeding us the content. */
@@ -92,9 +95,9 @@ typedef struct HTTPContext {
     AVDictionary *cookie_dict;
     int icy;
     /* how much data was read since the last ICY metadata packet */
-    int icy_data_read;
+    uint64_t icy_data_read;
     /* after how many bytes of read data a new metadata packet will be found */
-    int icy_metaint;
+    uint64_t icy_metaint;
     char *icy_metadata_headers;
     char *icy_metadata_packet;
     AVDictionary *metadata;
@@ -131,7 +134,9 @@ static const AVOption options[] = {
     { "headers", "set custom HTTP headers, can override built in default headers", OFFSET(headers), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, D | E },
     { "content_type", "set a specific content type for the POST messages", OFFSET(content_type), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, D | E },
     { "user_agent", "override User-Agent header", OFFSET(user_agent), AV_OPT_TYPE_STRING, { .str = DEFAULT_USER_AGENT }, 0, 0, D },
-    { "user-agent", "override User-Agent header", OFFSET(user_agent), AV_OPT_TYPE_STRING, { .str = DEFAULT_USER_AGENT }, 0, 0, D },
+#if FF_API_HTTP_USER_AGENT
+    { "user-agent", "override User-Agent header", OFFSET(user_agent_deprecated), AV_OPT_TYPE_STRING, { .str = DEFAULT_USER_AGENT }, 0, 0, D },
+#endif
     { "multiple_requests", "use persistent connections", OFFSET(multiple_requests), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, D | E },
     { "post_data", "set custom HTTP post data", OFFSET(post_data), AV_OPT_TYPE_BINARY, .flags = D | E },
     { "mime_type", "export the MIME type", OFFSET(mime_type), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, AV_OPT_FLAG_EXPORT | AV_OPT_FLAG_READONLY },
@@ -355,7 +360,7 @@ static int http_write_reply(URLContext* h, int status_code)
     case 200:
         reply_code = 200;
         reply_text = "OK";
-        content_type = "application/octet-stream";
+        content_type = s->content_type ? s->content_type : "application/octet-stream";
         break;
     case AVERROR_HTTP_SERVER_ERROR:
     case 500:
@@ -371,12 +376,14 @@ static int http_write_reply(URLContext* h, int status_code)
                  "HTTP/1.1 %03d %s\r\n"
                  "Content-Type: %s\r\n"
                  "Content-Length: %"SIZE_SPECIFIER"\r\n"
+                 "%s"
                  "\r\n"
                  "%03d %s\r\n",
                  reply_code,
                  reply_text,
                  content_type,
                  strlen(reply_text) + 6, // 3 digit status code + space + \r\n
+                 s->headers ? s->headers : "",
                  reply_code,
                  reply_text);
     } else {
@@ -385,10 +392,12 @@ static int http_write_reply(URLContext* h, int status_code)
                  "HTTP/1.1 %03d %s\r\n"
                  "Content-Type: %s\r\n"
                  "Transfer-Encoding: chunked\r\n"
+                 "%s"
                  "\r\n",
                  reply_code,
                  reply_text,
-                 content_type);
+                 content_type,
+                 s->headers ? s->headers : "");
     }
     av_log(h, AV_LOG_TRACE, "HTTP reply header: \n%s----\n", message);
     if ((ret = ffurl_write(s->hd, message, message_len)) < 0)
@@ -480,7 +489,7 @@ static int http_open(URLContext *h, const char *uri, int flags,
     else
         h->is_streamed = 1;
 
-    s->filesize = -1;
+    s->filesize = UINT64_MAX;
     s->location = av_strdup(uri);
     if (!s->location)
         return AVERROR(ENOMEM);
@@ -607,9 +616,9 @@ static void parse_content_range(URLContext *h, const char *p)
 
     if (!strncmp(p, "bytes ", 6)) {
         p     += 6;
-        s->off = strtoll(p, NULL, 10);
+        s->off = strtoull(p, NULL, 10);
         if ((slash = strchr(p, '/')) && strlen(slash) > 0)
-            s->filesize = strtoll(slash + 1, NULL, 10);
+            s->filesize = strtoull(slash + 1, NULL, 10);
     }
     if (s->seekable == -1 && (!s->is_akamai || s->filesize != 2147483647))
         h->is_streamed = 0; /* we _can_ in fact seek */
@@ -799,8 +808,9 @@ static int process_line(URLContext *h, char *line, int line_count,
             if ((ret = parse_location(s, p)) < 0)
                 return ret;
             *new_location = 1;
-        } else if (!av_strcasecmp(tag, "Content-Length") && s->filesize == -1) {
-            s->filesize = strtoll(p, NULL, 10);
+        } else if (!av_strcasecmp(tag, "Content-Length") &&
+                   s->filesize == UINT64_MAX) {
+            s->filesize = strtoull(p, NULL, 10);
         } else if (!av_strcasecmp(tag, "Content-Range")) {
             parse_content_range(h, p);
         } else if (!av_strcasecmp(tag, "Accept-Ranges") &&
@@ -809,7 +819,7 @@ static int process_line(URLContext *h, char *line, int line_count,
             h->is_streamed = 0;
         } else if (!av_strcasecmp(tag, "Transfer-Encoding") &&
                    !av_strncasecmp(p, "chunked", 7)) {
-            s->filesize  = -1;
+            s->filesize  = UINT64_MAX;
             s->chunksize = 0;
         } else if (!av_strcasecmp(tag, "WWW-Authenticate")) {
             ff_http_auth_handle_header(&s->auth_state, tag, p);
@@ -833,7 +843,7 @@ static int process_line(URLContext *h, char *line, int line_count,
             if (parse_cookie(s, p, &s->cookie_dict))
                 av_log(h, AV_LOG_WARNING, "Unable to parse '%s'\n", p);
         } else if (!av_strcasecmp(tag, "Icy-MetaInt")) {
-            s->icy_metaint = strtoll(p, NULL, 10);
+            s->icy_metaint = strtoull(p, NULL, 10);
         } else if (!av_strncasecmp(tag, "Icy-", 4)) {
             if ((ret = parse_icy(s, tag, p)) < 0)
                 return ret;
@@ -963,7 +973,7 @@ static int http_read_header(URLContext *h, int *new_location)
     char line[MAX_URL_SIZE];
     int err = 0;
 
-    s->chunksize = -1;
+    s->chunksize = UINT64_MAX;
 
     for (;;) {
         if ((err = http_get_line(s, line, sizeof(line))) < 0)
@@ -997,7 +1007,7 @@ static int http_connect(URLContext *h, const char *path, const char *local_path,
     int post, err;
     char headers[HTTP_HEADERS_SIZE] = "";
     char *authstr = NULL, *proxyauthstr = NULL;
-    int64_t off = s->off;
+    uint64_t off = s->off;
     int len = 0;
     const char *method;
     int send_expect_100 = 0;
@@ -1033,6 +1043,12 @@ static int http_connect(URLContext *h, const char *path, const char *local_path,
             send_expect_100 = 1;
     }
 
+#if FF_API_HTTP_USER_AGENT
+    if (strcmp(s->user_agent_deprecated, DEFAULT_USER_AGENT)) {
+        av_log(s, AV_LOG_WARNING, "the user-agent option is deprecated, please use user_agent option\n");
+        s->user_agent = av_strdup(s->user_agent_deprecated);
+    }
+#endif
     /* set default headers if needed */
     if (!has_header(s->headers, "\r\nUser-Agent: "))
         len += av_strlcatf(headers + len, sizeof(headers) - len,
@@ -1045,7 +1061,7 @@ static int http_connect(URLContext *h, const char *path, const char *local_path,
     // server supports seeking by analysing the reply headers.
     if (!has_header(s->headers, "\r\nRange: ") && !post && (s->off > 0 || s->end_off || s->seekable == -1)) {
         len += av_strlcatf(headers + len, sizeof(headers) - len,
-                           "Range: bytes=%"PRId64"-", s->off);
+                           "Range: bytes=%"PRIu64"-", s->off);
         if (s->end_off)
             len += av_strlcatf(headers + len, sizeof(headers) - len,
                                "%"PRId64, s->end_off - 1);
@@ -1120,7 +1136,7 @@ static int http_connect(URLContext *h, const char *path, const char *local_path,
     s->line_count       = 0;
     s->off              = 0;
     s->icy_data_read    = 0;
-    s->filesize         = -1;
+    s->filesize         = UINT64_MAX;
     s->willclose        = 0;
     s->end_chunked_post = 0;
     s->end_header       = 0;
@@ -1152,6 +1168,34 @@ static int http_buf_read(URLContext *h, uint8_t *buf, int size)
 {
     HTTPContext *s = h->priv_data;
     int len;
+
+    if (s->chunksize != UINT64_MAX) {
+        if (!s->chunksize) {
+            char line[32];
+            int err;
+
+            do {
+                if ((err = http_get_line(s, line, sizeof(line))) < 0)
+                    return err;
+            } while (!*line);    /* skip CR LF from last chunk */
+
+            s->chunksize = strtoull(line, NULL, 16);
+
+            av_log(h, AV_LOG_TRACE,
+                   "Chunked encoding data size: %"PRIu64"'\n",
+                    s->chunksize);
+
+            if (!s->chunksize)
+                return 0;
+            else if (s->chunksize == UINT64_MAX) {
+                av_log(h, AV_LOG_ERROR, "Invalid chunk size %"PRIu64"\n",
+                       s->chunksize);
+                return AVERROR(EINVAL);
+            }
+        }
+        size = FFMIN(size, s->chunksize);
+    }
+
     /* read bytes from input buffer first */
     len = s->buf_end - s->buf_ptr;
     if (len > 0) {
@@ -1160,15 +1204,13 @@ static int http_buf_read(URLContext *h, uint8_t *buf, int size)
         memcpy(buf, s->buf_ptr, len);
         s->buf_ptr += len;
     } else {
-        int64_t target_end = s->end_off ? s->end_off : s->filesize;
-        if ((!s->willclose || s->chunksize < 0) &&
-            target_end >= 0 && s->off >= target_end)
+        uint64_t target_end = s->end_off ? s->end_off : s->filesize;
+        if ((!s->willclose || s->chunksize == UINT64_MAX) && s->off >= target_end)
             return AVERROR_EOF;
         len = ffurl_read(s->hd, buf, size);
-        if (!len && (!s->willclose || s->chunksize < 0) &&
-            target_end >= 0 && s->off < target_end) {
+        if (!len && (!s->willclose || s->chunksize == UINT64_MAX) && s->off < target_end) {
             av_log(h, AV_LOG_ERROR,
-                   "Stream ends prematurely at %"PRId64", should be %"PRId64"\n",
+                   "Stream ends prematurely at %"PRIu64", should be %"PRIu64"\n",
                    s->off, target_end
                   );
             return AVERROR(EIO);
@@ -1176,8 +1218,10 @@ static int http_buf_read(URLContext *h, uint8_t *buf, int size)
     }
     if (len > 0) {
         s->off += len;
-        if (s->chunksize > 0)
+        if (s->chunksize > 0) {
+            av_assert0(s->chunksize >= len);
             s->chunksize -= len;
+        }
     }
     return len;
 }
@@ -1232,25 +1276,6 @@ static int http_read_stream(URLContext *h, uint8_t *buf, int size)
             return err;
     }
 
-    if (s->chunksize >= 0) {
-        if (!s->chunksize) {
-            char line[32];
-
-                do {
-                    if ((err = http_get_line(s, line, sizeof(line))) < 0)
-                        return err;
-                } while (!*line);    /* skip CR LF from last chunk */
-
-                s->chunksize = strtoll(line, NULL, 16);
-
-                av_log(NULL, AV_LOG_TRACE, "Chunked encoding data size: %"PRId64"'\n",
-                        s->chunksize);
-
-                if (!s->chunksize)
-                    return 0;
-        }
-        size = FFMIN(size, s->chunksize);
-    }
 #if CONFIG_ZLIB
     if (s->compressed)
         return http_buf_read_compressed(h, buf, size);
@@ -1258,17 +1283,17 @@ static int http_read_stream(URLContext *h, uint8_t *buf, int size)
     read_ret = http_buf_read(h, buf, size);
     if (   (read_ret  < 0 && s->reconnect        && (!h->is_streamed || s->reconnect_streamed) && s->filesize > 0 && s->off < s->filesize)
         || (read_ret == 0 && s->reconnect_at_eof && (!h->is_streamed || s->reconnect_streamed))) {
-        int64_t target = h->is_streamed ? 0 : s->off;
+        uint64_t target = h->is_streamed ? 0 : s->off;
 
         if (s->reconnect_delay > s->reconnect_delay_max)
             return AVERROR(EIO);
 
-        av_log(h, AV_LOG_INFO, "Will reconnect at %"PRId64" error=%s.\n", s->off, av_err2str(read_ret));
+        av_log(h, AV_LOG_INFO, "Will reconnect at %"PRIu64" error=%s.\n", s->off, av_err2str(read_ret));
         av_usleep(1000U*1000*s->reconnect_delay);
         s->reconnect_delay = 1 + 2*s->reconnect_delay;
         seek_ret = http_seek_internal(h, target, SEEK_SET, 1);
         if (seek_ret != target) {
-            av_log(h, AV_LOG_ERROR, "Failed to reconnect at %"PRId64".\n", target);
+            av_log(h, AV_LOG_ERROR, "Failed to reconnect at %"PRIu64".\n", target);
             return read_ret;
         }
 
@@ -1323,10 +1348,11 @@ static int store_icy(URLContext *h, int size)
 {
     HTTPContext *s = h->priv_data;
     /* until next metadata packet */
-    int remaining = s->icy_metaint - s->icy_data_read;
+    uint64_t remaining;
 
-    if (remaining < 0)
+    if (s->icy_metaint < s->icy_data_read)
         return AVERROR_INVALIDDATA;
+    remaining = s->icy_metaint - s->icy_data_read;
 
     if (!remaining) {
         /* The metadata packet is variable sized. It has a 1 byte header
@@ -1440,7 +1466,7 @@ static int64_t http_seek_internal(URLContext *h, int64_t off, int whence, int fo
 {
     HTTPContext *s = h->priv_data;
     URLContext *old_hd = s->hd;
-    int64_t old_off = s->off;
+    uint64_t old_off = s->off;
     uint8_t old_buf[BUFFER_SIZE];
     int old_buf_size, ret;
     AVDictionary *options = NULL;
@@ -1451,7 +1477,7 @@ static int64_t http_seek_internal(URLContext *h, int64_t off, int whence, int fo
              ((whence == SEEK_CUR && off == 0) ||
               (whence == SEEK_SET && off == s->off)))
         return s->off;
-    else if ((s->filesize == -1 && whence == SEEK_END))
+    else if ((s->filesize == UINT64_MAX && whence == SEEK_END))
         return AVERROR(ENOSYS);
 
     if (whence == SEEK_CUR)
@@ -1606,7 +1632,7 @@ redo:
     s->buf_ptr    = s->buffer;
     s->buf_end    = s->buffer;
     s->line_count = 0;
-    s->filesize   = -1;
+    s->filesize   = UINT64_MAX;
     cur_auth_type = s->proxy_auth_state.auth_type;
 
     /* Note: This uses buffering, potentially reading more than the
