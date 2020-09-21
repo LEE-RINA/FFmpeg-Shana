@@ -345,8 +345,9 @@ static int libvorbis_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
     avpkt->pts = ff_samples_to_time_base(avctx, op.granulepos);
 
     duration = av_vorbis_parse_frame(s->vp, avpkt->data, avpkt->size);
-    if (duration > 0)
+    if (duration > 0) {
         ff_af_queue_remove(&s->afq, duration, &avpkt->pts, &avpkt->duration);
+    }
 
     *got_packet_ptr = 1;
     return 0;

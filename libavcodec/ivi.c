@@ -488,12 +488,6 @@ static int ivi_dec_tile_data_size(GetBitContext *gb)
 static int ivi_dc_transform(IVIBandDesc *band, int *prev_dc, int buf_offs,
                             int blk_size)
 {
-    int buf_size = band->pitch * band->aheight - buf_offs;
-    int min_size = (blk_size - 1) * band->pitch + blk_size;
-
-    if (min_size > buf_size)
-        return AVERROR_INVALIDDATA;
-
     band->dc_transform(prev_dc, band->buf + buf_offs,
                        band->pitch, blk_size);
 
@@ -724,6 +718,11 @@ static int ivi_decode_blocks(GetBitContext *gb, IVIBandDesc *band,
                 if (ret < 0)
                     return ret;
             } else {
+                int buf_size = band->pitch * band->aheight - buf_offs;
+                int min_size = (blk_size - 1) * band->pitch + blk_size;
+
+                if (min_size > buf_size)
+                    return AVERROR_INVALIDDATA;
                 /* block not coded */
                 /* for intra blocks apply the dc slant transform */
                 /* for inter - perform the motion compensation without delta */
@@ -913,8 +912,16 @@ static void ivi_output_plane(IVIPlaneDesc *plane, uint8_t *dst, ptrdiff_t dst_pi
         return;
 
     for (y = 0; y < plane->height; y++) {
-        for (x = 0; x < plane->width; x++)
-            dst[x] = av_clip_uint8(src[x] + 128);
+        int m = 0;
+        int w = plane->width;
+        for (x = 0; x < w; x++) {
+            int t = src[x] + 128;
+            dst[x] = t;
+            m |= t;
+        }
+        if (m & ~255)
+            for (x = 0; x < w; x++)
+                dst[x] = av_clip_uint8(src[x] + 128);
         src += pitch;
         dst += dst_pitch;
     }

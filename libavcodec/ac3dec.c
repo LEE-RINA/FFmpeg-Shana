@@ -106,25 +106,6 @@ static const uint8_t ac3_default_coeffs[8][5][2] = {
     { { 2, 7 }, { 5, 5 }, { 7, 2 }, { 6, 7 }, { 7, 6 }, },
 };
 
-static const uint64_t custom_channel_map_locations[16][2] = {
-    { 1, AV_CH_FRONT_LEFT },
-    { 1, AV_CH_FRONT_CENTER },
-    { 1, AV_CH_FRONT_RIGHT },
-    { 1, AV_CH_SIDE_LEFT },
-    { 1, AV_CH_SIDE_RIGHT },
-    { 0, AV_CH_FRONT_LEFT_OF_CENTER | AV_CH_FRONT_RIGHT_OF_CENTER },
-    { 0, AV_CH_BACK_LEFT | AV_CH_BACK_RIGHT },
-    { 0, AV_CH_BACK_CENTER },
-    { 0, AV_CH_TOP_CENTER },
-    { 0, AV_CH_SURROUND_DIRECT_LEFT | AV_CH_SURROUND_DIRECT_RIGHT },
-    { 0, AV_CH_WIDE_LEFT | AV_CH_WIDE_RIGHT },
-    { 0, AV_CH_TOP_FRONT_LEFT | AV_CH_TOP_FRONT_RIGHT},
-    { 0, AV_CH_TOP_FRONT_CENTER },
-    { 0, AV_CH_TOP_BACK_LEFT | AV_CH_TOP_BACK_RIGHT },
-    { 0, AV_CH_LOW_FREQUENCY_2 },
-    { 1, AV_CH_LOW_FREQUENCY },
-};
-
 /**
  * Symmetrical Dequantization
  * reference: Section 7.3.3 Expansion of Mantissas for Symmetrical Quantization
@@ -1690,6 +1671,7 @@ dependent_frame:
 
     if (s->frame_type == EAC3_FRAME_TYPE_DEPENDENT) {
         uint64_t ich_layout = avpriv_ac3_channel_layout_tab[s->prev_output_mode & ~AC3_OUTPUT_LFEON];
+        int channel_map_size = ff_ac3_channels_tab[s->output_mode & ~AC3_OUTPUT_LFEON] + s->lfe_on;
         uint64_t channel_layout;
         int extend = 0;
 
@@ -1699,7 +1681,7 @@ dependent_frame:
         channel_layout = ich_layout;
         for (ch = 0; ch < 16; ch++) {
             if (s->channel_map & (1 << (EAC3_MAX_CHANNELS - ch - 1))) {
-                channel_layout |= custom_channel_map_locations[ch][1];
+                channel_layout |= ff_eac3_custom_channel_map_locations[ch][1];
             }
         }
         if (av_get_channel_layout_nb_channels(channel_layout) > EAC3_MAX_CHANNELS) {
@@ -1713,21 +1695,27 @@ dependent_frame:
 
         for (ch = 0; ch < EAC3_MAX_CHANNELS; ch++) {
             if (s->channel_map & (1 << (EAC3_MAX_CHANNELS - ch - 1))) {
-                if (custom_channel_map_locations[ch][0]) {
+                if (ff_eac3_custom_channel_map_locations[ch][0]) {
                     int index = av_get_channel_layout_channel_index(channel_layout,
-                                                                    custom_channel_map_locations[ch][1]);
+                                                                    ff_eac3_custom_channel_map_locations[ch][1]);
                     if (index < 0)
                         return AVERROR_INVALIDDATA;
+                    if (extend >= channel_map_size)
+                        return AVERROR_INVALIDDATA;
+
                     extended_channel_map[index] = offset + channel_map[extend++];
                 } else {
                     int i;
 
                     for (i = 0; i < 64; i++) {
-                        if ((1LL << i) & custom_channel_map_locations[ch][1]) {
+                        if ((1ULL << i) & ff_eac3_custom_channel_map_locations[ch][1]) {
                             int index = av_get_channel_layout_channel_index(channel_layout,
-                                                                            1LL << i);
+                                                                            1ULL << i);
                             if (index < 0)
                                 return AVERROR_INVALIDDATA;
+                            if (extend >= channel_map_size)
+                                return AVERROR_INVALIDDATA;
+
                             extended_channel_map[index] = offset + channel_map[extend++];
                         }
                     }

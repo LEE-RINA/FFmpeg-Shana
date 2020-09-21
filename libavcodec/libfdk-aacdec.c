@@ -17,17 +17,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef _WIN32
-#include <dlfcn.h>
-#define LIBNAME "libfdk-aac.so.0"
-#else
-#include <windows.h>
-#define LIBNAME "libfdk-aac-0.dll"
-#define dlopen(fname, f) ((void *) LoadLibraryA(fname))
-#define dlclose(handle) FreeLibrary((HMODULE) handle)
-#define dlsym(handle, name) GetProcAddress((HMODULE) handle, name)
-#endif
-
 #include <fdk-aac/aacdecoder_lib.h>
 
 #include "libavutil/channel_layout.h"
@@ -35,41 +24,19 @@
 #include "libavutil/opt.h"
 #include "avcodec.h"
 #include "internal.h"
+#include "libfdk-aac_internal.h"
 
-/* The version macro is introduced the same time as the setting enum was
- * changed, so this check should suffice. */
-#ifndef AACDECODER_LIB_VL0
-#define AAC_PCM_MAX_OUTPUT_CHANNELS AAC_PCM_OUTPUT_CHANNELS
+#ifdef AACDECODER_LIB_VL0
+#define FDKDEC_VER_AT_LEAST(vl0, vl1) \
+    ((AACDECODER_LIB_VL0 > vl0) || \
+     (AACDECODER_LIB_VL0 == vl0 && AACDECODER_LIB_VL1 >= vl1))
+#else
+#define FDKDEC_VER_AT_LEAST(vl0, vl1) 0
 #endif
 
-typedef LINKSPEC_H HANDLE_AACDECODER (*imp_aacDecoder_Open)(TRANSPORT_TYPE transportFmt, UINT nrOfLayers);
-typedef LINKSPEC_H void (*imp_aacDecoder_Close)(HANDLE_AACDECODER self);
-typedef LINKSPEC_H AAC_DECODER_ERROR (*imp_aacDecoder_Fill)(HANDLE_AACDECODER self, UCHAR *pBuffer[], const UINT bufferSize[], UINT *bytesValid);
-typedef LINKSPEC_H AAC_DECODER_ERROR (*imp_aacDecoder_DecodeFrame)(HANDLE_AACDECODER self, INT_PCM *pTimeData, const INT timeDataSize, const UINT flags);
-typedef LINKSPEC_H CStreamInfo* (*imp_aacDecoder_GetStreamInfo)(HANDLE_AACDECODER self);
-typedef LINKSPEC_H AAC_DECODER_ERROR (*imp_aacDecoder_ConfigRaw)(HANDLE_AACDECODER self, UCHAR *conf[], const UINT length[]);
-typedef LINKSPEC_H AAC_DECODER_ERROR (*imp_aacDecoder_SetParam)(const HANDLE_AACDECODER self, const AACDEC_PARAM param, const INT value);
-
-typedef struct _aacDecLib {
-    imp_aacDecoder_Open aacDecoder_Open;
-    imp_aacDecoder_Close aacDecoder_Close;
-    imp_aacDecoder_Fill aacDecoder_Fill;
-    imp_aacDecoder_DecodeFrame aacDecoder_DecodeFrame;
-    imp_aacDecoder_ConfigRaw aacDecoder_ConfigRaw;
-    imp_aacDecoder_GetStreamInfo aacDecoder_GetStreamInfo;
-    imp_aacDecoder_SetParam aacDecoder_SetParam;
-} aacDecLib;
-
-#define DLSYM(x) \
-    do \
-    { \
-        s->pfn.x = ( imp_##x ) dlsym(s->hLib, AV_STRINGIFY(x)); \
-        if (!s->pfn.x ) \
-        { \
-            av_log(avctx, AV_LOG_ERROR, "Unable to find symbol " AV_STRINGIFY(x) " in dynamic " LIBNAME "\n"); \
-            return -1; \
-        } \
-    } while (0)
+#if !FDKDEC_VER_AT_LEAST(2, 5) // < 2.5.10
+#define AAC_PCM_MAX_OUTPUT_CHANNELS AAC_PCM_OUTPUT_CHANNELS
+#endif
 
 enum ConcealMethod {
     CONCEAL_METHOD_SPECTRAL_MUTING      =  0,
@@ -81,6 +48,8 @@ enum ConcealMethod {
 typedef struct FDKAACDecContext {
     const AVClass *class;
     HANDLE_AACDECODER handle;
+    void *hLib;
+    aacDecLib pfn;
     uint8_t *decoder_buffer;
     int decoder_buffer_size;
     uint8_t *anc_buffer;
@@ -88,10 +57,9 @@ typedef struct FDKAACDecContext {
     int drc_level;
     int drc_boost;
     int drc_heavy;
+    int drc_effect;
     int drc_cut;
     int level_limit;
-    void *hLib;
-    aacDecLib pfn;
 } FDKAACDecContext;
 
 
@@ -114,8 +82,12 @@ static const AVOption fdk_aac_dec_options[] = {
                      OFFSET(drc_level),      AV_OPT_TYPE_INT,   { .i64 = -1},  -1, 127, AD, NULL    },
     { "drc_heavy", "Dynamic Range Control: heavy compression, where [1] is on (RF mode) and [0] is off",
                      OFFSET(drc_heavy),      AV_OPT_TYPE_INT,   { .i64 = -1},  -1, 1,   AD, NULL    },
-#ifdef AACDECODER_LIB_VL0
+#if FDKDEC_VER_AT_LEAST(2, 5) // 2.5.10
     { "level_limit", "Signal level limiting", OFFSET(level_limit), AV_OPT_TYPE_INT, { .i64 = 0 }, -1, 1, AD },
+#endif
+#if FDKDEC_VER_AT_LEAST(3, 0) // 3.0.0
+    { "drc_effect","Dynamic Range Control: effect type, where e.g. [0] is none and [6] is general",
+                     OFFSET(drc_effect),     AV_OPT_TYPE_INT,   { .i64 = -1},  -1, 8,   AD, NULL    },
 #endif
     { NULL }
 };
@@ -275,6 +247,8 @@ static av_cold int fdk_aac_decode_init(AVCodecContext *avctx)
 #define aacDecoder_ConfigRaw s->pfn.aacDecoder_ConfigRaw
     DLSYM(aacDecoder_SetParam);
 #define aacDecoder_SetParam s->pfn.aacDecoder_SetParam
+    DLSYM(aacDecoder_AncDataInit);
+#define aacDecoder_AncDataInit s->pfn.aacDecoder_AncDataInit
 
     s->handle = aacDecoder_Open(avctx->extradata_size ? TT_MP4_RAW : TT_MP4_ADTS, 1);
     if (!s->handle) {
@@ -359,10 +333,19 @@ static av_cold int fdk_aac_decode_init(AVCodecContext *avctx)
         }
     }
 
-#ifdef AACDECODER_LIB_VL0
+#if FDKDEC_VER_AT_LEAST(2, 5) // 2.5.10
     if (aacDecoder_SetParam(s->handle, AAC_PCM_LIMITER_ENABLE, s->level_limit) != AAC_DEC_OK) {
         av_log(avctx, AV_LOG_ERROR, "Unable to set in signal level limiting in the decoder\n");
         return AVERROR_UNKNOWN;
+    }
+#endif
+
+#if FDKDEC_VER_AT_LEAST(3, 0) // 3.0.0
+    if (s->drc_effect != -1) {
+        if (aacDecoder_SetParam(s->handle, AAC_UNIDRC_SET_EFFECT, s->drc_effect) != AAC_DEC_OK) {
+            av_log(avctx, AV_LOG_ERROR, "Unable to set DRC effect type in the decoder\n");
+            return AVERROR_UNKNOWN;
+        }
     }
 #endif
 

@@ -158,7 +158,7 @@ typedef struct FourXContext {
 #define FIX_1_847759065 121095
 #define FIX_2_613125930 171254
 
-#define MULTIPLY(var, const) (((var) * (const)) >> 16)
+#define MULTIPLY(var, const) ((int)((var) * (unsigned)(const)) >> 16)
 
 static void idct(int16_t block[64])
 {
@@ -498,7 +498,7 @@ static int decode_i_block(FourXContext *f, int16_t *block)
 
     if (get_bits_left(&f->gb) < 2){
         av_log(f->avctx, AV_LOG_ERROR, "%d bits left before decode_i_block()\n", get_bits_left(&f->gb));
-        return -1;
+        return AVERROR_INVALIDDATA;
     }
 
     /* DC coef */
@@ -732,7 +732,7 @@ static int decode_i2_frame(FourXContext *f, const uint8_t *buf, int length)
         for (x = 0; x < width; x += 16) {
             unsigned int color[4] = { 0 }, bits;
             if (buf_end - buf < 8)
-                return -1;
+                return AVERROR_INVALIDDATA;
             // warning following is purely guessed ...
             color[0] = bytestream2_get_le16u(&g3);
             color[1] = bytestream2_get_le16u(&g3);

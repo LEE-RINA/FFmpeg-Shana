@@ -485,6 +485,11 @@ static int hls_slice_header(HEVCContext *s)
 
     // Coded parameters
     sh->first_slice_in_pic_flag = get_bits1(gb);
+    if (s->ref && sh->first_slice_in_pic_flag) {
+        av_log(s->avctx, AV_LOG_ERROR, "Two slices reporting being the first in the same frame.\n");
+        return 1; // This slice will be skiped later, do not corrupt state
+    }
+
     if ((IS_IDR(s) || IS_BLA(s)) && sh->first_slice_in_pic_flag) {
         s->seq_decode = (s->seq_decode + 1) & 0xff;
         s->max_ra     = INT_MAX;
@@ -2915,11 +2920,16 @@ static int decode_nal_unit(HEVCContext *s, const H2645NAL *nal)
         ret = hls_slice_header(s);
         if (ret < 0)
             return ret;
+        if (ret == 1) {
+            ret = AVERROR_INVALIDDATA;
+            goto fail;
+        }
+
 
         if (
             (s->avctx->skip_frame >= AVDISCARD_BIDIR && s->sh.slice_type == HEVC_SLICE_B) ||
             (s->avctx->skip_frame >= AVDISCARD_NONINTRA && s->sh.slice_type != HEVC_SLICE_I) ||
-            (s->avctx->skip_frame >= AVDISCARD_NONKEY && !IS_IDR(s))) {
+            (s->avctx->skip_frame >= AVDISCARD_NONKEY && !IS_IRAP(s))) {
             break;
         }
 
@@ -3358,6 +3368,7 @@ fail:
     return AVERROR(ENOMEM);
 }
 
+#if HAVE_THREADS
 static int hevc_update_thread_context(AVCodecContext *dst,
                                       const AVCodecContext *src)
 {
@@ -3439,6 +3450,7 @@ static int hevc_update_thread_context(AVCodecContext *dst,
 
     return 0;
 }
+#endif
 
 static av_cold int hevc_decode_init(AVCodecContext *avctx)
 {
@@ -3478,6 +3490,7 @@ static av_cold int hevc_decode_init(AVCodecContext *avctx)
     return 0;
 }
 
+#if HAVE_THREADS
 static av_cold int hevc_init_thread_copy(AVCodecContext *avctx)
 {
     HEVCContext *s = avctx->priv_data;
@@ -3491,6 +3504,7 @@ static av_cold int hevc_init_thread_copy(AVCodecContext *avctx)
 
     return 0;
 }
+#endif
 
 static void hevc_decode_flush(AVCodecContext *avctx)
 {
@@ -3529,8 +3543,8 @@ AVCodec ff_hevc_decoder = {
     .close                 = hevc_decode_free,
     .decode                = hevc_decode_frame,
     .flush                 = hevc_decode_flush,
-    .update_thread_context = hevc_update_thread_context,
-    .init_thread_copy      = hevc_init_thread_copy,
+    .update_thread_context = ONLY_IF_THREADS_ENABLED(hevc_update_thread_context),
+    .init_thread_copy      = ONLY_IF_THREADS_ENABLED(hevc_init_thread_copy),
     .capabilities          = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_DELAY |
                              AV_CODEC_CAP_SLICE_THREADS | AV_CODEC_CAP_FRAME_THREADS,
     .caps_internal         = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_EXPORTS_CROPPING,

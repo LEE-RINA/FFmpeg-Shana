@@ -70,6 +70,7 @@ typedef struct CuvidContext
     int deint_mode;
     int deint_mode_current;
     int64_t prev_pts;
+    int progressive_sequence;
 
     int internal_error;
     int decoder_flushing;
@@ -228,6 +229,8 @@ static int CUDAAPI cuvid_handle_video_sequence(void *opaque, CUVIDEOFORMAT* form
                               ? cudaVideoDeinterlaceMode_Weave
                               : ctx->deint_mode;
 
+    ctx->progressive_sequence = format->progressive_sequence;
+
     if (!format->progressive_sequence && ctx->deint_mode_current == cudaVideoDeinterlaceMode_Weave)
         avctx->flags |= AV_CODEC_FLAG_INTERLACED_DCT;
     else
@@ -360,6 +363,9 @@ static int CUDAAPI cuvid_handle_picture_display(void *opaque, CUVIDPARSERDISPINF
     parsed_frame.dispinfo = *dispinfo;
     ctx->internal_error = 0;
 
+    // For some reason, dispinfo->progressive_frame is sometimes wrong.
+    parsed_frame.dispinfo.progressive_frame = ctx->progressive_sequence;
+
     if (ctx->deint_mode_current == cudaVideoDeinterlaceMode_Weave) {
         av_fifo_generic_write(ctx->frame_queue, &parsed_frame, sizeof(CuvidParsedFrame), NULL);
     } else {
@@ -378,7 +384,11 @@ static int cuvid_is_buffer_full(AVCodecContext *avctx)
 {
     CuvidContext *ctx = avctx->priv_data;
 
-    return (av_fifo_size(ctx->frame_queue) / sizeof(CuvidParsedFrame)) + 2 > ctx->nb_surfaces;
+    int delay = ctx->cuparseinfo.ulMaxDisplayDelay;
+    if (ctx->deint_mode != cudaVideoDeinterlaceMode_Weave && !ctx->drop_second_field)
+        delay *= 2;
+
+    return (av_fifo_size(ctx->frame_queue) / sizeof(CuvidParsedFrame)) + delay >= ctx->nb_surfaces;
 }
 
 static int cuvid_decode_packet(AVCodecContext *avctx, const AVPacket *avpkt)
@@ -550,12 +560,16 @@ static int cuvid_output_frame(AVCodecContext *avctx, AVFrame *frame)
                     .Height        = avctx->height >> (i ? 1 : 0),
                 };
 
-                ret = CHECK_CU(ctx->cudl->cuMemcpy2D(&cpy));
+                ret = CHECK_CU(ctx->cudl->cuMemcpy2DAsync(&cpy, device_hwctx->stream));
                 if (ret < 0)
                     goto error;
 
                 offset += avctx->height;
             }
+
+            ret = CHECK_CU(ctx->cudl->cuStreamSynchronize(device_hwctx->stream));
+            if (ret < 0)
+                goto error;
         } else if (avctx->pix_fmt == AV_PIX_FMT_NV12 ||
                    avctx->pix_fmt == AV_PIX_FMT_P010 ||
                    avctx->pix_fmt == AV_PIX_FMT_P016) {

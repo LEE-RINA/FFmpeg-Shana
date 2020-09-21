@@ -337,11 +337,14 @@ static int default_width  = 640;
 static int default_height = 480;
 static int screen_width  = 0;
 static int screen_height = 0;
+static int screen_left = SDL_WINDOWPOS_CENTERED;
+static int screen_top = SDL_WINDOWPOS_CENTERED;
 static int audio_disable;
 static int video_disable;
 static int subtitle_disable;
 static const char* wanted_stream_spec[AVMEDIA_TYPE_NB] = {0};
 static int seek_by_bytes = -1;
+static float seek_interval = 10;
 static int display_disable;
 static int borderless;
 static int show_status = 1;
@@ -976,6 +979,22 @@ static int upload_texture(SDL_Texture **tex, AVFrame *frame, struct SwsContext *
     return ret;
 }
 
+static void set_sdl_yuv_conversion_mode(AVFrame *frame)
+{
+#if SDL_VERSION_ATLEAST(2,0,8)
+    SDL_YUV_CONVERSION_MODE mode = SDL_YUV_CONVERSION_AUTOMATIC;
+    if (frame && (frame->format == AV_PIX_FMT_YUV420P || frame->format == AV_PIX_FMT_YUYV422 || frame->format == AV_PIX_FMT_UYVY422)) {
+        if (frame->color_range == AVCOL_RANGE_JPEG)
+            mode = SDL_YUV_CONVERSION_JPEG;
+        else if (frame->colorspace == AVCOL_SPC_BT709)
+            mode = SDL_YUV_CONVERSION_BT709;
+        else if (frame->colorspace == AVCOL_SPC_BT470BG || frame->colorspace == AVCOL_SPC_SMPTE170M || frame->colorspace == AVCOL_SPC_SMPTE240M)
+            mode = SDL_YUV_CONVERSION_BT601;
+    }
+    SDL_SetYUVConversionMode(mode);
+#endif
+}
+
 static void s_input_window(VideoState *is)
 {
 #ifdef _WIN32
@@ -1034,10 +1053,10 @@ static void s_resize_event(VideoState *is, int swidth, int sheight)
         }
     }
 #endif
-	if (is->vis_texture) {
-		SDL_DestroyTexture(is->vis_texture);
-		is->vis_texture = NULL;
-	}
+    if (is->vis_texture) {
+        SDL_DestroyTexture(is->vis_texture);
+        is->vis_texture = NULL;
+    }
 }
 
 static void video_image_display(VideoState *is)
@@ -1100,15 +1119,15 @@ static void video_image_display(VideoState *is)
         }
     }
 
-	if (nokeepaspect)
-	{
-		rect.x = is->xleft;
-		rect.y = is->ytop;
-		rect.w = is->width;
-		rect.h = is->height;
-	}
-	else
-		calculate_display_rect(&rect, is->xleft, is->ytop, is->width, is->height, vp->width, vp->height, vp->sar);
+    if (nokeepaspect)
+    {
+        rect.x = is->xleft;
+        rect.y = is->ytop;
+        rect.w = is->width;
+        rect.h = is->height;
+    }
+    else
+        calculate_display_rect(&rect, is->xleft, is->ytop, is->width, is->height, vp->width, vp->height, vp->sar);
 
     if (!vp->uploaded) {
         if (upload_texture(&is->vid_texture, vp->frame, &is->img_convert_ctx) < 0)
@@ -1117,7 +1136,9 @@ static void video_image_display(VideoState *is)
         vp->flip_v = vp->frame->linesize[0] < 0;
     }
 
+    set_sdl_yuv_conversion_mode(vp->frame);
     SDL_RenderCopyEx(renderer, is->vid_texture, NULL, &rect, 0, NULL, vp->flip_v ? SDL_FLIP_VERTICAL : 0);
+    set_sdl_yuv_conversion_mode(NULL);
     if (sp) {
 #if USE_ONEPASS_SUBTITLE_RENDER
         SDL_RenderCopy(renderer, is->sub_texture, NULL, &rect);
@@ -1153,6 +1174,7 @@ static void video_audio_display(VideoState *s)
     if (frame_text_hwnd != NULL)
     {
         char lbuf[128];
+		memset(lbuf, 0, sizeof(lbuf));
         HWND frametext_hWnd = (HWND)(LONG_PTR)atol(frame_text_hwnd);
         SendMessage(frametext_hWnd, 0x000C, 0, (LPARAM) lbuf);
     }
@@ -1442,32 +1464,32 @@ static int video_open(VideoState *is)
     }
 
 #ifdef _WIN32
-	if (window_hwnd != NULL) 
-	{
+    if (window_hwnd != NULL) 
+    {
         // 원래 창의 핸들 가져오기 부분
         SDL_SysWMinfo info;
         SDL_VERSION(&info.version);
-        if (SDL_GetWindowWMInfo(window, &info)) SDL_hwnd=info.info.win.window;	
-	}
-	else
-#endif		
-	{
-		if (!window_title)
-			window_title = input_filename;
-		SDL_SetWindowTitle(window, window_title);
-		SDL_SetWindowSize(window, w, h);
-		SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
-		if (is_full_screen)
-			SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
-		SDL_ShowWindow(window);
-	}
-	
+        if (SDL_GetWindowWMInfo(window, &info)) SDL_hwnd=info.info.win.window;    
+    }
+    else
+#endif        
+    {
+        if (!window_title)
+            window_title = input_filename;
+        SDL_SetWindowTitle(window, window_title);
+        SDL_SetWindowSize(window, w, h);
+        SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+        if (is_full_screen)
+            SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+        SDL_ShowWindow(window);
+    }
+     
     is->width  = w;
     is->height = h;
 
-	// 창삽입
-	s_input_window(is);
-	
+    // 창삽입
+    s_input_window(is);
+    
     return 0;
 }
 
@@ -1804,7 +1826,7 @@ display:
             int volpct = (int)(((long)volume_s + 0.5) * 100 / SDL_MIX_MAXVOLUME);
             int64_t starttime = 0;
             int64_t playtime  = 0;
-			
+            
             aqsize = 0;
             vqsize = 0;
             sqsize = 0;
@@ -1823,7 +1845,7 @@ display:
                 av_diff = get_master_clock(is) - get_clock(&is->audclk);
             if (isnan(av_diff))
                 av_diff = 0;
-			
+            
             //start time
             if (start_time_s != AV_NOPTS_VALUE)
                 starttime = start_time_s;
@@ -1869,8 +1891,8 @@ display:
                 aqsize / 1024,
                 vqsize / 1024,
                 sqsize,
-			    is->video_st ? is->viddec.avctx->pts_correction_num_faulty_dts : 0,
-			    is->video_st ? is->viddec.avctx->pts_correction_num_faulty_pts : 0,
+                is->video_st ? is->viddec.avctx->pts_correction_num_faulty_dts : 0,
+                is->video_st ? is->viddec.avctx->pts_correction_num_faulty_pts : 0,
                 speed_s);
             }
             fflush(stdout);
@@ -1921,7 +1943,7 @@ static int queue_picture(VideoState *is, AVFrame *src_frame, double pts, double 
         }
     }
 #endif
-	
+    
     vp->sar = src_frame->sample_aspect_ratio;
     vp->uploaded = 0;
 
@@ -2392,6 +2414,8 @@ static int video_thread(void *arg)
             ret = queue_picture(is, frame, pts, duration, frame->pkt_pos, is->viddec.pkt_serial);
             av_frame_unref(frame);
 #if CONFIG_AVFILTER
+            if (is->videoq.serial != is->viddec.pkt_serial)
+                break;
         }
 #endif
 
@@ -2777,7 +2801,7 @@ static int stream_component_open(VideoState *is, int stream_index)
         if (forced_codec_name) av_log(NULL, AV_LOG_WARNING,
                                       "No codec could be found with name '%s'\n", forced_codec_name);
         else                   av_log(NULL, AV_LOG_WARNING,
-                                      "No codec could be found with id %d\n", avctx->codec_id);
+                                      "No decoder could be found for codec %s\n", avcodec_get_name(avctx->codec_id));
         ret = AVERROR(EINVAL);
         goto fail;
     }
@@ -3153,12 +3177,12 @@ static int read_thread(void *arg)
 //      of the seek_pos/seek_rel variables
 
             if (is->seek_frame)
-			      {
-				        ret = av_seek_frame(is->ic, -1, seek_target, is->seek_flags | AVSEEK_FLAG_BACKWARD);
-				        is->seek_frame = 0;
-			      }
-			      else
-				        ret = avformat_seek_file(is->ic, -1, seek_min, seek_target, seek_max, is->seek_flags);
+                  {
+                        ret = av_seek_frame(is->ic, -1, seek_target, is->seek_flags | AVSEEK_FLAG_BACKWARD);
+                        is->seek_frame = 0;
+                  }
+                  else
+                        ret = avformat_seek_file(is->ic, -1, seek_min, seek_target, seek_max, is->seek_flags);
             if (ret < 0) {
                 av_log(NULL, AV_LOG_ERROR,
                        "%s: error while seeking\n", is->ic->url);
@@ -3491,256 +3515,256 @@ static void event_loop(VideoState *cur_stream)
     SDL_Event event;
     RECT s_rect;
     double incr, pos, frac;
-	int dragging = 0;
+    int dragging = 0;
     int sx=0, sy=0, sx2=0, sy2=0;
     for (;;) {
         int x, y;
         refresh_loop_wait_event(cur_stream, &event);
         switch (event.type)
-		{
-			case SDL_SYSWMEVENT:
-			{
-				switch (event.syswm.msg->msg.win.msg)
-				{
-					if (exit_on_keydown) {
-						do_exit(cur_stream);
-						break;
-					}
-					case WM_SYSKEYDOWN:
-					case WM_KEYDOWN:
-						switch (event.syswm.msg->msg.win.wParam)
-						{
-							case 13: // enter
-								if (window_hwnd == NULL && SDL_hwnd != NULL)
-								{
-									toggle_full_screen(cur_stream);
-									cur_stream->force_refresh = 1;
-								}
-								break;
-							case 32: // space bar
-								toggle_pause(cur_stream);
-								break;
-							case 33: // pgup
-								if (cur_stream->ic->nb_chapters <= 1) {
-									incr = 300.0;
-									goto do_seek;
-								}
-								seek_chapter(cur_stream, 1);
-								break;
-							case 34: // pgdn
-								if (cur_stream->ic->nb_chapters <= 1) {
-									incr = -300.0;
-									goto do_seek;
-								}
-								seek_chapter(cur_stream, -1);
-								break;
-							case 38: // up
-								if (volume_s < 128) volume_s = FFMIN(volume_s + 8, 128);
-								break;
-							case 40: // down
-								if (volume_s > 0) volume_s = FFMAX(volume_s - 8, 0);
-								break;
-							case 65: // a
-								stream_cycle_channel(cur_stream, AVMEDIA_TYPE_AUDIO);
-								break;
-							case 67: // c
-								stream_cycle_channel(cur_stream, AVMEDIA_TYPE_VIDEO);
-								stream_cycle_channel(cur_stream, AVMEDIA_TYPE_AUDIO);
-								stream_cycle_channel(cur_stream, AVMEDIA_TYPE_SUBTITLE);
-								break;
-							case 68: // d
-								if (!cur_stream->paused)
-									stream_toggle_pause(cur_stream);
-								incr = -1.0;
-								goto do_seek;
-								break;
-							case 69: // e
-							case 37: // left
-								incr = -5.0;
-								goto do_seek;
-								break;
-							case 70: // f
-								if (!cur_stream->paused)
-									stream_toggle_pause(cur_stream);
-								incr = 0.05;
-								goto do_seek;
-								break;
-							case 27: // esc
-							case 81: // q
-								gui_message(27);
-								do_exit(cur_stream);
-								break;
-							case 39: // right
-							case 82: // r
-								incr = 5.0;
-								goto do_seek;
-								break;
-							case 83: // s
-								step_to_next_frame(cur_stream);
-								break;
-							case 84: // t 
-								stream_cycle_channel(cur_stream, AVMEDIA_TYPE_SUBTITLE);
-								break;
-							case 86: // v 
-								stream_cycle_channel(cur_stream, AVMEDIA_TYPE_VIDEO);
-								break;
-							case 87: // w 
-								#if CONFIG_AVFILTER
-									if (cur_stream->show_mode == SHOW_MODE_VIDEO && cur_stream->vfilter_idx < nb_vfilters - 1) {
-										if (++cur_stream->vfilter_idx >= nb_vfilters)
-											cur_stream->vfilter_idx = 0;
-									} else {
-										cur_stream->vfilter_idx = 0;
-										toggle_audio_display(cur_stream);
-									}
-								#else
-									toggle_audio_display(cur_stream);
-								#endif
-								break;
-							case 112: // F1
-								gui_message(12);
-								break;
-							case 219: // [
-								if (speed_s >= 0.6) speed_s -= 0.1;
-								break;
-							case 221: // ]
-								speed_s += 0.1;
-								break;
-							default:
-								break;								
-						}
-						break;
-					do_seek:
-						if (seek_by_bytes) {
-							pos = -1;
-							if (pos < 0 && cur_stream->video_stream >= 0)
-								pos = frame_queue_last_pos(&cur_stream->pictq);
-							if (pos < 0 && cur_stream->audio_stream >= 0)
-								pos = frame_queue_last_pos(&cur_stream->sampq);
-							if (pos < 0)
-								pos = avio_tell(cur_stream->ic->pb);
-							if (cur_stream->ic->bit_rate)
-								incr *= cur_stream->ic->bit_rate / 8.0;
-							else
-								incr *= 180000.0;
-							pos += incr;
-							stream_seek(cur_stream, pos, incr, 1);
-						} else {
-							pos = get_master_clock(cur_stream);
-							if (isnan(pos))
-								pos = (double)cur_stream->seek_pos / AV_TIME_BASE;
-							pos += incr;
-							if (cur_stream->ic->start_time != AV_NOPTS_VALUE && pos < cur_stream->ic->start_time / (double)AV_TIME_BASE)
-								pos = cur_stream->ic->start_time / (double)AV_TIME_BASE;
-							stream_seek(cur_stream, (int64_t)(pos * AV_TIME_BASE), (int64_t)(incr * AV_TIME_BASE), 0);
-						}
-						break;
-					case WM_LBUTTONDOWN:
-						if (exit_on_mousedown) {
-							do_exit(cur_stream);
-							break;
-						}
-						if (window_hwnd != NULL)
-						{
-							sx = LOWORD(event.syswm.msg->msg.win.lParam);
-							sy = HIWORD(event.syswm.msg->msg.win.lParam);
-						}
-						else
-							SDL_GetMouseState(&sx, &sy);
-						dragging = 1;
-						goto do_seek2;
-						break;
-					case WM_MOUSELEAVE:
-					case WM_LBUTTONUP:
-						dragging = 0;
-						break;
-					case WM_MOUSEMOVE:
-						if (cursor_hidden) {
-							SDL_ShowCursor(1);
-							cursor_hidden = 0;
-						}
-						cursor_last_shown = av_gettime_relative();
-						do_seek2:
-							/* 이동 부분 */
-							if (window_hwnd == NULL && SDL_hwnd != NULL && !is_full_screen)
-							{
-							#ifdef _WIN32
-								if (dragging)
-								{
-									if (window_hwnd != NULL)
-									{
-										sx2 = LOWORD(event.syswm.msg->msg.win.lParam);
-										sy2 = HIWORD(event.syswm.msg->msg.win.lParam);
-									}
-									else
-										SDL_GetMouseState(&sx2, &sy2);
-									GetWindowRect(SDL_hwnd, &s_rect);
-									MoveWindow(SDL_hwnd, s_rect.left + sx2 - sx, s_rect.top + sy2 - sy,
-														 s_rect.right - s_rect.left, s_rect.bottom - s_rect.top, TRUE);
-								}
-							#endif
-							}
-							else if (dragging)
-							{
-								if (window_hwnd != NULL)
-								{
-									x = LOWORD(event.syswm.msg->msg.win.lParam);
-									y = HIWORD(event.syswm.msg->msg.win.lParam);
-								}
-								else
-									SDL_GetMouseState(&x, &y);
-								if (seek_by_bytes || cur_stream->ic->duration <= 0) {
-									uint64_t size =  avio_size(cur_stream->ic->pb);
-									stream_seek(cur_stream, size*x/cur_stream->width, 0, 1);
-								} else {
-									int64_t ts;
-									int ns, hh, mm, ss;
-									int tns, thh, tmm, tss;
-									tns  = cur_stream->ic->duration / 1000000LL;
-									thh  = tns / 3600;
-									tmm  = (tns % 3600) / 60;
-									tss  = (tns % 60);
-									frac = (double)x / cur_stream->width;
-									ns   = frac * tns;
-									hh   = ns / 3600;
-									mm   = (ns % 3600) / 60;
-									ss   = (ns % 60);
-									av_log(NULL, AV_LOG_INFO,
-										   "Seek to %2.0f%% (%2d:%02d:%02d) of total duration (%2d:%02d:%02d)       \n", frac*100,
-											hh, mm, ss, thh, tmm, tss);
-									ts = frac * cur_stream->ic->duration;
-									if (cur_stream->ic->start_time != AV_NOPTS_VALUE)
-										ts += cur_stream->ic->start_time;
-									stream_seek(cur_stream, ts, 0, 0);
-								}
-							}
-							break;
-				}
-			}
-			break;
-		case SDL_WINDOWEVENT:
-			switch (event.window.event)
-			{
-				case SDL_WINDOWEVENT_EXPOSED:
-					cur_stream->force_refresh = 1;
-					break;
-				case SDL_WINDOWEVENT_RESIZED:
-				    screen_width  = cur_stream->width  = event.window.data1;
+        {
+            case SDL_SYSWMEVENT:
+            {
+                switch (event.syswm.msg->msg.win.msg)
+                {
+                    if (exit_on_keydown) {
+                        do_exit(cur_stream);
+                        break;
+                    }
+                    case WM_SYSKEYDOWN:
+                    case WM_KEYDOWN:
+                        switch (event.syswm.msg->msg.win.wParam)
+                        {
+                            case 13: // enter
+                                if (window_hwnd == NULL && SDL_hwnd != NULL)
+                                {
+                                    toggle_full_screen(cur_stream);
+                                    cur_stream->force_refresh = 1;
+                                }
+                                break;
+                            case 32: // space bar
+                                toggle_pause(cur_stream);
+                                break;
+                            case 33: // pgup
+                                if (cur_stream->ic->nb_chapters <= 1) {
+                                    incr = 300.0;
+                                    goto do_seek;
+                                }
+                                seek_chapter(cur_stream, 1);
+                                break;
+                            case 34: // pgdn
+                                if (cur_stream->ic->nb_chapters <= 1) {
+                                    incr = -300.0;
+                                    goto do_seek;
+                                }
+                                seek_chapter(cur_stream, -1);
+                                break;
+                            case 38: // up
+                                if (volume_s < 128) volume_s = FFMIN(volume_s + 8, 128);
+                                break;
+                            case 40: // down
+                                if (volume_s > 0) volume_s = FFMAX(volume_s - 8, 0);
+                                break;
+                            case 65: // a
+                                stream_cycle_channel(cur_stream, AVMEDIA_TYPE_AUDIO);
+                                break;
+                            case 67: // c
+                                stream_cycle_channel(cur_stream, AVMEDIA_TYPE_VIDEO);
+                                stream_cycle_channel(cur_stream, AVMEDIA_TYPE_AUDIO);
+                                stream_cycle_channel(cur_stream, AVMEDIA_TYPE_SUBTITLE);
+                                break;
+                            case 68: // d
+                                if (!cur_stream->paused)
+                                    stream_toggle_pause(cur_stream);
+                                incr = -1.0;
+                                goto do_seek;
+                                break;
+                            case 69: // e
+                            case 37: // left
+                                incr = -5.0;
+                                goto do_seek;
+                                break;
+                            case 70: // f
+                                if (!cur_stream->paused)
+                                    stream_toggle_pause(cur_stream);
+                                incr = 0.05;
+                                goto do_seek;
+                                break;
+                            case 27: // esc
+                            case 81: // q
+                                gui_message(27);
+                                do_exit(cur_stream);
+                                break;
+                            case 39: // right
+                            case 82: // r
+                                incr = 5.0;
+                                goto do_seek;
+                                break;
+                            case 83: // s
+                                step_to_next_frame(cur_stream);
+                                break;
+                            case 84: // t 
+                                stream_cycle_channel(cur_stream, AVMEDIA_TYPE_SUBTITLE);
+                                break;
+                            case 86: // v 
+                                stream_cycle_channel(cur_stream, AVMEDIA_TYPE_VIDEO);
+                                break;
+                            case 87: // w 
+                                #if CONFIG_AVFILTER
+                                    if (cur_stream->show_mode == SHOW_MODE_VIDEO && cur_stream->vfilter_idx < nb_vfilters - 1) {
+                                        if (++cur_stream->vfilter_idx >= nb_vfilters)
+                                            cur_stream->vfilter_idx = 0;
+                                    } else {
+                                        cur_stream->vfilter_idx = 0;
+                                        toggle_audio_display(cur_stream);
+                                    }
+                                #else
+                                    toggle_audio_display(cur_stream);
+                                #endif
+                                break;
+                            case 112: // F1
+                                gui_message(12);
+                                break;
+                            case 219: // [
+                                if (speed_s >= 0.6) speed_s -= 0.1;
+                            break;
+                            case 221: // ]
+                                speed_s += 0.1;
+                                break;
+                            default:
+                                break;                                
+                        }
+                        break;
+                    do_seek:
+                        if (seek_by_bytes) {
+                            pos = -1;
+                            if (pos < 0 && cur_stream->video_stream >= 0)
+                                pos = frame_queue_last_pos(&cur_stream->pictq);
+                            if (pos < 0 && cur_stream->audio_stream >= 0)
+                                pos = frame_queue_last_pos(&cur_stream->sampq);
+                            if (pos < 0)
+                                pos = avio_tell(cur_stream->ic->pb);
+                            if (cur_stream->ic->bit_rate)
+                                incr *= cur_stream->ic->bit_rate / 8.0;
+                            else
+                                incr *= 180000.0;
+                            pos += incr;
+                            stream_seek(cur_stream, pos, incr, 1);
+                        } else {
+                            pos = get_master_clock(cur_stream);
+                            if (isnan(pos))
+                                pos = (double)cur_stream->seek_pos / AV_TIME_BASE;
+                            pos += incr;
+                            if (cur_stream->ic->start_time != AV_NOPTS_VALUE && pos < cur_stream->ic->start_time / (double)AV_TIME_BASE)
+                                pos = cur_stream->ic->start_time / (double)AV_TIME_BASE;
+                            stream_seek(cur_stream, (int64_t)(pos * AV_TIME_BASE), (int64_t)(incr * AV_TIME_BASE), 0);
+                        }
+                        break;
+                    case WM_LBUTTONDOWN:
+                        if (exit_on_mousedown) {
+                            do_exit(cur_stream);
+                            break;
+                        }
+                        if (window_hwnd != NULL)
+                        {
+                            sx = LOWORD(event.syswm.msg->msg.win.lParam);
+                            sy = HIWORD(event.syswm.msg->msg.win.lParam);
+                        }
+                        else
+                            SDL_GetMouseState(&sx, &sy);
+                        dragging = 1;
+                        goto do_seek2;
+                        break;
+                    case WM_MOUSELEAVE:
+                    case WM_LBUTTONUP:
+                        dragging = 0;
+                        break;
+                    case WM_MOUSEMOVE:
+                        if (cursor_hidden) {
+                            SDL_ShowCursor(1);
+                            cursor_hidden = 0;
+                        }
+                        cursor_last_shown = av_gettime_relative();
+                        do_seek2:
+                            /* 이동 부분 */
+                            if (window_hwnd == NULL && SDL_hwnd != NULL && !is_full_screen)
+                            {
+                            #ifdef _WIN32
+                                if (dragging)
+                                {
+                                    if (window_hwnd != NULL)
+                                    {
+                                        sx2 = LOWORD(event.syswm.msg->msg.win.lParam);
+                                        sy2 = HIWORD(event.syswm.msg->msg.win.lParam);
+                                    }
+                                    else
+                                        SDL_GetMouseState(&sx2, &sy2);
+                                    GetWindowRect(SDL_hwnd, &s_rect);
+                                    MoveWindow(SDL_hwnd, s_rect.left + sx2 - sx, s_rect.top + sy2 - sy,
+                                                         s_rect.right - s_rect.left, s_rect.bottom - s_rect.top, TRUE);
+                                }
+                            #endif
+                            }
+                            else if (dragging)
+                            {
+                                if (window_hwnd != NULL)
+                                {
+                                    x = LOWORD(event.syswm.msg->msg.win.lParam);
+                                    y = HIWORD(event.syswm.msg->msg.win.lParam);
+                                }
+                                else
+                                    SDL_GetMouseState(&x, &y);
+                                if (seek_by_bytes || cur_stream->ic->duration <= 0) {
+                                    uint64_t size =  avio_size(cur_stream->ic->pb);
+                                    stream_seek(cur_stream, size*x/cur_stream->width, 0, 1);
+                                } else {
+                                    int64_t ts;
+                                    int ns, hh, mm, ss;
+                                    int tns, thh, tmm, tss;
+                                    tns  = cur_stream->ic->duration / 1000000LL;
+                                    thh  = tns / 3600;
+                                    tmm  = (tns % 3600) / 60;
+                                    tss  = (tns % 60);
+                                    frac = (double)x / cur_stream->width;
+                                    ns   = frac * tns;
+                                    hh   = ns / 3600;
+                                    mm   = (ns % 3600) / 60;
+                                    ss   = (ns % 60);
+                                    av_log(NULL, AV_LOG_INFO,
+                                           "Seek to %2.0f%% (%2d:%02d:%02d) of total duration (%2d:%02d:%02d)       \n", frac*100,
+                                            hh, mm, ss, thh, tmm, tss);
+                                    ts = frac * cur_stream->ic->duration;
+                                    if (cur_stream->ic->start_time != AV_NOPTS_VALUE)
+                                        ts += cur_stream->ic->start_time;
+                                    stream_seek(cur_stream, ts, 0, 0);
+                                }
+                            }
+                            break;
+                }
+            }
+            break;
+        case SDL_WINDOWEVENT:
+            switch (event.window.event)
+            {
+                case SDL_WINDOWEVENT_EXPOSED:
+                    cur_stream->force_refresh = 1;
+                    break;
+                case SDL_WINDOWEVENT_RESIZED:
+                    screen_width  = cur_stream->width  = event.window.data1;
                     screen_height = cur_stream->height = event.window.data2;
-					if (is_move_s == 0) s_resize_event(cur_stream, screen_width, screen_height);
-					break;
-			} 
-			break; 
-		case SDL_MOUSEWHEEL:
-			if (event.wheel.y < 0)
-			{
-				if (volume_s > 0) volume_s = FFMAX(volume_s - 8, 0);
-			}
-			else
-			{
-				if (volume_s < 128) volume_s = FFMIN(volume_s + 8, 128);
-			}
-			break;
+                    if (is_move_s == 0) s_resize_event(cur_stream, screen_width, screen_height);
+                    break;
+            } 
+            break; 
+        case SDL_MOUSEWHEEL:
+            if (event.wheel.y < 0)
+            {
+                if (volume_s > 0) volume_s = FFMAX(volume_s - 8, 0);
+            }
+            else
+            {
+                if (volume_s < 128) volume_s = FFMIN(volume_s + 8, 128);
+            }
+            break;
         case SDL_QUIT:
         case FF_QUIT_EVENT:
             do_exit(cur_stream);
@@ -3873,6 +3897,7 @@ static const OptionDef options[] = {
     { "ss", HAS_ARG, { .func_arg = opt_seek }, "seek to a given position in seconds", "pos" },
     { "t", HAS_ARG, { .func_arg = opt_duration }, "play  \"duration\" seconds of audio/video", "duration" },
     { "bytes", OPT_INT | HAS_ARG, { &seek_by_bytes }, "seek by bytes 0=off 1=on -1=auto", "val" },
+    { "seek_interval", OPT_FLOAT | HAS_ARG, { &seek_interval }, "set seek interval for left/right keys, in seconds", "seconds" },
     { "nodisp", OPT_BOOL, { &display_disable }, "disable graphical display" },
     { "noborder", OPT_BOOL, { &borderless }, "borderless window" },
     { "f", HAS_ARG, { .func_arg = opt_format }, "force format", "fmt" },
@@ -3890,6 +3915,8 @@ static const OptionDef options[] = {
     { "framedrop", OPT_BOOL | OPT_EXPERT, { &framedrop }, "drop frames when cpu is too slow", "" },
     { "infbuf", OPT_BOOL | OPT_EXPERT, { &infinite_buffer }, "don't limit the input buffer size (useful with realtime streams)", "" },
     { "window_title", OPT_STRING | HAS_ARG, { &window_title }, "set window title", "window title" },
+    { "left", OPT_INT | HAS_ARG | OPT_EXPERT, { &screen_left }, "set the x position for the left of the window", "x pos" },
+    { "top", OPT_INT | HAS_ARG | OPT_EXPERT, { &screen_top }, "set the y position for the top of the window", "y pos" },
 #ifdef _WIN32
 /* hwnd */
     { "window_hwnd", HAS_ARG | OPT_STRING | OPT_EXPERT, { &window_hwnd }, "window hWnd", "" },
@@ -3902,7 +3929,7 @@ static const OptionDef options[] = {
 /* shana */
     { "nokeepaspect", OPT_BOOL, { &nokeepaspect }, "do not keep aspect ratio", "" },
     { "sdl_vol", OPT_INT | HAS_ARG, { &volume_s }, "set audio volume (0~128)", "" },
-    { "hide_msg", OPT_BOOL, { &hide_msg }, "Hide Message", "" },
+    { "hide_msg", OPT_BOOL, { &hide_msg }, "Hide Message", "" },        
 #if CONFIG_AVFILTER
     { "vf", OPT_EXPERT | HAS_ARG, { .func_arg = opt_add_vfilter }, "set video filters", "filter_graph" },
     { "af", OPT_STRING | HAS_ARG, { &afilters }, "set audio filters", "filter_graph" },
@@ -3950,7 +3977,7 @@ int main(int argc, char **argv)
     int flags;
     VideoState *is;
 
-	av_log(NULL, AV_LOG_INFO, "-------------------\nShanaFFplay\nhttps://shana.pe.kr\n-------------------\n");
+    av_log(NULL, AV_LOG_INFO, "-------------------\nShanaFFplay\nhttps://shana.pe.kr\n-------------------\n");
     init_dynload();
 
     av_log_set_flags(AV_LOG_SKIP_REPEATED);
@@ -4000,20 +4027,20 @@ int main(int argc, char **argv)
     flush_pkt.data = (uint8_t *)&flush_pkt;
 
     if (!display_disable) {
-		if (window_hwnd != NULL) 
-		{
-			int flags = SDL_WINDOW_OPENGL | SDL_WINDOW_BORDERLESS | SDL_WINDOW_HIDDEN | SDL_WINDOW_ALLOW_HIGHDPI;
-			window = SDL_CreateWindow(window_title, 0, 0, 0, 0, flags);
-		}
-		else
-		{
-			int flags = SDL_WINDOW_HIDDEN;
-			if (borderless)
-				flags |= SDL_WINDOW_BORDERLESS;
-			else
-				flags |= SDL_WINDOW_RESIZABLE;
-			window = SDL_CreateWindow(program_name, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, default_width, default_height, flags);
-		}
+        if (window_hwnd != NULL) 
+        {
+            int flags = SDL_WINDOW_OPENGL | SDL_WINDOW_BORDERLESS | SDL_WINDOW_HIDDEN | SDL_WINDOW_ALLOW_HIGHDPI;
+            window = SDL_CreateWindow(window_title, 0, 0, 0, 0, flags);
+        }
+        else
+        {
+            int flags = SDL_WINDOW_HIDDEN;
+            if (borderless)
+                flags |= SDL_WINDOW_BORDERLESS;
+            else
+                flags |= SDL_WINDOW_RESIZABLE;
+            window = SDL_CreateWindow(program_name, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, default_width, default_height, flags);
+        }
         SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
         if (window) {
             renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);

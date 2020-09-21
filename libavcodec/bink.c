@@ -371,11 +371,19 @@ static const uint8_t bink_rlelens[4] = { 4, 8, 12, 32 };
 
 static int read_block_types(AVCodecContext *avctx, GetBitContext *gb, Bundle *b)
 {
+    BinkContext * const c = avctx->priv_data;
     int t, v;
     int last = 0;
     const uint8_t *dec_end;
 
     CHECK_READ_VAL(gb, b, t);
+    if (c->version == 'k') {
+        t ^= 0xBBu;
+        if (t == 0) {
+            b->cur_dec = NULL;
+            return 0;
+        }
+    }
     dec_end = b->cur_dec + t;
     if (dec_end > b->data_end) {
         av_log(avctx, AV_LOG_ERROR, "Too many block type values\n");
@@ -694,15 +702,15 @@ static int read_dct_coeffs(GetBitContext *gb, int32_t block[64],
     return quant_idx;
 }
 
-static void unquantize_dct_coeffs(int32_t block[64], const int32_t quant[64],
+static void unquantize_dct_coeffs(int32_t block[64], const uint32_t quant[64],
                                   int coef_count, int coef_idx[64],
                                   const uint8_t *scan)
 {
     int i;
-    block[0] = (block[0] * quant[0]) >> 11;
+    block[0] = (int)(block[0] * quant[0]) >> 11;
     for (i = 0; i < coef_count; i++) {
         int idx = coef_idx[i];
-        block[scan[idx]] = (block[scan[idx]] * quant[idx]) >> 11;
+        block[scan[idx]] = (int)(block[scan[idx]] * quant[idx]) >> 11;
     }
 }
 
@@ -994,6 +1002,17 @@ static int bink_decode_plane(BinkContext *c, AVFrame *frame, GetBitContext *gb,
     int bw = is_chroma ? (c->avctx->width  + 15) >> 4 : (c->avctx->width  + 7) >> 3;
     int bh = is_chroma ? (c->avctx->height + 15) >> 4 : (c->avctx->height + 7) >> 3;
     int width = c->avctx->width >> is_chroma;
+    int height = c->avctx->height >> is_chroma;
+
+    if (c->version == 'k' && get_bits1(gb)) {
+        int fill = get_bits(gb, 8);
+
+        dst = frame->data[plane_idx];
+
+        for (i = 0; i < height; i++)
+            memset(dst + i * stride, fill, width);
+        goto end;
+    }
 
     init_lengths(c, FFMAX(width, 8), bw);
     for (i = 0; i < BINK_NB_SRC; i++)
@@ -1190,6 +1209,8 @@ static int bink_decode_plane(BinkContext *c, AVFrame *frame, GetBitContext *gb,
             }
         }
     }
+
+end:
     if (get_bits_count(gb) & 0x1F) //next plane data starts at 32-bit boundary
         skip_bits_long(gb, 32 - (get_bits_count(gb) & 0x1F));
 
@@ -1314,14 +1335,15 @@ static av_cold int decode_init(AVCodecContext *avctx)
     }
     c->avctx = avctx;
 
+    if ((ret = av_image_check_size(avctx->width, avctx->height, 0, avctx)) < 0)
+        return ret;
+
     c->last = av_frame_alloc();
     if (!c->last)
         return AVERROR(ENOMEM);
 
-    if ((ret = av_image_check_size(avctx->width, avctx->height, 0, avctx)) < 0)
-        return ret;
-
     avctx->pix_fmt = c->has_alpha ? AV_PIX_FMT_YUVA420P : AV_PIX_FMT_YUV420P;
+    avctx->color_range = c->version == 'k' ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
 
     ff_blockdsp_init(&c->bdsp, avctx);
     ff_hpeldsp_init(&c->hdsp, avctx->flags);
