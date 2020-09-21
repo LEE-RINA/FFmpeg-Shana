@@ -7,6 +7,9 @@ fate-4xm-2: CMD = framecrc -i $(TARGET_SAMPLES)/4xm/version2.4xm -pix_fmt rgb24 
 FATE_VIDEO-$(call DEMDEC, FOURXM, FOURXM) += $(FATE_4XM)
 fate-4xm: $(FATE_4XM)
 
+FATE_VIDEO-$(call DEMDEC, AVI, ZERO12V) += fate-012v
+fate-012v: CMD = framecrc -i $(TARGET_SAMPLES)/012v/sample.avi -pix_fmt yuv422p16le
+
 FATE_VIDEO-$(call DEMDEC, AVI, AASC) += fate-aasc
 fate-aasc: CMD = framecrc -i $(TARGET_SAMPLES)/aasc/AASC-1.5MB.AVI -pix_fmt rgb24
 
@@ -85,13 +88,16 @@ FATE_VIDEO-$(call DEMDEC, MPEGPS, CAVS) += fate-cavs
 fate-cavs: CMD = framecrc -i $(TARGET_SAMPLES)/cavs/cavs.mpg -an
 
 FATE_VIDEO-$(call DEMDEC, CDG, CDGRAPHICS) += fate-cdgraphics
-fate-cdgraphics: CMD = framecrc -i $(TARGET_SAMPLES)/cdgraphics/BrotherJohn.cdg -pix_fmt rgb24 -t 1
+fate-cdgraphics: CMD = framecrc -i $(TARGET_SAMPLES)/cdgraphics/BrotherJohn.cdg -pix_fmt rgba -t 1
 
 FATE_VIDEO-$(call DEMDEC, AVI, CLJR) += fate-cljr
 fate-cljr: CMD = framecrc -i $(TARGET_SAMPLES)/cljr/testcljr-partial.avi
 
 FATE_VIDEO-$(call DEMDEC, AVI, PNG) += fate-corepng
 fate-corepng: CMD = framecrc -i $(TARGET_SAMPLES)/png1/corepng-partial.avi
+
+FATE_VIDEO-$(call DEMDEC, AVI, PNG) += fate-rgbapng-4816
+fate-rgbapng-4816: CMD = framecrc -i $(TARGET_SAMPLES)/png1/55c99e750a5fd6_50314226.png
 
 FATE_VIDEO-$(call DEMDEC, AVS, AVS) += fate-creatureshock-avs
 fate-creatureshock-avs: CMD = framecrc -i $(TARGET_SAMPLES)/creatureshock-avs/OUTATIME.AVS -pix_fmt rgb24
@@ -144,6 +150,21 @@ fate-dxa-scummvm: CMD = framecrc -i $(TARGET_SAMPLES)/dxa/scummvm.dxa -pix_fmt r
 FATE_VIDEO-$(call DEMDEC, DXA, DXA) += $(FATE_DXA)
 fate-dxa: $(FATE_DXA)
 
+FATE_DXV += fate-dxv-dxt1
+fate-dxv-dxt1: CMD = framecrc -i $(TARGET_SAMPLES)/dxv/dxv-na.mov
+
+FATE_DXV += fate-dxv-dxt5
+fate-dxv-dxt5: CMD = framecrc -i $(TARGET_SAMPLES)/dxv/dxv-wa.mov
+
+FATE_DXV += fate-dxv3-dxt1
+fate-dxv3-dxt1: CMD = framecrc -i $(TARGET_SAMPLES)/dxv/dxv3-nqna.mov
+
+FATE_DXV += fate-dxv3-dxt5
+fate-dxv3-dxt5: CMD = framecrc -i $(TARGET_SAMPLES)/dxv/dxv3-nqwa.mov
+
+FATE_VIDEO-$(call DEMDEC, MOV, DXV) += $(FATE_DXV)
+fate-dxv: $(FATE_DXV)
+
 FATE_VIDEO-$(call DEMDEC, SEGAFILM, CINEPAK) += fate-film-cvid
 fate-film-cvid: CMD = framecrc -i $(TARGET_SAMPLES)/film/logo-capcom.cpk -an
 
@@ -183,7 +204,7 @@ fate-hap-chunk: CMD = framecrc -i $(TARGET_SAMPLES)/hap/hapy-12-chunks.mov
 FATE_SAMPLES_AVCONV-$(call DEMDEC, MOV, HAP) += $(FATE_HAP)
 fate-hap: $(FATE_HAP)
 
-FATE_IFF-$(CONFIG_IFF_BYTERUN1_DECODER) += fate-iff-byterun1
+FATE_IFF-$(CONFIG_IFF_ILBM_DECODER) += fate-iff-byterun1
 fate-iff-byterun1: CMD = framecrc -i $(TARGET_SAMPLES)/iff/ASH.LBM -pix_fmt rgb24
 
 FATE_IFF-$(CONFIG_EIGHTSVX_FIB_DECODER) += fate-iff-fibonacci

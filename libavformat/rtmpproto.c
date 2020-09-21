@@ -451,7 +451,7 @@ static int read_connect(URLContext *s, RTMPContext *rt)
                tmpstr, rt->app);
     ff_rtmp_packet_destroy(&pkt);
 
-    // Send Window Acknowledgement Size (as defined in speficication)
+    // Send Window Acknowledgement Size (as defined in specification)
     if ((ret = ff_rtmp_packet_create(&pkt, RTMP_NETWORK_CHANNEL,
                                      RTMP_PT_SERVER_BW, 0, 4)) < 0)
         return ret;
@@ -581,7 +581,7 @@ static int gen_release_stream(URLContext *s, RTMPContext *rt)
 
 /**
  * Generate 'FCPublish' call and send it to the server. It should make
- * the server preapare for receiving media streams.
+ * the server prepare for receiving media streams.
  */
 static int gen_fcpublish_stream(URLContext *s, RTMPContext *rt)
 {
@@ -1118,8 +1118,9 @@ static int rtmp_calc_swfhash(URLContext *s)
     int ret = 0;
 
     /* Get the SWF player file. */
-    if ((ret = ffurl_open(&stream, rt->swfverify, AVIO_FLAG_READ,
-                          &s->interrupt_callback, NULL)) < 0) {
+    if ((ret = ffurl_open_whitelist(&stream, rt->swfverify, AVIO_FLAG_READ,
+                                    &s->interrupt_callback, NULL,
+                                    s->protocol_whitelist, s->protocol_blacklist, s)) < 0) {
         av_log(s, AV_LOG_ERROR, "Cannot open connection %s.\n", rt->swfverify);
         goto fail;
     }
@@ -1999,7 +2000,7 @@ static int send_invoke_response(URLContext *s, RTMPPacket *pkt)
  * successful response, we will return set the value to number (otherwise number
  * will not be changed).
  *
- * @return 0 if reading the value succeeds, negative value otherwiss
+ * @return 0 if reading the value succeeds, negative value otherwise
  */
 static int read_number_result(RTMPPacket *pkt, double *number)
 {
@@ -2022,7 +2023,7 @@ static int read_number_result(RTMPPacket *pkt, double *number)
     // Value 3/4: Null
     if (ff_amf_read_null(&gbc))
         return AVERROR_INVALIDDATA;
-    // Value 4/4: The resonse as AMF_NUMBER
+    // Value 4/4: The response as AMF_NUMBER
     if (ff_amf_read_number(&gbc, &numbuffer))
         return AVERROR_INVALIDDATA;
     else
@@ -2218,7 +2219,7 @@ static int append_flv_data(RTMPContext *rt, RTMPPacket *pkt, int skip)
     bytestream2_put_byte(&pbc, ts >> 24);
     bytestream2_put_be24(&pbc, 0);
     bytestream2_put_buffer(&pbc, data, size);
-    bytestream2_put_be32(&pbc, 0);
+    bytestream2_put_be32(&pbc, size + RTMP_HEADER);
 
     return 0;
 }
@@ -2368,8 +2369,9 @@ static int handle_metadata(RTMPContext *rt, RTMPPacket *pkt)
         bytestream_put_be24(&p, ts);
         bytestream_put_byte(&p, ts >> 24);
         memcpy(p, next, size + 3 + 4);
+        p    += size + 3;
+        bytestream_put_be32(&p, size + RTMP_HEADER);
         next += size + 3 + 4;
-        p    += size + 3 + 4;
     }
     if (p != rt->flv_data + rt->flv_size) {
         av_log(NULL, AV_LOG_WARNING, "Incomplete flv packets in "
@@ -2512,7 +2514,7 @@ static int rtmp_close(URLContext *h)
  */
 static int inject_fake_duration_metadata(RTMPContext *rt)
 {
-    // We need to insert the metdata packet directly after the FLV
+    // We need to insert the metadata packet directly after the FLV
     // header, i.e. we need to move all other already read data by the
     // size of our fake metadata packet.
 
@@ -2559,7 +2561,7 @@ static int inject_fake_duration_metadata(RTMPContext *rt)
     // Finalise object
     bytestream_put_be16(&p, 0); // Empty string
     bytestream_put_byte(&p, AMF_END_OF_OBJECT);
-    bytestream_put_be32(&p, 40); // size of data part (sum of all parts below)
+    bytestream_put_be32(&p, 40 + RTMP_HEADER); // size of data part (sum of all parts above)
 
     return 0;
 }
@@ -2646,8 +2648,9 @@ static int rtmp_open(URLContext *s, const char *uri, int flags)
     }
 
 reconnect:
-    if ((ret = ffurl_open(&rt->stream, buf, AVIO_FLAG_READ_WRITE,
-                          &s->interrupt_callback, &opts)) < 0) {
+    if ((ret = ffurl_open_whitelist(&rt->stream, buf, AVIO_FLAG_READ_WRITE,
+                                    &s->interrupt_callback, &opts,
+                                    s->protocol_whitelist, s->protocol_blacklist, s)) < 0) {
         av_log(s , AV_LOG_ERROR, "Cannot open connection %s\n", buf);
         goto fail;
     }
@@ -2680,8 +2683,8 @@ reconnect:
     qmark = strchr(path, '?');
     if (qmark && strstr(qmark, "slist=")) {
         char* amp;
-        // After slist we have the playpath, before the params, the app
-        av_strlcpy(rt->app, path + 1, FFMIN(qmark - path, APP_MAX_LENGTH));
+        // After slist we have the playpath, the full path is used as app
+        av_strlcpy(rt->app, path + 1, APP_MAX_LENGTH);
         fname = strstr(path, "slist=") + 6;
         // Strip any further query parameters from fname
         amp = strchr(fname, '&');
@@ -3107,7 +3110,7 @@ static const AVClass flavor##_class = {          \
     .version    = LIBAVUTIL_VERSION_INT,         \
 };                                               \
                                                  \
-URLProtocol ff_##flavor##_protocol = {           \
+const URLProtocol ff_##flavor##_protocol = {     \
     .name           = #flavor,                   \
     .url_open       = rtmp_open,                 \
     .url_read       = rtmp_read,                 \

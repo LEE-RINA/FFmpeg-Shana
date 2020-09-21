@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Clement Bœsch
+ * Copyright (c) 2013 Clément Bœsch
  *
  * This file is part of FFmpeg.
  *
@@ -677,23 +677,21 @@ static void update_clut(LUT3DContext *lut3d, const AVFrame *frame)
 static int config_output(AVFilterLink *outlink)
 {
     AVFilterContext *ctx = outlink->src;
+    LUT3DContext *lut3d = ctx->priv;
+    int ret;
 
     outlink->w = ctx->inputs[0]->w;
     outlink->h = ctx->inputs[0]->h;
     outlink->time_base = ctx->inputs[0]->time_base;
+    if ((ret = ff_dualinput_init(ctx, &lut3d->dinput)) < 0)
+        return ret;
     return 0;
 }
 
-static int filter_frame_main(AVFilterLink *inlink, AVFrame *inpicref)
+static int filter_frame_hald(AVFilterLink *inlink, AVFrame *inpicref)
 {
     LUT3DContext *s = inlink->dst->priv;
-    return ff_dualinput_filter_frame_main(&s->dinput, inlink, inpicref);
-}
-
-static int filter_frame_clut(AVFilterLink *inlink, AVFrame *inpicref)
-{
-    LUT3DContext *s = inlink->dst->priv;
-    return ff_dualinput_filter_frame_second(&s->dinput, inlink, inpicref);
+    return ff_dualinput_filter_frame(&s->dinput, inlink, inpicref);
 }
 
 static int request_frame(AVFilterLink *outlink)
@@ -774,8 +772,8 @@ static av_cold void haldclut_uninit(AVFilterContext *ctx)
 }
 
 static const AVOption haldclut_options[] = {
-    { "shortest",   "force termination when the shortest input terminates", OFFSET(dinput.shortest),   AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, FLAGS },
-    { "repeatlast", "continue applying the last clut after eos",            OFFSET(dinput.repeatlast), AV_OPT_TYPE_INT, { .i64 = 1 }, 0, 1, FLAGS },
+    { "shortest",   "force termination when the shortest input terminates", OFFSET(dinput.shortest),   AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
+    { "repeatlast", "continue applying the last clut after eos",            OFFSET(dinput.repeatlast), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FLAGS },
     COMMON_OPTIONS
 };
 
@@ -785,12 +783,12 @@ static const AVFilterPad haldclut_inputs[] = {
     {
         .name         = "main",
         .type         = AVMEDIA_TYPE_VIDEO,
-        .filter_frame = filter_frame_main,
+        .filter_frame = filter_frame_hald,
         .config_props = config_input,
     },{
         .name         = "clut",
         .type         = AVMEDIA_TYPE_VIDEO,
-        .filter_frame = filter_frame_clut,
+        .filter_frame = filter_frame_hald,
         .config_props = config_clut,
     },
     { NULL }

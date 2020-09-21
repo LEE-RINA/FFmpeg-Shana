@@ -210,13 +210,13 @@
 %endif
 %endmacro
 
-%macro PSIGNW_MMX 2
+%macro PSIGNW 2
+%if cpuflag(ssse3)
+    psignw     %1, %2
+%else
     pxor       %1, %2
     psubw      %1, %2
-%endmacro
-
-%macro PSIGNW_SSSE3 2
-    psignw     %1, %2
+%endif
 %endmacro
 
 %macro ABS1 2
@@ -354,6 +354,17 @@
 %else
     pmaddwd %1, [pw_1]
     HADDD   %1, %2
+%endif
+%endmacro
+
+%macro HADDPS 3 ; dst, src, tmp
+%if cpuflag(sse3)
+    haddps  %1, %1, %2
+%else
+    movaps  %3, %1
+    shufps  %1, %2, q2020
+    shufps  %3, %2, q3131
+    addps   %1, %3
 %endif
 %endmacro
 

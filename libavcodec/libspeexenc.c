@@ -125,10 +125,10 @@ static av_cold void print_enc_params(AVCodecContext *avctx,
         av_log(avctx, AV_LOG_DEBUG, "  quality: %f\n", s->vbr_quality);
     } else if (s->abr) {
         av_log(avctx, AV_LOG_DEBUG, "rate control: ABR\n");
-        av_log(avctx, AV_LOG_DEBUG, "  bitrate: %d bps\n", avctx->bit_rate);
+        av_log(avctx, AV_LOG_DEBUG, "  bitrate: %"PRId64" bps\n", (int64_t)avctx->bit_rate);
     } else {
         av_log(avctx, AV_LOG_DEBUG, "rate control: CBR\n");
-        av_log(avctx, AV_LOG_DEBUG, "  bitrate: %d bps\n", avctx->bit_rate);
+        av_log(avctx, AV_LOG_DEBUG, "  bitrate: %"PRId64" bps\n", (int64_t)avctx->bit_rate);
     }
     av_log(avctx, AV_LOG_DEBUG, "complexity: %d\n",
            avctx->compression_level);
@@ -216,7 +216,7 @@ static av_cold int encode_init(AVCodecContext *avctx)
     if (s->vad)
         speex_encoder_ctl(s->enc_state, SPEEX_SET_VAD, &s->vad);
 
-    /* Activiting Discontinuous Transmission */
+    /* Activating Discontinuous Transmission */
     if (s->dtx) {
         speex_encoder_ctl(s->enc_state, SPEEX_SET_DTX, &s->dtx);
         if (!(s->abr || s->vad || s->header.vbr))

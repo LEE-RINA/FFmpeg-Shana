@@ -1,6 +1,8 @@
 /*
  * Copyright (c) 2006 Michael Niedermayer <michaelni@gmx.at>
  *
+ * This file is part of FFmpeg.
+ *
  * FFmpeg is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -36,7 +38,7 @@
  *
  * Only past frames are used, we should ideally use future frames too,
  * something like filtering the whole movie in forward and then
- * backward direction seems like a interesting idea but the current
+ * backward direction seems like an interesting idea but the current
  * filter framework is FAR from supporting such things.
  *
  * Combining the motion compensated image with the input image also is
@@ -195,8 +197,8 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *inpic)
 
     for (i = 0; i < 3; i++) {
         int is_chroma = !!i;
-        int w = FF_CEIL_RSHIFT(inlink->w, is_chroma);
-        int h = FF_CEIL_RSHIFT(inlink->h, is_chroma);
+        int w = AV_CEIL_RSHIFT(inlink->w, is_chroma);
+        int h = AV_CEIL_RSHIFT(inlink->h, is_chroma);
         int fils = frame_dec->linesize[i];
         int srcs = inpic    ->linesize[i];
         int dsts = outpic   ->linesize[i];
@@ -275,7 +277,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *inpic)
     mcdeint->parity ^= 1;
 
 end:
-    av_free_packet(&pkt);
+    av_packet_unref(&pkt);
     av_frame_free(&inpic);
     if (ret < 0) {
         av_frame_free(&outpic);

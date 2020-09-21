@@ -864,8 +864,8 @@ static int rv34_decode_mv(RV34DecContext *r, int block_type)
 
     memset(r->dmv, 0, sizeof(r->dmv));
     for(i = 0; i < num_mvs[block_type]; i++){
-        r->dmv[i][0] = svq3_get_se_golomb(gb);
-        r->dmv[i][1] = svq3_get_se_golomb(gb);
+        r->dmv[i][0] = get_interleaved_se_golomb(gb);
+        r->dmv[i][1] = get_interleaved_se_golomb(gb);
     }
     switch(block_type){
     case RV34_MB_TYPE_INTRA:
@@ -1478,7 +1478,7 @@ static int rv34_decode_slice(RV34DecContext *r, int end, const uint8_t* buf, int
     return s->mb_y == s->mb_height;
 }
 
-/** @} */ // recons group end
+/** @} */ // reconstruction group end
 
 /**
  * Initialize decoder.
@@ -1645,6 +1645,7 @@ int ff_rv34_decode_frame(AVCodecContext *avctx,
     int slice_count;
     const uint8_t *slices_hdr = NULL;
     int last = 0;
+    int faulty_b = 0;
 
     /* no supplementary picture */
     if (buf_size == 0) {
@@ -1682,7 +1683,7 @@ int ff_rv34_decode_frame(AVCodecContext *avctx,
         si.type == AV_PICTURE_TYPE_B) {
         av_log(avctx, AV_LOG_ERROR, "Invalid decoder state: B-frame without "
                "reference data.\n");
-        return AVERROR_INVALIDDATA;
+        faulty_b = 1;
     }
     if(   (avctx->skip_frame >= AVDISCARD_NONREF && si.type==AV_PICTURE_TYPE_B)
        || (avctx->skip_frame >= AVDISCARD_NONKEY && si.type!=AV_PICTURE_TYPE_I)
@@ -1772,6 +1773,8 @@ int ff_rv34_decode_frame(AVCodecContext *avctx,
                "multithreading mode (start MB is %d).\n", si.start);
         return AVERROR_INVALIDDATA;
     }
+    if (faulty_b)
+        return AVERROR_INVALIDDATA;
 
     for(i = 0; i < slice_count; i++){
         int offset = get_slice_offset(avctx, slices_hdr, i);

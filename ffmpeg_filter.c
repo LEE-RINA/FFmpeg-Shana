@@ -24,6 +24,7 @@
 
 #include "libavfilter/avfilter.h"
 #include "libavfilter/buffersink.h"
+#include "libavfilter/buffersrc.h"
 
 #include "libavresample/avresample.h"
 
@@ -38,6 +39,27 @@
 #include "libavutil/imgutils.h"
 #include "libavutil/samplefmt.h"
 
+static const enum AVPixelFormat *get_compliance_unofficial_pix_fmts(enum AVCodecID codec_id, const enum AVPixelFormat default_formats[])
+{
+    static const enum AVPixelFormat mjpeg_formats[] =
+        { AV_PIX_FMT_YUVJ420P, AV_PIX_FMT_YUVJ422P, AV_PIX_FMT_YUVJ444P,
+          AV_PIX_FMT_YUV420P,  AV_PIX_FMT_YUV422P,  AV_PIX_FMT_YUV444P,
+          AV_PIX_FMT_NONE };
+    static const enum AVPixelFormat ljpeg_formats[] =
+        { AV_PIX_FMT_BGR24   , AV_PIX_FMT_BGRA    , AV_PIX_FMT_BGR0,
+          AV_PIX_FMT_YUVJ420P, AV_PIX_FMT_YUVJ444P, AV_PIX_FMT_YUVJ422P,
+          AV_PIX_FMT_YUV420P , AV_PIX_FMT_YUV444P , AV_PIX_FMT_YUV422P,
+          AV_PIX_FMT_NONE};
+
+    if (codec_id == AV_CODEC_ID_MJPEG) {
+        return mjpeg_formats;
+    } else if (codec_id == AV_CODEC_ID_LJPEG) {
+        return ljpeg_formats;
+    } else {
+        return default_formats;
+    }
+}
+
 enum AVPixelFormat choose_pixel_fmt(AVStream *st, AVCodecContext *enc_ctx, AVCodec *codec, enum AVPixelFormat target)
 {
     if (codec && codec->pix_fmts) {
@@ -45,18 +67,9 @@ enum AVPixelFormat choose_pixel_fmt(AVStream *st, AVCodecContext *enc_ctx, AVCod
         const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(target);
         int has_alpha = desc ? desc->nb_components % 2 == 0 : 0;
         enum AVPixelFormat best= AV_PIX_FMT_NONE;
-        static const enum AVPixelFormat mjpeg_formats[] =
-            { AV_PIX_FMT_YUVJ420P, AV_PIX_FMT_YUVJ422P, AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV422P, AV_PIX_FMT_NONE };
-        static const enum AVPixelFormat ljpeg_formats[] =
-            { AV_PIX_FMT_YUVJ420P, AV_PIX_FMT_YUVJ422P, AV_PIX_FMT_YUVJ444P, AV_PIX_FMT_YUV420P,
-              AV_PIX_FMT_YUV422P, AV_PIX_FMT_YUV444P, AV_PIX_FMT_BGRA, AV_PIX_FMT_NONE };
 
         if (enc_ctx->strict_std_compliance <= FF_COMPLIANCE_UNOFFICIAL) {
-            if (enc_ctx->codec_id == AV_CODEC_ID_MJPEG) {
-                p = mjpeg_formats;
-            } else if (enc_ctx->codec_id == AV_CODEC_ID_LJPEG) {
-                p =ljpeg_formats;
-            }
+            p = get_compliance_unofficial_pix_fmts(enc_ctx->codec_id, p);
         }
         for (; *p != AV_PIX_FMT_NONE; p++) {
             best= avcodec_find_best_pix_fmt_of_2(best, *p, target, has_alpha, NULL);
@@ -126,12 +139,7 @@ static char *choose_pix_fmts(OutputStream *ost)
 
         p = ost->enc->pix_fmts;
         if (ost->enc_ctx->strict_std_compliance <= FF_COMPLIANCE_UNOFFICIAL) {
-            if (ost->enc_ctx->codec_id == AV_CODEC_ID_MJPEG) {
-                p = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUVJ420P, AV_PIX_FMT_YUVJ422P, AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV422P, AV_PIX_FMT_NONE };
-            } else if (ost->enc_ctx->codec_id == AV_CODEC_ID_LJPEG) {
-                p = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUVJ420P, AV_PIX_FMT_YUVJ422P, AV_PIX_FMT_YUVJ444P, AV_PIX_FMT_YUV420P,
-                                                    AV_PIX_FMT_YUV422P, AV_PIX_FMT_YUV444P, AV_PIX_FMT_BGRA, AV_PIX_FMT_NONE };
-            }
+            p = get_compliance_unofficial_pix_fmts(ost->enc_ctx->codec_id, p);
         }
 
         for (; *p != AV_PIX_FMT_NONE; p++) {
@@ -420,7 +428,7 @@ static int configure_output_video_filter(FilterGraph *fg, OutputFilter *ofilter,
     if (ret < 0)
         return ret;
 
-    if (codec->width || codec->height) {
+    if (!hw_device_ctx && (codec->width || codec->height)) {
         char args[255];
         AVFilterContext *filter;
         AVDictionaryEntry *e = NULL;
@@ -648,7 +656,7 @@ int configure_output_filter(FilterGraph *fg, OutputFilter *ofilter, AVFilterInOu
     DESCRIBE_FILTER_LINK(ofilter, out, 0);
 
     if (!ofilter->ost) {
-        av_log(NULL, AV_LOG_FATAL, "Filter %s has a unconnected output\n", ofilter->name);
+        av_log(NULL, AV_LOG_FATAL, "Filter %s has an unconnected output\n", ofilter->name);
         exit_program(1);
     }
 
@@ -711,10 +719,17 @@ static int configure_input_video_filter(FilterGraph *fg, InputFilter *ifilter,
     char name[255];
     int ret, pad_idx = 0;
     int64_t tsoffset = 0;
+    AVBufferSrcParameters *par = av_buffersrc_parameters_alloc();
+
+    if (!par)
+        return AVERROR(ENOMEM);
+    memset(par, 0, sizeof(*par));
+    par->format = AV_PIX_FMT_NONE;
 
     if (ist->dec_ctx->codec_type == AVMEDIA_TYPE_AUDIO) {
         av_log(NULL, AV_LOG_ERROR, "Cannot connect video filter to audio input\n");
-        return AVERROR(EINVAL);
+        ret = AVERROR(EINVAL);
+        goto fail;
     }
 
     if (!fr.num)
@@ -723,7 +738,7 @@ static int configure_input_video_filter(FilterGraph *fg, InputFilter *ifilter,
     if (ist->dec_ctx->codec_type == AVMEDIA_TYPE_SUBTITLE) {
         ret = sub2video_prepare(ist);
         if (ret < 0)
-            return ret;
+            goto fail;
     }
 
     sar = ist->st->sample_aspect_ratio.num ?
@@ -744,9 +759,15 @@ static int configure_input_video_filter(FilterGraph *fg, InputFilter *ifilter,
     snprintf(name, sizeof(name), "graph %d input from stream %d:%d", fg->index,
              ist->file_index, ist->st->index);
 
+
     if ((ret = avfilter_graph_create_filter(&ifilter->filter, buffer_filt, name,
                                             args.str, NULL, fg->graph)) < 0)
-        return ret;
+        goto fail;
+    par->hw_frames_ctx = ist->hw_frames_ctx;
+    ret = av_buffersrc_parameters_set(ifilter->filter, par);
+    if (ret < 0)
+        goto fail;
+    av_freep(&par);
     last_filter = ifilter->filter;
 
     if (ist->autorotate) {
@@ -820,6 +841,10 @@ static int configure_input_video_filter(FilterGraph *fg, InputFilter *ifilter,
     if ((ret = avfilter_link(last_filter, 0, in->filter_ctx, in->pad_idx)) < 0)
         return ret;
     return 0;
+fail:
+    av_freep(&par);
+
+    return ret;
 }
 
 static int configure_input_audio_filter(FilterGraph *fg, InputFilter *ifilter,
@@ -1000,6 +1025,12 @@ int configure_filtergraph(FilterGraph *fg)
     if ((ret = avfilter_graph_parse2(fg->graph, graph_desc, &inputs, &outputs)) < 0)
         return ret;
 
+    if (hw_device_ctx) {
+        for (i = 0; i < fg->graph->nb_filters; i++) {
+            fg->graph->filters[i]->hw_device_ctx = av_buffer_ref(hw_device_ctx);
+        }
+    }
+
     if (simple && (!inputs || inputs->next || !outputs || outputs->next)) {
         const char *num_inputs;
         const char *num_outputs;
@@ -1044,8 +1075,14 @@ int configure_filtergraph(FilterGraph *fg)
 
     for (i = 0; i < fg->nb_outputs; i++) {
         OutputStream *ost = fg->outputs[i]->ost;
-        if (ost &&
-            ost->enc->type == AVMEDIA_TYPE_AUDIO &&
+        if (!ost->enc) {
+            /* identical to the same check in ffmpeg.c, needed because
+               complex filter graphs are initialized earlier */
+            av_log(NULL, AV_LOG_ERROR, "Encoder (codec %s) not found for output stream #%d:%d\n",
+                     avcodec_get_name(ost->st->codec->codec_id), ost->file_index, ost->index);
+            return AVERROR(EINVAL);
+        }
+        if (ost->enc->type == AVMEDIA_TYPE_AUDIO &&
             !(ost->enc->capabilities & AV_CODEC_CAP_VARIABLE_FRAME_SIZE))
             av_buffersink_set_frame_size(ost->filter->filter,
                                          ost->enc_ctx->frame_size);

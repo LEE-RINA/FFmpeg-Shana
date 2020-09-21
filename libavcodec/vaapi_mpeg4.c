@@ -24,6 +24,7 @@
 #include "internal.h"
 #include "h263.h"
 #include "mpeg4video.h"
+#include "mpegvideo.h"
 
 /** Reconstruct bitstream intra_dc_vlc_thr */
 static int mpeg4_get_intra_dc_vlc_thr(Mpeg4DecContext *s)
@@ -49,8 +50,6 @@ static int vaapi_mpeg4_start_frame(AVCodecContext *avctx, av_unused const uint8_
     VAPictureParameterBufferMPEG4 *pic_param;
     VAIQMatrixBufferMPEG4 *iq_matrix;
     int i;
-
-    ff_dlog(avctx, "vaapi_mpeg4_start_frame()\n");
 
     vactx->slice_param_size = sizeof(VASliceParameterBufferMPEG4);
 
@@ -123,8 +122,6 @@ static int vaapi_mpeg4_decode_slice(AVCodecContext *avctx, const uint8_t *buffer
     MpegEncContext * const s = avctx->priv_data;
     FFVAContext * const vactx = ff_vaapi_get_context(avctx);
     VASliceParameterBufferMPEG4 *slice_param;
-
-    ff_dlog(avctx, "vaapi_mpeg4_decode_slice(): buffer %p, size %d\n", buffer, size);
 
     /* Fill in VASliceParameterBufferMPEG4 */
     slice_param = (VASliceParameterBufferMPEG4 *)ff_vaapi_alloc_slice(vactx, buffer, size);

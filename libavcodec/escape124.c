@@ -145,7 +145,7 @@ static MacroBlock decode_macroblock(Escape124Context* s, GetBitContext* gb,
     unsigned block_index, depth;
     int value = get_bits1(gb);
     if (value) {
-        static const char transitions[3][2] = { {2, 1}, {0, 2}, {1, 0} };
+        static const int8_t transitions[3][2] = { {2, 1}, {0, 2}, {1, 0} };
         value = get_bits1(gb);
         *codebook_index = transitions[*codebook_index][value];
     }
@@ -155,7 +155,7 @@ static MacroBlock decode_macroblock(Escape124Context* s, GetBitContext* gb,
     // depth = 0 means that this shouldn't read any bits;
     // in theory, this is the same as get_bits(gb, 0), but
     // that doesn't actually work.
-    block_index = depth ? get_bits(gb, depth) : 0;
+    block_index = get_bitsz(gb, depth);
 
     if (*codebook_index == 1) {
         block_index += superblock_index << s->codebooks[1].depth;
