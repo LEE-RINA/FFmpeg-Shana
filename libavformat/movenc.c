@@ -2979,9 +2979,16 @@ static int mov_write_tkhd_tag(AVIOContext *pb, MOVMuxContext *mov,
         rotation = (rot && rot->value) ? atoi(rot->value) : 0;
     }
 #endif
-    if (display_matrix) {
-        for (i = 0; i < 9; i++)
-            avio_wb32(pb, display_matrix[i]);
+    // For fixing this issue: https://shana.pe.kr/94742
+    if (st && st->metadata && display_matrix) {
+        AVDictionaryEntry *rot = av_dict_get(st->metadata, "rotate", NULL, 0);
+        if (rot && rot->value)
+        {
+            for (i = 0; i < 9; i++)
+                avio_wb32(pb, display_matrix[i]);
+        }
+        else
+            write_matrix(pb,  1,  0,  0,  1, 0, 0);
 #if FF_API_OLD_ROTATE_API
     } else if (rotation == 90) {
         write_matrix(pb,  0,  1, -1,  0, track->par->height, 0);
