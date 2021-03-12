@@ -213,9 +213,8 @@ int ff_make_absolute_url(char *buf, int size, const char *base,
         base = "";
     if ((ret = ff_url_decompose(&ub, base, NULL)) < 0 ||
         (ret = ff_url_decompose(&uc, rel,  NULL)) < 0) {
-            //av_strlcpy(buf, rel, size); // For fixing this issue: https://shana.pe.kr/94150
-            //return 0;
-            goto error;
+        av_strlcpy(buf, rel, size); // For fixing this issue: https://shana.pe.kr/94150
+        return 0;
     }
     keep = ub.url;
 #define KEEP(component, also) do { \
