@@ -34,6 +34,7 @@
 #include "libavutil/replaygain.h"
 #include "libavutil/spherical.h"
 #include "libavutil/stereo3d.h"
+#include "libavutil/timecode.h"
 
 #include "avformat.h"
 
@@ -131,28 +132,28 @@ static void print_fps(double d, const char *postfix)
         av_log(NULL, AV_LOG_INFO, "%1.0fk %s", d / 1000, postfix);
 }
 
-static void dump_metadata(void *ctx, const AVDictionary *m, const char *indent, int hide_msg)
+static void dump_metadata(void *ctx, const AVDictionary *m, const char *indent)
 {
     if (m && !(av_dict_count(m) == 1 && av_dict_get(m, "language", NULL, 0))) {
         const AVDictionaryEntry *tag = NULL;
 
-        if (!hide_msg) av_log(ctx, AV_LOG_INFO, "%sMetadata:\n", indent);
+        av_log(ctx, AV_LOG_INFO, "%sMetadata:\n", indent);
         while ((tag = av_dict_get(m, "", tag, AV_DICT_IGNORE_SUFFIX)))
             if (strcmp("language", tag->key)) {
                 const char *p = tag->value;
-                if (!hide_msg) av_log(ctx, AV_LOG_INFO,
+                av_log(ctx, AV_LOG_INFO,
                        "%s  %-16s: ", indent, tag->key);
                 while (*p) {
                     char tmp[256];
                     size_t len = strcspn(p, "\x8\xa\xb\xc\xd");
                     av_strlcpy(tmp, p, FFMIN(sizeof(tmp), len+1));
-                    if (!hide_msg) av_log(ctx, AV_LOG_INFO, "%s", tmp);
+                    av_log(ctx, AV_LOG_INFO, "%s", tmp);
                     p += len;
-                    if (*p == 0xd) if (!hide_msg) av_log(ctx, AV_LOG_INFO, " ");
-                    if (*p == 0xa) if (!hide_msg) av_log(ctx, AV_LOG_INFO, "\n%s  %-16s: ", indent, "");
+                    if (*p == 0xd) av_log(ctx, AV_LOG_INFO, " ");
+                    if (*p == 0xa) av_log(ctx, AV_LOG_INFO, "\n%s  %-16s: ", indent, "");
                     if (*p) p++;
                 }
-                if (!hide_msg) av_log(ctx, AV_LOG_INFO, "\n");
+                av_log(ctx, AV_LOG_INFO, "\n");
             }
     }
 }
@@ -407,6 +408,22 @@ static void dump_dovi_conf(void *ctx, const AVPacketSideData *sd)
            dovi->dv_bl_signal_compatibility_id);
 }
 
+static void dump_s12m_timecode(void *ctx, const AVStream *st, const AVPacketSideData *sd)
+{
+    const uint32_t *tc = (const uint32_t *)sd->data;
+
+    if ((sd->size != sizeof(uint32_t) * 4) || (tc[0] > 3)) {
+        av_log(ctx, AV_LOG_ERROR, "invalid data\n");
+        return;
+    }
+
+    for (int j = 1; j <= tc[0]; j++) {
+        char tcbuf[AV_TIMECODE_STR_SIZE];
+        av_timecode_make_smpte_tc_string2(tcbuf, st->avg_frame_rate, tc[j], 0, 0);
+        av_log(ctx, AV_LOG_INFO, "timecode - %s%s", tcbuf, j != tc[0] ? ", " : "");
+    }
+}
+
 static void dump_sidedata(void *ctx, const AVStream *st, const char *indent)
 {
     int i;
@@ -473,6 +490,10 @@ static void dump_sidedata(void *ctx, const AVStream *st, const char *indent)
             av_log(ctx, AV_LOG_INFO, "DOVI configuration record: ");
             dump_dovi_conf(ctx, sd);
             break;
+        case AV_PKT_DATA_S12M_TIMECODE:
+            av_log(ctx, AV_LOG_INFO, "SMPTE ST 12-1:2014: ");
+            dump_s12m_timecode(ctx, st, sd);
+            break;
         default:
             av_log(ctx, AV_LOG_INFO,
                    "unknown side data type %d (%d bytes)", sd->type, sd->size);
@@ -485,7 +506,7 @@ static void dump_sidedata(void *ctx, const AVStream *st, const char *indent)
 
 /* "user interface" functions */
 static void dump_stream_format(const AVFormatContext *ic, int i,
-                               int index, int is_output, int hide_msg)
+                               int index, int is_output)
 {
     char buf[256];
     int flags = (is_output ? ic->oformat->flags : ic->iformat->flags);
@@ -522,17 +543,17 @@ FF_ENABLE_DEPRECATION_WARNINGS
     avcodec_string(buf, sizeof(buf), avctx, is_output);
     avcodec_free_context(&avctx);
 
-    if (!hide_msg) av_log(NULL, AV_LOG_INFO, "    Stream #%d:%d", index, i);
+    av_log(NULL, AV_LOG_INFO, "  Stream #%d:%d", index, i);
 
     /* the pid is an important information, so we display it */
     /* XXX: add a generic system */
     if (flags & AVFMT_SHOW_IDS)
-        if (!hide_msg) av_log(NULL, AV_LOG_INFO, "[0x%x]", st->id);
+        av_log(NULL, AV_LOG_INFO, "[0x%x]", st->id);
     if (lang)
-        if (!hide_msg) av_log(NULL, AV_LOG_INFO, "(%s)", lang->value);
-    if (!hide_msg) av_log(NULL, AV_LOG_DEBUG, ", %d, %d/%d", st->codec_info_nb_frames,
+        av_log(NULL, AV_LOG_INFO, "(%s)", lang->value);
+    av_log(NULL, AV_LOG_DEBUG, ", %d, %d/%d", st->codec_info_nb_frames,
            st->time_base.num, st->time_base.den);
-    if (!hide_msg) av_log(NULL, AV_LOG_INFO, ": %s", buf);
+    av_log(NULL, AV_LOG_INFO, ": %s", buf);
 
     if (st->sample_aspect_ratio.num &&
         av_cmp_q(st->sample_aspect_ratio, st->codecpar->sample_aspect_ratio)) {
@@ -541,14 +562,11 @@ FF_ENABLE_DEPRECATION_WARNINGS
                   st->codecpar->width  * (int64_t)st->sample_aspect_ratio.num,
                   st->codecpar->height * (int64_t)st->sample_aspect_ratio.den,
                   1024 * 1024);
-        if (!hide_msg) av_log(NULL, AV_LOG_INFO, ", SAR %d:%d DAR %d:%d",
+        av_log(NULL, AV_LOG_INFO, ", SAR %d:%d DAR %d:%d",
                st->sample_aspect_ratio.num, st->sample_aspect_ratio.den,
                display_aspect_ratio.num, display_aspect_ratio.den);
     }
 
-    if (!hide_msg)
-    {
-//------------------------------
     if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
         int fps = st->avg_frame_rate.den && st->avg_frame_rate.num;
         int tbr = st->r_frame_rate.den && st->r_frame_rate.num;
@@ -613,31 +631,29 @@ FF_ENABLE_DEPRECATION_WARNINGS
     if (st->disposition & AV_DISPOSITION_STILL_IMAGE)
         av_log(NULL, AV_LOG_INFO, " (still image)");
     av_log(NULL, AV_LOG_INFO, "\n");
-//------------------------------
-    }
 
-    dump_metadata(NULL, st->metadata, "    ", hide_msg);
+    dump_metadata(NULL, st->metadata, "    ");
 
     dump_sidedata(NULL, st, "    ");
 }
 
 void av_dump_format(AVFormatContext *ic, int index,
-                    const char *url, int is_output, int hide_msg)
+                    const char *url, int is_output)
 {
     int i;
     uint8_t *printed = ic->nb_streams ? av_mallocz(ic->nb_streams) : NULL;
     if (ic->nb_streams && !printed)
         return;
 
-    if (!hide_msg) av_log(NULL, AV_LOG_INFO, "%s #%d, %s, %s '%s':\n",
+    av_log(NULL, AV_LOG_INFO, "%s #%d, %s, %s '%s':\n",
            is_output ? "Output" : "Input",
            index,
            is_output ? ic->oformat->name : ic->iformat->name,
            is_output ? "to" : "from", url);
-    dump_metadata(NULL, ic->metadata, "  ", hide_msg);
+    dump_metadata(NULL, ic->metadata, "  ");
 
     if (!is_output) {
-        if (!hide_msg) av_log(NULL, AV_LOG_INFO, "  Duration: ");
+        av_log(NULL, AV_LOG_INFO, "  Duration: ");
         if (ic->duration != AV_NOPTS_VALUE) {
             int64_t hours, mins, secs, us;
             int64_t duration = ic->duration + (ic->duration <= INT64_MAX - 5000 ? 5000 : 0);
@@ -647,38 +663,40 @@ void av_dump_format(AVFormatContext *ic, int index,
             secs %= 60;
             hours = mins / 60;
             mins %= 60;
-            if (!hide_msg) av_log(NULL, AV_LOG_INFO, "%02"PRId64":%02"PRId64":%02"PRId64".%02"PRId64"", hours, mins, secs,
+            av_log(NULL, AV_LOG_INFO, "%02"PRId64":%02"PRId64":%02"PRId64".%02"PRId64"", hours, mins, secs,
                    (100 * us) / AV_TIME_BASE);
         } else {
-            if (!hide_msg) av_log(NULL, AV_LOG_INFO, "N/A");
+            av_log(NULL, AV_LOG_INFO, "N/A");
         }
         if (ic->start_time != AV_NOPTS_VALUE) {
             int secs, us;
-            if (!hide_msg) av_log(NULL, AV_LOG_INFO, ", start: ");
+            av_log(NULL, AV_LOG_INFO, ", start: ");
             secs = llabs(ic->start_time / AV_TIME_BASE);
             us   = llabs(ic->start_time % AV_TIME_BASE);
-            if (!hide_msg) av_log(NULL, AV_LOG_INFO, "%s%d.%06d",
+            av_log(NULL, AV_LOG_INFO, "%s%d.%06d",
                    ic->start_time >= 0 ? "" : "-",
                    secs,
                    (int) av_rescale(us, 1000000, AV_TIME_BASE));
         }
-        if (!hide_msg) av_log(NULL, AV_LOG_INFO, ", bitrate: ");
+        av_log(NULL, AV_LOG_INFO, ", bitrate: ");
         if (ic->bit_rate)
-            if (!hide_msg) av_log(NULL, AV_LOG_INFO, "%"PRId64" kb/s", ic->bit_rate / 1000);
+            av_log(NULL, AV_LOG_INFO, "%"PRId64" kb/s", ic->bit_rate / 1000);
         else
-            if (!hide_msg) av_log(NULL, AV_LOG_INFO, "N/A");
-        if (!hide_msg) av_log(NULL, AV_LOG_INFO, "\n");
+            av_log(NULL, AV_LOG_INFO, "N/A");
+        av_log(NULL, AV_LOG_INFO, "\n");
     }
 
+    if (ic->nb_chapters)
+        av_log(NULL, AV_LOG_INFO, "  Chapters:\n");
     for (i = 0; i < ic->nb_chapters; i++) {
         const AVChapter *ch = ic->chapters[i];
-        if (!hide_msg) av_log(NULL, AV_LOG_INFO, "    Chapter #%d:%d: ", index, i);
-        if (!hide_msg) av_log(NULL, AV_LOG_INFO,
+        av_log(NULL, AV_LOG_INFO, "    Chapter #%d:%d: ", index, i);
+        av_log(NULL, AV_LOG_INFO,
                "start %f, ", ch->start * av_q2d(ch->time_base));
-        if (!hide_msg) av_log(NULL, AV_LOG_INFO,
+        av_log(NULL, AV_LOG_INFO,
                "end %f\n", ch->end * av_q2d(ch->time_base));
 
-        dump_metadata(NULL, ch->metadata, "    ", hide_msg);
+        dump_metadata(NULL, ch->metadata, "      ");
     }
 
     if (ic->nb_programs) {
@@ -687,23 +705,23 @@ void av_dump_format(AVFormatContext *ic, int index,
             const AVProgram *program = ic->programs[j];
             const AVDictionaryEntry *name = av_dict_get(program->metadata,
                                                         "name", NULL, 0);
-            if (!hide_msg) av_log(NULL, AV_LOG_INFO, "  Program %d %s\n", program->id,
+            av_log(NULL, AV_LOG_INFO, "  Program %d %s\n", program->id,
                    name ? name->value : "");
-            dump_metadata(NULL, program->metadata, "    ", hide_msg);
+            dump_metadata(NULL, program->metadata, "    ");
             for (k = 0; k < program->nb_stream_indexes; k++) {
                 dump_stream_format(ic, program->stream_index[k],
-                                   index, is_output, hide_msg);
+                                   index, is_output);
                 printed[program->stream_index[k]] = 1;
             }
             total += program->nb_stream_indexes;
         }
         if (total < ic->nb_streams)
-            if (!hide_msg) av_log(NULL, AV_LOG_INFO, "  No Program\n");
+            av_log(NULL, AV_LOG_INFO, "  No Program\n");
     }
 
     for (i = 0; i < ic->nb_streams; i++)
         if (!printed[i])
-            dump_stream_format(ic, i, index, is_output, hide_msg);
+            dump_stream_format(ic, i, index, is_output);
 
     av_free(printed);
 }

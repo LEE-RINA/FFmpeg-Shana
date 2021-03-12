@@ -56,6 +56,12 @@ static float get_expected(float f, DNNMathUnaryOperation op)
         return acosh(f);
     case DMUO_ATANH:
         return atanh(f);
+    case DMUO_CEIL:
+        return ceil(f);
+    case DMUO_FLOOR:
+        return floor(f);
+    case DMUO_ROUND:
+        return round(f);
     default:
         av_assert0(!"not supported yet");
         return 0.f;
@@ -81,7 +87,7 @@ static int test(DNNMathUnaryOperation op)
     operands[1].data = NULL;
 
     input_indexes[0] = 0;
-    dnn_execute_layer_math_unary(operands, input_indexes, 1, &params);
+    ff_dnn_execute_layer_math_unary(operands, input_indexes, 1, &params, NULL);
 
     output = operands[1].data;
     for (int i = 0; i < sizeof(input) / sizeof(float); ++i) {
@@ -127,6 +133,12 @@ int main(int agrc, char **argv)
     if (test(DMUO_ACOSH))
         return 1;
     if (test(DMUO_ATANH))
+        return 1;
+    if (test(DMUO_CEIL))
+        return 1;
+    if (test(DMUO_FLOOR))
+        return 1;
+    if (test(DMUO_ROUND))
         return 1;
     return 0;
 }

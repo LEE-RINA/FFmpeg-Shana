@@ -89,7 +89,7 @@ get_next:
            the frame). */
         if (avctx->codec_id != AV_CODEC_ID_AAC) {
             avctx->sample_rate = s->sample_rate;
-            if (avctx->codec_id != AV_CODEC_ID_EAC3) {
+            if (!CONFIG_EAC3_DECODER || avctx->codec_id != AV_CODEC_ID_EAC3) {
                 avctx->channels = s->channels;
                 avctx->channel_layout = s->channel_layout;
             }
@@ -99,10 +99,9 @@ get_next:
 
         /* Calculate the average bit rate */
         s->frame_number++;
-        if (avctx->codec_id != AV_CODEC_ID_EAC3) {
-            avctx->bit_rate =
-                (s->last_bit_rate * (s->frame_number -1) + s->bit_rate)/s->frame_number;
-            s->last_bit_rate = avctx->bit_rate;
+        if (!CONFIG_EAC3_DECODER || avctx->codec_id != AV_CODEC_ID_EAC3) {
+            avctx->bit_rate +=
+                (s->bit_rate - avctx->bit_rate) / s->frame_number;
         }
     }
 

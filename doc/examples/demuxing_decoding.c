@@ -288,7 +288,7 @@ int main (int argc, char **argv)
     }
 
     /* dump input information to stderr */
-    av_dump_format(fmt_ctx, 0, src_filename, 0, 1);
+    av_dump_format(fmt_ctx, 0, src_filename, 0);
 
     if (!audio_stream && !video_stream) {
         fprintf(stderr, "Could not find audio or video stream in the input, aborting\n");

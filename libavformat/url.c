@@ -97,7 +97,7 @@ int ff_url_decompose(URLComponents *uc, const char *url, const char *end)
 
     /* scheme */
     uc->scheme = cur;
-    p = find_delim(":/", cur, end); /* lavf "schemes" can contain options */
+    p = find_delim(":/?#", cur, end); /* lavf "schemes" can contain options but not some RFC 3986 delimiters */
     if (*p == ':')
         cur = p + 1;
 
@@ -211,12 +211,12 @@ int ff_make_absolute_url(char *buf, int size, const char *base,
 
     if (!base)
         base = "";
-    if ((ret = ff_url_decompose(&ub, base, NULL) < 0) ||
-        (ret = ff_url_decompose(&uc, rel,  NULL) < 0)) {
-        av_strlcpy(buf, rel, size); // For fixing this issue: https://shana.pe.kr/94150
-        return 0;
+    if ((ret = ff_url_decompose(&ub, base, NULL)) < 0 ||
+        (ret = ff_url_decompose(&uc, rel,  NULL)) < 0) {
+            //av_strlcpy(buf, rel, size); // For fixing this issue: https://shana.pe.kr/94150
+            //return 0;
+            goto error;
     }
-
     keep = ub.url;
 #define KEEP(component, also) do { \
         if (uc.url_component_end_##component == uc.url && \

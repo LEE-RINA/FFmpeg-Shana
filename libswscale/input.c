@@ -244,11 +244,12 @@ rgb48funcs(bgr, BE, AV_PIX_FMT_BGR48BE)
 #define input_pixel(i) ((origin == AV_PIX_FMT_RGBA ||                      \
                          origin == AV_PIX_FMT_BGRA ||                      \
                          origin == AV_PIX_FMT_ARGB ||                      \
-                         origin == AV_PIX_FMT_ABGR ||                      \
-                         origin == AV_PIX_FMT_X2RGB10)                     \
-                        ? AV_RN32A(&src[(i) * 4])                       \
-                        : (isBE(origin) ? AV_RB16(&src[(i) * 2])        \
-                                        : AV_RL16(&src[(i) * 2])))
+                         origin == AV_PIX_FMT_ABGR)                        \
+                        ? AV_RN32A(&src[(i) * 4])                          \
+                        : ((origin == AV_PIX_FMT_X2RGB10LE)                \
+                           ? AV_RL32(&src[(i) * 4])                        \
+                           : (isBE(origin) ? AV_RB16(&src[(i) * 2])        \
+                              : AV_RL16(&src[(i) * 2]))))
 
 static av_always_inline void rgb16_32ToY_c_template(int16_t *dst,
                                                     const uint8_t *src,
@@ -923,7 +924,7 @@ static av_always_inline void planar_rgb16_to_y(uint8_t *_dst, const uint8_t *_sr
         int b = rdpx(src[1] + i);
         int r = rdpx(src[2] + i);
 
-        dst[i] = ((ry*r + gy*g + by*b + (33 << (RGB2YUV_SHIFT + bpc - 9))) >> (RGB2YUV_SHIFT + shift - 14));
+        dst[i] = (ry*r + gy*g + by*b + (16 << (RGB2YUV_SHIFT + bpc - 8)) + (1 << (RGB2YUV_SHIFT + shift - 15))) >> (RGB2YUV_SHIFT + shift - 14);
     }
 }
 
@@ -956,8 +957,8 @@ static av_always_inline void planar_rgb16_to_uv(uint8_t *_dstU, uint8_t *_dstV,
         int b = rdpx(src[1] + i);
         int r = rdpx(src[2] + i);
 
-        dstU[i] = (ru*r + gu*g + bu*b + (257 << (RGB2YUV_SHIFT + bpc - 9))) >> (RGB2YUV_SHIFT + shift - 14);
-        dstV[i] = (rv*r + gv*g + bv*b + (257 << (RGB2YUV_SHIFT + bpc - 9))) >> (RGB2YUV_SHIFT + shift - 14);
+        dstU[i] = (ru*r + gu*g + bu*b + (128 << (RGB2YUV_SHIFT + bpc - 8)) + (1 << (RGB2YUV_SHIFT + shift - 15))) >> (RGB2YUV_SHIFT + shift - 14);
+        dstV[i] = (rv*r + gv*g + bv*b + (128 << (RGB2YUV_SHIFT + bpc - 8)) + (1 << (RGB2YUV_SHIFT + shift - 15))) >> (RGB2YUV_SHIFT + shift - 14);
     }
 }
 #undef rdpx
@@ -983,15 +984,14 @@ static av_always_inline void planar_rgbf32_to_uv(uint8_t *_dstU, uint8_t *_dstV,
     uint16_t *dstV       = (uint16_t *)_dstV;
     int32_t ru = rgb2yuv[RU_IDX], gu = rgb2yuv[GU_IDX], bu = rgb2yuv[BU_IDX];
     int32_t rv = rgb2yuv[RV_IDX], gv = rgb2yuv[GV_IDX], bv = rgb2yuv[BV_IDX];
-    int bpc = 16;
-    int shift = 14;
+
     for (i = 0; i < width; i++) {
         int g = av_clip_uint16(lrintf(65535.0f * rdpx(src[0] + i)));
         int b = av_clip_uint16(lrintf(65535.0f * rdpx(src[1] + i)));
         int r = av_clip_uint16(lrintf(65535.0f * rdpx(src[2] + i)));
 
-        dstU[i] = (ru*r + gu*g + bu*b + (257 << (RGB2YUV_SHIFT + bpc - 9))) >> (RGB2YUV_SHIFT + shift - 14);
-        dstV[i] = (rv*r + gv*g + bv*b + (257 << (RGB2YUV_SHIFT + bpc - 9))) >> (RGB2YUV_SHIFT + shift - 14);
+        dstU[i] = (ru*r + gu*g + bu*b + (0x10001 << (RGB2YUV_SHIFT - 1))) >> RGB2YUV_SHIFT;
+        dstV[i] = (rv*r + gv*g + bv*b + (0x10001 << (RGB2YUV_SHIFT - 1))) >> RGB2YUV_SHIFT;
     }
 }
 
@@ -1002,14 +1002,13 @@ static av_always_inline void planar_rgbf32_to_y(uint8_t *_dst, const uint8_t *_s
     uint16_t *dst    = (uint16_t *)_dst;
 
     int32_t ry = rgb2yuv[RY_IDX], gy = rgb2yuv[GY_IDX], by = rgb2yuv[BY_IDX];
-    int bpc = 16;
-    int shift = 14;
+
     for (i = 0; i < width; i++) {
         int g = av_clip_uint16(lrintf(65535.0f * rdpx(src[0] + i)));
         int b = av_clip_uint16(lrintf(65535.0f * rdpx(src[1] + i)));
         int r = av_clip_uint16(lrintf(65535.0f * rdpx(src[2] + i)));
 
-        dst[i] = ((ry*r + gy*g + by*b + (33 << (RGB2YUV_SHIFT + bpc - 9))) >> (RGB2YUV_SHIFT + shift - 14));
+        dst[i] = (ry*r + gy*g + by*b + (0x2001 << (RGB2YUV_SHIFT - 1))) >> RGB2YUV_SHIFT;
     }
 }
 

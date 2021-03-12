@@ -23,12 +23,13 @@
 #include "libavutil/avassert.h"
 #include "libavutil/buffer.h"
 #include "libavutil/common.h"
+#include "libavutil/opt.h"
 
 #include "cbs.h"
 #include "cbs_internal.h"
 
 
-static const CodedBitstreamType *cbs_type_table[] = {
+static const CodedBitstreamType *const cbs_type_table[] = {
 #if CONFIG_CBS_AV1
     &ff_cbs_type_av1,
 #endif
@@ -101,6 +102,10 @@ int ff_cbs_init(CodedBitstreamContext **ctx_ptr,
             av_freep(&ctx);
             return AVERROR(ENOMEM);
         }
+        if (type->priv_class) {
+            *(const AVClass **)ctx->priv_data = type->priv_class;
+            av_opt_set_defaults(ctx->priv_data);
+        }
     }
 
     ctx->decompose_unit_types = NULL;
@@ -110,6 +115,12 @@ int ff_cbs_init(CodedBitstreamContext **ctx_ptr,
 
     *ctx_ptr = ctx;
     return 0;
+}
+
+void ff_cbs_flush(CodedBitstreamContext *ctx)
+{
+    if (ctx->codec && ctx->codec->flush)
+        ctx->codec->flush(ctx);
 }
 
 void ff_cbs_close(CodedBitstreamContext **ctx_ptr)
@@ -123,6 +134,10 @@ void ff_cbs_close(CodedBitstreamContext **ctx_ptr)
         ctx->codec->close(ctx);
 
     av_freep(&ctx->write_buffer);
+
+    if (ctx->codec->priv_class && ctx->priv_data)
+        av_opt_free(ctx->priv_data);
+
     av_freep(&ctx->priv_data);
     av_freep(ctx_ptr);
 }
@@ -187,6 +202,12 @@ static int cbs_read_fragment_content(CodedBitstreamContext *ctx,
             av_log(ctx->log_ctx, AV_LOG_VERBOSE,
                    "Decomposition unimplemented for unit %d "
                    "(type %"PRIu32").\n", i, unit->type);
+        } else if (err == AVERROR(EAGAIN)) {
+            av_log(ctx->log_ctx, AV_LOG_VERBOSE,
+                   "Skipping decomposition of unit %d "
+                   "(type %"PRIu32").\n", i, unit->type);
+            av_buffer_unref(&unit->content_ref);
+            unit->content = NULL;
         } else if (err < 0) {
             av_log(ctx->log_ctx, AV_LOG_ERROR, "Failed to read unit %d "
                    "(type %"PRIu32").\n", i, unit->type);
@@ -217,66 +238,67 @@ static int cbs_fill_fragment_data(CodedBitstreamFragment *frag,
     return 0;
 }
 
-int ff_cbs_read_extradata(CodedBitstreamContext *ctx,
-                          CodedBitstreamFragment *frag,
-                          const AVCodecParameters *par)
+static int cbs_read_data(CodedBitstreamContext *ctx,
+                         CodedBitstreamFragment *frag,
+                         AVBufferRef *buf,
+                         const uint8_t *data, size_t size,
+                         int header)
 {
     int err;
 
-    err = cbs_fill_fragment_data(frag, par->extradata,
-                                 par->extradata_size);
-    if (err < 0)
-        return err;
+    if (buf) {
+        frag->data_ref = av_buffer_ref(buf);
+        if (!frag->data_ref)
+            return AVERROR(ENOMEM);
 
-    err = ctx->codec->split_fragment(ctx, frag, 1);
+        frag->data      = (uint8_t *)data;
+        frag->data_size = size;
+
+    } else {
+        err = cbs_fill_fragment_data(frag, data, size);
+        if (err < 0)
+            return err;
+    }
+
+    err = ctx->codec->split_fragment(ctx, frag, header);
     if (err < 0)
         return err;
 
     return cbs_read_fragment_content(ctx, frag);
+}
+
+int ff_cbs_read_extradata(CodedBitstreamContext *ctx,
+                          CodedBitstreamFragment *frag,
+                          const AVCodecParameters *par)
+{
+    return cbs_read_data(ctx, frag, NULL,
+                         par->extradata,
+                         par->extradata_size, 1);
+}
+
+int ff_cbs_read_extradata_from_codec(CodedBitstreamContext *ctx,
+                                     CodedBitstreamFragment *frag,
+                                     const AVCodecContext *avctx)
+{
+    return cbs_read_data(ctx, frag, NULL,
+                         avctx->extradata,
+                         avctx->extradata_size, 1);
 }
 
 int ff_cbs_read_packet(CodedBitstreamContext *ctx,
                        CodedBitstreamFragment *frag,
                        const AVPacket *pkt)
 {
-    int err;
-
-    if (pkt->buf) {
-        frag->data_ref = av_buffer_ref(pkt->buf);
-        if (!frag->data_ref)
-            return AVERROR(ENOMEM);
-
-        frag->data      = pkt->data;
-        frag->data_size = pkt->size;
-
-    } else {
-        err = cbs_fill_fragment_data(frag, pkt->data, pkt->size);
-        if (err < 0)
-            return err;
-    }
-
-    err = ctx->codec->split_fragment(ctx, frag, 0);
-    if (err < 0)
-        return err;
-
-    return cbs_read_fragment_content(ctx, frag);
+    return cbs_read_data(ctx, frag, pkt->buf,
+                         pkt->data, pkt->size, 0);
 }
 
 int ff_cbs_read(CodedBitstreamContext *ctx,
                 CodedBitstreamFragment *frag,
                 const uint8_t *data, size_t size)
 {
-    int err;
-
-    err = cbs_fill_fragment_data(frag, data, size);
-    if (err < 0)
-        return err;
-
-    err = ctx->codec->split_fragment(ctx, frag, 0);
-    if (err < 0)
-        return err;
-
-    return cbs_read_fragment_content(ctx, frag);
+    return cbs_read_data(ctx, frag, NULL,
+                         data, size, 0);
 }
 
 static int cbs_write_unit_data(CodedBitstreamContext *ctx,
@@ -801,4 +823,236 @@ void ff_cbs_delete_unit(CodedBitstreamFragment *frag,
         memmove(frag->units + position,
                 frag->units + position + 1,
                 (frag->nb_units - position) * sizeof(*frag->units));
+}
+
+static void cbs_default_free_unit_content(void *opaque, uint8_t *data)
+{
+    const CodedBitstreamUnitTypeDescriptor *desc = opaque;
+    if (desc->content_type == CBS_CONTENT_TYPE_INTERNAL_REFS) {
+        int i;
+        for (i = 0; i < desc->nb_ref_offsets; i++) {
+            void **ptr = (void**)(data + desc->ref_offsets[i]);
+            av_buffer_unref((AVBufferRef**)(ptr + 1));
+        }
+    }
+    av_free(data);
+}
+
+static const CodedBitstreamUnitTypeDescriptor
+    *cbs_find_unit_type_desc(CodedBitstreamContext *ctx,
+                             CodedBitstreamUnit *unit)
+{
+    const CodedBitstreamUnitTypeDescriptor *desc;
+    int i, j;
+
+    if (!ctx->codec->unit_types)
+        return NULL;
+
+    for (i = 0;; i++) {
+        desc = &ctx->codec->unit_types[i];
+        if (desc->nb_unit_types == 0)
+            break;
+        if (desc->nb_unit_types == CBS_UNIT_TYPE_RANGE) {
+            if (unit->type >= desc->unit_type_range_start &&
+                unit->type <= desc->unit_type_range_end)
+                return desc;
+        } else {
+            for (j = 0; j < desc->nb_unit_types; j++) {
+                if (desc->unit_types[j] == unit->type)
+                    return desc;
+            }
+        }
+    }
+    return NULL;
+}
+
+int ff_cbs_alloc_unit_content2(CodedBitstreamContext *ctx,
+                               CodedBitstreamUnit *unit)
+{
+    const CodedBitstreamUnitTypeDescriptor *desc;
+
+    av_assert0(!unit->content && !unit->content_ref);
+
+    desc = cbs_find_unit_type_desc(ctx, unit);
+    if (!desc)
+        return AVERROR(ENOSYS);
+
+    unit->content = av_mallocz(desc->content_size);
+    if (!unit->content)
+        return AVERROR(ENOMEM);
+
+    unit->content_ref =
+        av_buffer_create(unit->content, desc->content_size,
+                         desc->content_free ? desc->content_free
+                                            : cbs_default_free_unit_content,
+                         (void*)desc, 0);
+    if (!unit->content_ref) {
+        av_freep(&unit->content);
+        return AVERROR(ENOMEM);
+    }
+
+    return 0;
+}
+
+static int cbs_clone_unit_content(AVBufferRef **clone_ref,
+                                  CodedBitstreamUnit *unit,
+                                  const CodedBitstreamUnitTypeDescriptor *desc)
+{
+    uint8_t *src, *copy;
+    uint8_t **src_ptr, **copy_ptr;
+    AVBufferRef **src_buf, **copy_buf;
+    int err, i;
+
+    av_assert0(unit->content);
+    src = unit->content;
+
+    copy = av_memdup(src, desc->content_size);
+    if (!copy)
+        return AVERROR(ENOMEM);
+
+    for (i = 0; i < desc->nb_ref_offsets; i++) {
+        src_ptr  = (uint8_t**)(src + desc->ref_offsets[i]);
+        src_buf  = (AVBufferRef**)(src_ptr + 1);
+        copy_ptr = (uint8_t**)(copy + desc->ref_offsets[i]);
+        copy_buf = (AVBufferRef**)(copy_ptr + 1);
+
+        if (!*src_ptr) {
+            av_assert0(!*src_buf);
+            continue;
+        }
+        if (!*src_buf) {
+            // We can't handle a non-refcounted pointer here - we don't
+            // have enough information to handle whatever structure lies
+            // at the other end of it.
+            err = AVERROR(EINVAL);
+            goto fail;
+        }
+
+        // src_ptr is required to point somewhere inside src_buf.  If it
+        // doesn't, there is a bug somewhere.
+        av_assert0(*src_ptr >= (*src_buf)->data &&
+                   *src_ptr <  (*src_buf)->data + (*src_buf)->size);
+
+        *copy_buf = av_buffer_ref(*src_buf);
+        if (!*copy_buf) {
+            err = AVERROR(ENOMEM);
+            goto fail;
+        }
+        *copy_ptr = (*copy_buf)->data + (*src_ptr - (*src_buf)->data);
+    }
+
+    *clone_ref = av_buffer_create(copy, desc->content_size,
+                                  desc->content_free ? desc->content_free :
+                                  cbs_default_free_unit_content,
+                                  (void*)desc, 0);
+    if (!*clone_ref) {
+        err = AVERROR(ENOMEM);
+        goto fail;
+    }
+
+    return 0;
+
+fail:
+    for (--i; i >= 0; i--)
+        av_buffer_unref((AVBufferRef**)(copy + desc->ref_offsets[i]));
+    av_freep(&copy);
+    *clone_ref = NULL;
+    return err;
+}
+
+int ff_cbs_make_unit_refcounted(CodedBitstreamContext *ctx,
+                                CodedBitstreamUnit *unit)
+{
+    const CodedBitstreamUnitTypeDescriptor *desc;
+    AVBufferRef *ref;
+    int err;
+
+    av_assert0(unit->content);
+    if (unit->content_ref) {
+        // Already refcounted, nothing to do.
+        return 0;
+    }
+
+    desc = cbs_find_unit_type_desc(ctx, unit);
+    if (!desc)
+        return AVERROR(ENOSYS);
+
+    switch (desc->content_type) {
+    case CBS_CONTENT_TYPE_POD:
+        ref = av_buffer_alloc(desc->content_size);
+        if (!ref)
+            return AVERROR(ENOMEM);
+        memcpy(ref->data, unit->content, desc->content_size);
+        err = 0;
+        break;
+
+    case CBS_CONTENT_TYPE_INTERNAL_REFS:
+        err = cbs_clone_unit_content(&ref, unit, desc);
+        break;
+
+    case CBS_CONTENT_TYPE_COMPLEX:
+        if (!desc->content_clone)
+            return AVERROR_PATCHWELCOME;
+        err = desc->content_clone(&ref, unit);
+        break;
+
+    default:
+        av_assert0(0 && "Invalid content type.");
+    }
+
+    if (err < 0)
+        return err;
+
+    unit->content_ref = ref;
+    unit->content     = ref->data;
+    return 0;
+}
+
+int ff_cbs_make_unit_writable(CodedBitstreamContext *ctx,
+                              CodedBitstreamUnit *unit)
+{
+    const CodedBitstreamUnitTypeDescriptor *desc;
+    AVBufferRef *ref;
+    int err;
+
+    // This can only be applied to refcounted units.
+    err = ff_cbs_make_unit_refcounted(ctx, unit);
+    if (err < 0)
+        return err;
+    av_assert0(unit->content && unit->content_ref);
+
+    if (av_buffer_is_writable(unit->content_ref))
+        return 0;
+
+    desc = cbs_find_unit_type_desc(ctx, unit);
+    if (!desc)
+        return AVERROR(ENOSYS);
+
+    switch (desc->content_type) {
+    case CBS_CONTENT_TYPE_POD:
+        err = av_buffer_make_writable(&unit->content_ref);
+        break;
+
+    case CBS_CONTENT_TYPE_INTERNAL_REFS:
+        err = cbs_clone_unit_content(&ref, unit, desc);
+        break;
+
+    case CBS_CONTENT_TYPE_COMPLEX:
+        if (!desc->content_clone)
+            return AVERROR_PATCHWELCOME;
+        err = desc->content_clone(&ref, unit);
+        break;
+
+    default:
+        av_assert0(0 && "Invalid content type.");
+    }
+    if (err < 0)
+        return err;
+
+    if (desc->content_type != CBS_CONTENT_TYPE_POD) {
+        av_buffer_unref(&unit->content_ref);
+        unit->content_ref = ref;
+    }
+    unit->content = unit->content_ref->data;
+    return 0;
 }

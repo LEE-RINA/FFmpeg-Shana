@@ -155,16 +155,14 @@ struct decklink_ctx {
 
 typedef enum { DIRECTION_IN, DIRECTION_OUT} decklink_direction_t;
 
-#ifdef _WIN32
-#if BLACKMAGIC_DECKLINK_API_VERSION < 0x0a040000
-typedef unsigned long buffercount_type;
-#else
-typedef unsigned int buffercount_type;
-#endif
-IDeckLinkIterator *CreateDeckLinkIteratorInstance(void);
-#else
-typedef uint32_t buffercount_type;
-#endif
+static const BMDPixelFormat decklink_raw_format_map[] = {
+    (BMDPixelFormat)0,
+    bmdFormat8BitYUV,
+    bmdFormat10BitYUV,
+    bmdFormat8BitARGB,
+    bmdFormat8BitBGRA,
+    bmdFormat10BitRGB,
+};
 
 static const BMDAudioConnection decklink_audio_connection_map[] = {
     (BMDAudioConnection)0,
@@ -195,6 +193,11 @@ static const BMDTimecodeFormat decklink_timecode_format_map[] = {
     bmdTimecodeVITC,
     bmdTimecodeVITCField2,
     bmdTimecodeSerial,
+#if BLACKMAGIC_DECKLINK_API_VERSION >= 0x0b000000
+    bmdTimecodeRP188HighFrameRate,
+#else
+    (BMDTimecodeFormat)0,
+#endif
 };
 
 int ff_decklink_set_configs(AVFormatContext *avctx, decklink_direction_t direction);

@@ -29,6 +29,7 @@
 #include "libavutil/common.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/log.h"
+#include "libavutil/mem_internal.h"
 #include "libavutil/pixfmt.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/ppc/util_altivec.h"
@@ -762,6 +763,13 @@ static av_always_inline int isBayer(enum AVPixelFormat pix_fmt)
     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(pix_fmt);
     av_assert0(desc);
     return !!(desc->flags & AV_PIX_FMT_FLAG_BAYER);
+}
+
+static av_always_inline int isBayer16BPS(enum AVPixelFormat pix_fmt)
+{
+    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(pix_fmt);
+    av_assert0(desc);
+    return desc->comp[1].depth == 8;
 }
 
 static av_always_inline int isAnyRGB(enum AVPixelFormat pix_fmt)

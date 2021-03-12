@@ -283,6 +283,14 @@ enum AVPacketSideDataType {
     AV_PKT_DATA_DOVI_CONF,
 
     /**
+     * Timecode which conforms to SMPTE ST 12-1:2014. The data is an array of 4 uint32_t
+     * where the first uint32_t describes how many (1-3) of the other timecodes are used.
+     * The timecode format is described in the documentation of av_timecode_get_smpte_from_framenum()
+     * function in libavutil/timecode.h.
+     */
+    AV_PKT_DATA_S12M_TIMECODE,
+
+    /**
      * The number of side data types.
      * This is not part of the public API/ABI in the sense that it may
      * change when new side data types are added.
@@ -297,7 +305,11 @@ enum AVPacketSideDataType {
 
 typedef struct AVPacketSideData {
     uint8_t *data;
+#if FF_API_BUFFER_SIZE_T
     int      size;
+#else
+    size_t   size;
+#endif
     enum AVPacketSideDataType type;
 } AVPacketSideData;
 
@@ -384,6 +396,11 @@ typedef struct AVPacket {
     int64_t convergence_duration;
 #endif
 } AVPacket;
+
+typedef struct AVPacketList {
+    AVPacket pkt;
+    struct AVPacketList *next;
+} AVPacketList;
 
 #define AV_PKT_FLAG_KEY     0x0001 ///< The packet contains a keyframe
 #define AV_PKT_FLAG_CORRUPT 0x0002 ///< The packet content is corrupted
@@ -546,7 +563,11 @@ void av_free_packet(AVPacket *pkt);
  * @return pointer to fresh allocated data or NULL otherwise
  */
 uint8_t* av_packet_new_side_data(AVPacket *pkt, enum AVPacketSideDataType type,
+#if FF_API_BUFFER_SIZE_T
                                  int size);
+#else
+                                 size_t size);
+#endif
 
 /**
  * Wrap an existing array as a packet side data.
@@ -573,7 +594,11 @@ int av_packet_add_side_data(AVPacket *pkt, enum AVPacketSideDataType type,
  * @return 0 on success, < 0 on failure
  */
 int av_packet_shrink_side_data(AVPacket *pkt, enum AVPacketSideDataType type,
+#if FF_API_BUFFER_SIZE_T
                                int size);
+#else
+                               size_t size);
+#endif
 
 /**
  * Get side information from packet.
@@ -585,7 +610,11 @@ int av_packet_shrink_side_data(AVPacket *pkt, enum AVPacketSideDataType type,
  * @return pointer to data if present or NULL otherwise
  */
 uint8_t* av_packet_get_side_data(const AVPacket *pkt, enum AVPacketSideDataType type,
+#if FF_API_BUFFER_SIZE_T
                                  int *size);
+#else
+                                 size_t *size);
+#endif
 
 #if FF_API_MERGE_SD_API
 attribute_deprecated

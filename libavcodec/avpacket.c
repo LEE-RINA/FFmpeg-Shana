@@ -330,12 +330,16 @@ int av_packet_add_side_data(AVPacket *pkt, enum AVPacketSideDataType type,
 
 
 uint8_t *av_packet_new_side_data(AVPacket *pkt, enum AVPacketSideDataType type,
-                                 int size)
+                                 buffer_size_t size)
 {
     int ret;
     uint8_t *data;
 
+#if FF_API_BUFFER_SIZE_T
     if ((unsigned)size > INT_MAX - AV_INPUT_BUFFER_PADDING_SIZE)
+#else
+    if (size > SIZE_MAX - AV_INPUT_BUFFER_PADDING_SIZE)
+#endif
         return NULL;
     data = av_mallocz(size + AV_INPUT_BUFFER_PADDING_SIZE);
     if (!data)
@@ -351,7 +355,7 @@ uint8_t *av_packet_new_side_data(AVPacket *pkt, enum AVPacketSideDataType type,
 }
 
 uint8_t *av_packet_get_side_data(const AVPacket *pkt, enum AVPacketSideDataType type,
-                                 int *size)
+                                 buffer_size_t *size)
 {
     int i;
 
@@ -400,6 +404,7 @@ const char *av_packet_side_data_name(enum AVPacketSideDataType type)
     case AV_PKT_DATA_PRFT:                       return "Producer Reference Time";
     case AV_PKT_DATA_ICC_PROFILE:                return "ICC Profile";
     case AV_PKT_DATA_DOVI_CONF:                  return "DOVI configuration record";
+    case AV_PKT_DATA_S12M_TIMECODE:              return "SMPTE ST 12-1:2014 timecode";
     }
     return NULL;
 }
@@ -553,7 +558,7 @@ int av_packet_unpack_dictionary(const uint8_t *data, int size, AVDictionary **di
 }
 
 int av_packet_shrink_side_data(AVPacket *pkt, enum AVPacketSideDataType type,
-                               int size)
+                               buffer_size_t size)
 {
     int i;
 
@@ -588,7 +593,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
     dst->side_data_elems      = 0;
     for (i = 0; i < src->side_data_elems; i++) {
         enum AVPacketSideDataType type = src->side_data[i].type;
-        int size          = src->side_data[i].size;
+        buffer_size_t size = src->side_data[i].size;
         uint8_t *src_data = src->side_data[i].data;
         uint8_t *dst_data = av_packet_new_side_data(dst, type, size);
 
@@ -725,10 +730,77 @@ FF_ENABLE_DEPRECATION_WARNINGS
 #endif
 }
 
+int avpriv_packet_list_put(AVPacketList **packet_buffer,
+                           AVPacketList **plast_pktl,
+                           AVPacket      *pkt,
+                           int (*copy)(AVPacket *dst, const AVPacket *src),
+                           int flags)
+{
+    AVPacketList *pktl = av_mallocz(sizeof(AVPacketList));
+    int ret;
+
+    if (!pktl)
+        return AVERROR(ENOMEM);
+
+    if (copy) {
+        ret = copy(&pktl->pkt, pkt);
+        if (ret < 0) {
+            av_free(pktl);
+            return ret;
+        }
+    } else {
+        ret = av_packet_make_refcounted(pkt);
+        if (ret < 0) {
+            av_free(pktl);
+            return ret;
+        }
+        av_packet_move_ref(&pktl->pkt, pkt);
+    }
+
+    if (*packet_buffer)
+        (*plast_pktl)->next = pktl;
+    else
+        *packet_buffer = pktl;
+
+    /* Add the packet in the buffered packet list. */
+    *plast_pktl = pktl;
+    return 0;
+}
+
+int avpriv_packet_list_get(AVPacketList **pkt_buffer,
+                           AVPacketList **pkt_buffer_end,
+                           AVPacket      *pkt)
+{
+    AVPacketList *pktl;
+    if (!*pkt_buffer)
+        return AVERROR(EAGAIN);
+    pktl        = *pkt_buffer;
+    *pkt        = pktl->pkt;
+    *pkt_buffer = pktl->next;
+    if (!pktl->next)
+        *pkt_buffer_end = NULL;
+    av_freep(&pktl);
+    return 0;
+}
+
+void avpriv_packet_list_free(AVPacketList **pkt_buf, AVPacketList **pkt_buf_end)
+{
+    AVPacketList *tmp = *pkt_buf;
+
+    while (tmp) {
+        AVPacketList *pktl = tmp;
+        tmp = pktl->next;
+        av_packet_unref(&pktl->pkt);
+        av_freep(&pktl);
+    }
+    *pkt_buf     = NULL;
+    *pkt_buf_end = NULL;
+}
+
 int ff_side_data_set_encoder_stats(AVPacket *pkt, int quality, int64_t *error, int error_count, int pict_type)
 {
     uint8_t *side_data;
-    int side_data_size;
+    buffer_size_t side_data_size;
     int i;
 
     side_data = av_packet_get_side_data(pkt, AV_PKT_DATA_QUALITY_STATS, &side_data_size);
@@ -754,7 +826,7 @@ int ff_side_data_set_prft(AVPacket *pkt, int64_t timestamp)
 {
     AVProducerReferenceTime *prft;
     uint8_t *side_data;
-    int side_data_size;
+    buffer_size_t side_data_size;
 
     side_data = av_packet_get_side_data(pkt, AV_PKT_DATA_PRFT, &side_data_size);
     if (!side_data) {

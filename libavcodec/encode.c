@@ -152,6 +152,10 @@ static int encode_simple_internal(AVCodecContext *avctx, AVPacket *avpkt)
 
     if (CONFIG_FRAME_THREAD_ENCODER &&
         avci->frame_thread_encoder && (avctx->active_thread_type & FF_THREAD_FRAME))
+        /* This might modify frame, but it doesn't matter, because
+         * the frame properties used below are not used for video
+         * (due to the delay inherent in frame threaded encoding, it makes
+         *  no sense to use the properties of the current frame anyway). */
         ret = ff_thread_video_encode_frame(avctx, avpkt, frame, &got_packet);
     else {
         ret = avctx->codec->encode2(avctx, avpkt, frame, &got_packet);
@@ -242,7 +246,9 @@ static int encode_receive_packet_internal(AVCodecContext *avctx, AVPacket *avpkt
 
     if (avctx->codec->receive_packet) {
         ret = avctx->codec->receive_packet(avctx, avpkt);
-        if (!ret)
+        if (ret < 0)
+            av_packet_unref(avpkt);
+        else
             // Encoders must always return ref-counted buffers.
             // Side-data only packets have no data and can be not ref-counted.
             av_assert0(!avpkt->data || avpkt->buf);
@@ -354,6 +360,7 @@ int attribute_align_arg avcodec_receive_packet(AVCodecContext *avctx, AVPacket *
     return 0;
 }
 
+#if FF_API_OLD_ENCDEC
 static int compat_encode(AVCodecContext *avctx, AVPacket *avpkt,
                          int *got_packet, const AVFrame *frame)
 {
@@ -454,3 +461,4 @@ int attribute_align_arg avcodec_encode_video2(AVCodecContext *avctx,
 
     return ret;
 }
+#endif

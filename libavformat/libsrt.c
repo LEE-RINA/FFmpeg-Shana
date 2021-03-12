@@ -163,15 +163,25 @@ static int libsrt_socket_nonblock(int socket, int enable)
     return srt_setsockopt(socket, 0, SRTO_RCVSYN, &blocking, sizeof(blocking));
 }
 
-static int libsrt_network_wait_fd(URLContext *h, int eid, int fd, int write)
+static int libsrt_epoll_create(URLContext *h, int fd, int write)
+{
+    int modes = SRT_EPOLL_ERR | (write ? SRT_EPOLL_OUT : SRT_EPOLL_IN);
+    int eid = srt_epoll_create();
+    if (eid < 0)
+        return libsrt_neterrno(h);
+    if (srt_epoll_add_usock(eid, fd, &modes) < 0) {
+        srt_epoll_release(eid);
+        return libsrt_neterrno(h);
+    }
+    return eid;
+}
+
+static int libsrt_network_wait_fd(URLContext *h, int eid, int write)
 {
     int ret, len = 1, errlen = 1;
-    int modes = SRT_EPOLL_ERR | (write ? SRT_EPOLL_OUT : SRT_EPOLL_IN);
     SRTSOCKET ready[1];
     SRTSOCKET error[1];
 
-    if (srt_epoll_add_usock(eid, fd, &modes) < 0)
-        return libsrt_neterrno(h);
     if (write) {
         ret = srt_epoll_wait(eid, error, &errlen, ready, &len, POLLING_TIME, 0, 0, 0, 0);
     } else {
@@ -185,14 +195,12 @@ static int libsrt_network_wait_fd(URLContext *h, int eid, int fd, int write)
     } else {
         ret = errlen ? AVERROR(EIO) : 0;
     }
-    if (srt_epoll_remove_usock(eid, fd) < 0)
-        return libsrt_neterrno(h);
     return ret;
 }
 
 /* TODO de-duplicate code from ff_network_wait_fd_timeout() */
 
-static int libsrt_network_wait_fd_timeout(URLContext *h, int eid, int fd, int write, int64_t timeout, AVIOInterruptCB *int_cb)
+static int libsrt_network_wait_fd_timeout(URLContext *h, int eid, int write, int64_t timeout, AVIOInterruptCB *int_cb)
 {
     int ret;
     int64_t wait_start = 0;
@@ -200,7 +208,7 @@ static int libsrt_network_wait_fd_timeout(URLContext *h, int eid, int fd, int wr
     while (1) {
         if (ff_check_interrupt(int_cb))
             return AVERROR_EXIT;
-        ret = libsrt_network_wait_fd(h, eid, fd, write);
+        ret = libsrt_network_wait_fd(h, eid, write);
         if (ret != AVERROR(EAGAIN))
             return ret;
         if (timeout > 0) {
@@ -219,15 +227,13 @@ static int libsrt_listen(int eid, int fd, const struct sockaddr *addr, socklen_t
     if (srt_setsockopt(fd, SOL_SOCKET, SRTO_REUSEADDR, &reuse, sizeof(reuse))) {
         av_log(h, AV_LOG_WARNING, "setsockopt(SRTO_REUSEADDR) failed\n");
     }
-    ret = srt_bind(fd, addr, addrlen);
-    if (ret)
+    if (srt_bind(fd, addr, addrlen))
         return libsrt_neterrno(h);
 
-    ret = srt_listen(fd, 1);
-    if (ret)
+    if (srt_listen(fd, 1))
         return libsrt_neterrno(h);
 
-    ret = libsrt_network_wait_fd_timeout(h, eid, fd, 1, timeout, &h->interrupt_callback);
+    ret = libsrt_network_wait_fd_timeout(h, eid, 1, timeout, &h->interrupt_callback);
     if (ret < 0)
         return ret;
 
@@ -244,11 +250,10 @@ static int libsrt_listen_connect(int eid, int fd, const struct sockaddr *addr, s
 {
     int ret;
 
-    ret = srt_connect(fd, addr, addrlen);
-    if (ret < 0)
+    if (srt_connect(fd, addr, addrlen) < 0)
         return libsrt_neterrno(h);
 
-    ret = libsrt_network_wait_fd_timeout(h, eid, fd, 1, timeout, &h->interrupt_callback);
+    ret = libsrt_network_wait_fd_timeout(h, eid, 1, timeout, &h->interrupt_callback);
     if (ret < 0) {
         if (will_try_next) {
             av_log(h, AV_LOG_WARNING,
@@ -313,8 +318,12 @@ static int libsrt_set_options_pre(URLContext *h, int fd)
         (s->pbkeylen >= 0 && libsrt_setsockopt(h, fd, SRTO_PBKEYLEN, "SRTO_PBKEYLEN", &s->pbkeylen, sizeof(s->pbkeylen)) < 0) ||
         (s->passphrase && libsrt_setsockopt(h, fd, SRTO_PASSPHRASE, "SRTO_PASSPHRASE", s->passphrase, strlen(s->passphrase)) < 0) ||
 #if SRT_VERSION_VALUE >= 0x010302
+#if SRT_VERSION_VALUE >= 0x010401
+        (s->enforced_encryption >= 0 && libsrt_setsockopt(h, fd, SRTO_ENFORCEDENCRYPTION, "SRTO_ENFORCEDENCRYPTION", &s->enforced_encryption, sizeof(s->enforced_encryption)) < 0) ||
+#else
         /* SRTO_STRICTENC == SRTO_ENFORCEDENCRYPTION (53), but for compatibility, we used SRTO_STRICTENC */
         (s->enforced_encryption >= 0 && libsrt_setsockopt(h, fd, SRTO_STRICTENC, "SRTO_STRICTENC", &s->enforced_encryption, sizeof(s->enforced_encryption)) < 0) ||
+#endif
         (s->kmrefreshrate >= 0 && libsrt_setsockopt(h, fd, SRTO_KMREFRESHRATE, "SRTO_KMREFRESHRATE", &s->kmrefreshrate, sizeof(s->kmrefreshrate)) < 0) ||
         (s->kmpreannounce >= 0 && libsrt_setsockopt(h, fd, SRTO_KMPREANNOUNCE, "SRTO_KMPREANNOUNCE", &s->kmpreannounce, sizeof(s->kmpreannounce)) < 0) ||
 #endif
@@ -333,7 +342,11 @@ static int libsrt_set_options_pre(URLContext *h, int fd)
         (s->lossmaxttl >= 0 && libsrt_setsockopt(h, fd, SRTO_LOSSMAXTTL, "SRTO_LOSSMAXTTL", &s->lossmaxttl, sizeof(s->lossmaxttl)) < 0) ||
         (s->minversion >= 0 && libsrt_setsockopt(h, fd, SRTO_MINVERSION, "SRTO_MINVERSION", &s->minversion, sizeof(s->minversion)) < 0) ||
         (s->streamid && libsrt_setsockopt(h, fd, SRTO_STREAMID, "SRTO_STREAMID", s->streamid, strlen(s->streamid)) < 0) ||
+#if SRT_VERSION_VALUE >= 0x010401
+        (s->smoother && libsrt_setsockopt(h, fd, SRTO_CONGESTION, "SRTO_CONGESTION", s->smoother, strlen(s->smoother)) < 0) ||
+#else
         (s->smoother && libsrt_setsockopt(h, fd, SRTO_SMOOTHER, "SRTO_SMOOTHER", s->smoother, strlen(s->smoother)) < 0) ||
+#endif
         (s->messageapi >= 0 && libsrt_setsockopt(h, fd, SRTO_MESSAGEAPI, "SRTO_MESSAGEAPI", &s->messageapi, sizeof(s->messageapi)) < 0) ||
         (s->payload_size >= 0 && libsrt_setsockopt(h, fd, SRTO_PAYLOADSIZE, "SRTO_PAYLOADSIZE", &s->payload_size, sizeof(s->payload_size)) < 0) ||
         ((h->flags & AVIO_FLAG_WRITE) && libsrt_setsockopt(h, fd, SRTO_SENDER, "SRTO_SENDER", &yes, sizeof(yes)) < 0)) {
@@ -354,7 +367,7 @@ static int libsrt_set_options_pre(URLContext *h, int fd)
 static int libsrt_setup(URLContext *h, const char *uri, int flags)
 {
     struct addrinfo hints = { 0 }, *ai, *cur_ai;
-    int port, fd = -1;
+    int port, fd;
     SRTContext *s = h->priv_data;
     const char *p;
     char buf[256];
@@ -362,12 +375,7 @@ static int libsrt_setup(URLContext *h, const char *uri, int flags)
     char hostname[1024],proto[1024],path[1024];
     char portstr[10];
     int64_t open_timeout = 0;
-    int eid;
-
-    eid = srt_epoll_create();
-    if (eid < 0)
-        return libsrt_neterrno(h);
-    s->eid = eid;
+    int eid, write_eid;
 
     av_url_split(proto, sizeof(proto), NULL, 0, hostname, sizeof(hostname),
         &port, path, sizeof(path), uri);
@@ -427,20 +435,30 @@ static int libsrt_setup(URLContext *h, const char *uri, int flags)
     if (libsrt_socket_nonblock(fd, 1) < 0)
         av_log(h, AV_LOG_DEBUG, "libsrt_socket_nonblock failed\n");
 
+    ret = write_eid = libsrt_epoll_create(h, fd, 1);
+    if (ret < 0)
+        goto fail1;
     if (s->mode == SRT_MODE_LISTENER) {
         // multi-client
-        if ((ret = libsrt_listen(s->eid, fd, cur_ai->ai_addr, cur_ai->ai_addrlen, h, s->listen_timeout)) < 0)
+        ret = libsrt_listen(write_eid, fd, cur_ai->ai_addr, cur_ai->ai_addrlen, h, s->listen_timeout);
+        srt_epoll_release(write_eid);
+        if (ret < 0)
             goto fail1;
+        srt_close(fd);
         fd = ret;
     } else {
         if (s->mode == SRT_MODE_RENDEZVOUS) {
-            ret = srt_bind(fd, cur_ai->ai_addr, cur_ai->ai_addrlen);
-            if (ret)
+            if (srt_bind(fd, cur_ai->ai_addr, cur_ai->ai_addrlen)) {
+                ret = libsrt_neterrno(h);
+                srt_epoll_release(write_eid);
                 goto fail1;
+            }
         }
 
-        if ((ret = libsrt_listen_connect(s->eid, fd, cur_ai->ai_addr, cur_ai->ai_addrlen,
-                                          open_timeout, h, !!cur_ai->ai_next)) < 0) {
+        ret = libsrt_listen_connect(write_eid, fd, cur_ai->ai_addr, cur_ai->ai_addrlen,
+                                    open_timeout, h, !!cur_ai->ai_next);
+        srt_epoll_release(write_eid);
+        if (ret < 0) {
             if (ret == AVERROR_EXIT)
                 goto fail1;
             else
@@ -461,8 +479,13 @@ static int libsrt_setup(URLContext *h, const char *uri, int flags)
             h->max_packet_size = packet_size;
     }
 
+    ret = eid = libsrt_epoll_create(h, fd, flags & AVIO_FLAG_WRITE);
+    if (eid < 0)
+        goto fail1;
+
     h->is_streamed = 1;
     s->fd = fd;
+    s->eid = eid;
 
     freeaddrinfo(ai);
     return 0;
@@ -569,7 +592,8 @@ static int libsrt_open(URLContext *h, const char *uri, int flags)
             } else if (!strcmp(buf, "rendezvous")) {
                 s->mode = SRT_MODE_RENDEZVOUS;
             } else {
-                return AVERROR(EIO);
+                ret = AVERROR(EINVAL);
+                goto err;
             }
         }
         if (av_find_info_tag(buf, sizeof(buf), "sndbuf", p)) {
@@ -617,10 +641,15 @@ static int libsrt_open(URLContext *h, const char *uri, int flags)
             s->linger = strtol(buf, NULL, 10);
         }
     }
-    return libsrt_setup(h, uri, flags);
+    ret = libsrt_setup(h, uri, flags);
+    if (ret < 0)
+        goto err;
+    return 0;
+
 err:
     av_freep(&s->smoother);
     av_freep(&s->streamid);
+    srt_cleanup();
     return ret;
 }
 
@@ -630,7 +659,7 @@ static int libsrt_read(URLContext *h, uint8_t *buf, int size)
     int ret;
 
     if (!(h->flags & AVIO_FLAG_NONBLOCK)) {
-        ret = libsrt_network_wait_fd_timeout(h, s->eid, s->fd, 0, h->rw_timeout, &h->interrupt_callback);
+        ret = libsrt_network_wait_fd_timeout(h, s->eid, 0, h->rw_timeout, &h->interrupt_callback);
         if (ret)
             return ret;
     }
@@ -649,7 +678,7 @@ static int libsrt_write(URLContext *h, const uint8_t *buf, int size)
     int ret;
 
     if (!(h->flags & AVIO_FLAG_NONBLOCK)) {
-        ret = libsrt_network_wait_fd_timeout(h, s->eid, s->fd, 1, h->rw_timeout, &h->interrupt_callback);
+        ret = libsrt_network_wait_fd_timeout(h, s->eid, 1, h->rw_timeout, &h->interrupt_callback);
         if (ret)
             return ret;
     }
@@ -666,9 +695,8 @@ static int libsrt_close(URLContext *h)
 {
     SRTContext *s = h->priv_data;
 
-    srt_close(s->fd);
-
     srt_epoll_release(s->eid);
+    srt_close(s->fd);
 
     srt_cleanup();
 

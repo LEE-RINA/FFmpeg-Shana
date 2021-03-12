@@ -29,7 +29,7 @@
 #include "libavutil/avassert.h"
 #include "dnn_backend_native_layer_mathunary.h"
 
-int dnn_load_layer_math_unary(Layer *layer, AVIOContext *model_file_context, int file_size, int operands_num)
+int ff_dnn_load_layer_math_unary(Layer *layer, AVIOContext *model_file_context, int file_size, int operands_num)
 {
     DnnLayerMathUnaryParams *params;
     int dnn_size = 0;
@@ -52,12 +52,12 @@ int dnn_load_layer_math_unary(Layer *layer, AVIOContext *model_file_context, int
 
 }
 
-int dnn_execute_layer_math_unary(DnnOperand *operands, const int32_t *input_operand_indexes,
-                                int32_t output_operand_index, const void *parameters)
+int ff_dnn_execute_layer_math_unary(DnnOperand *operands, const int32_t *input_operand_indexes,
+                                    int32_t output_operand_index, const void *parameters, NativeContext *ctx)
 {
     const DnnOperand *input = &operands[input_operand_indexes[0]];
     DnnOperand *output = &operands[output_operand_index];
-    const DnnLayerMathUnaryParams *params = (const DnnLayerMathUnaryParams *)parameters;
+    const DnnLayerMathUnaryParams *params = parameters;
     int dims_count;
     const float *src;
     float *dst;
@@ -66,14 +66,18 @@ int dnn_execute_layer_math_unary(DnnOperand *operands, const int32_t *input_oper
         output->dims[i] = input->dims[i];
 
     output->data_type = input->data_type;
-    output->length = calculate_operand_data_length(output);
-    if (output->length <= 0)
+    output->length = ff_calculate_operand_data_length(output);
+    if (output->length <= 0) {
+        av_log(ctx, AV_LOG_ERROR, "The output data length overflow\n");
         return DNN_ERROR;
+    }
     output->data = av_realloc(output->data, output->length);
-    if (!output->data)
+    if (!output->data) {
+        av_log(ctx, AV_LOG_ERROR, "Failed to reallocate memory for output\n");
         return DNN_ERROR;
+    }
 
-    dims_count = calculate_operand_dims_count(output);
+    dims_count = ff_calculate_operand_dims_count(output);
     src = input->data;
     dst = output->data;
 
@@ -130,7 +134,20 @@ int dnn_execute_layer_math_unary(DnnOperand *operands, const int32_t *input_oper
         for (int i = 0; i < dims_count; ++i)
             dst[i] = atanh(src[i]);
         return 0;
+    case DMUO_CEIL:
+        for (int i = 0; i < dims_count; ++i)
+            dst[i] = ceil(src[i]);
+        return 0;
+    case DMUO_FLOOR:
+        for (int i = 0; i < dims_count; ++i)
+            dst[i] = floor(src[i]);
+        return 0;
+    case DMUO_ROUND:
+        for (int i = 0; i < dims_count; ++i)
+            dst[i] = round(src[i]);
+        return 0;
     default:
-        return -1;
+        av_log(ctx, AV_LOG_ERROR, "Unmatch math unary operator\n");
+        return DNN_ERROR;
     }
 }

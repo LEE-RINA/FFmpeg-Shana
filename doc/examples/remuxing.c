@@ -75,7 +75,7 @@ int main(int argc, char **argv)
         goto end;
     }
 
-    av_dump_format(ifmt_ctx, 0, in_filename, 0, 1);
+    av_dump_format(ifmt_ctx, 0, in_filename, 0);
 
     avformat_alloc_output_context2(&ofmt_ctx, NULL, NULL, out_filename);
     if (!ofmt_ctx) {
@@ -121,7 +121,7 @@ int main(int argc, char **argv)
         }
         out_stream->codecpar->codec_tag = 0;
     }
-    av_dump_format(ofmt_ctx, 0, out_filename, 1, 1);
+    av_dump_format(ofmt_ctx, 0, out_filename, 1);
 
     if (!(ofmt->flags & AVFMT_NOFILE)) {
         ret = avio_open(&ofmt_ctx->pb, out_filename, AVIO_FLAG_WRITE);

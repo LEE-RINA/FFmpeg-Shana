@@ -113,7 +113,7 @@ int main(int argc, char *argv[])
         goto end;
     }
 
-    av_dump_format(fmt_ctx, 0, input_filename, 0, 1);
+    av_dump_format(fmt_ctx, 0, input_filename, 0);
 
 end:
     avformat_close_input(&fmt_ctx);

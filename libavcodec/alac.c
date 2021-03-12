@@ -302,6 +302,9 @@ static int decode_element(AVCodecContext *avctx, AVFrame *frame, int ch_index,
         decorr_shift       = get_bits(&alac->gb, 8);
         decorr_left_weight = get_bits(&alac->gb, 8);
 
+        if (channels == 2 && decorr_left_weight && decorr_shift > 31)
+            return AVERROR_INVALIDDATA;
+
         for (ch = 0; ch < channels; ch++) {
             prediction_type[ch]   = get_bits(&alac->gb, 4);
             lpc_quant[ch]         = get_bits(&alac->gb, 4);
@@ -622,7 +625,7 @@ AVCodec ff_alac_decoder = {
     .init           = alac_decode_init,
     .close          = alac_decode_close,
     .decode         = alac_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS,
+    .capabilities   = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS | AV_CODEC_CAP_CHANNEL_CONF,
     .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
     .priv_class     = &alac_class
 };

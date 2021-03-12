@@ -325,29 +325,22 @@ int ff_h264_update_thread_context(AVCodecContext *dst,
 
     // SPS/PPS
     for (i = 0; i < FF_ARRAY_ELEMS(h->ps.sps_list); i++) {
-        av_buffer_unref(&h->ps.sps_list[i]);
-        if (h1->ps.sps_list[i]) {
-            h->ps.sps_list[i] = av_buffer_ref(h1->ps.sps_list[i]);
-            if (!h->ps.sps_list[i])
-                return AVERROR(ENOMEM);
-        }
+        ret = av_buffer_replace(&h->ps.sps_list[i], h1->ps.sps_list[i]);
+        if (ret < 0)
+            return ret;
     }
     for (i = 0; i < FF_ARRAY_ELEMS(h->ps.pps_list); i++) {
-        av_buffer_unref(&h->ps.pps_list[i]);
-        if (h1->ps.pps_list[i]) {
-            h->ps.pps_list[i] = av_buffer_ref(h1->ps.pps_list[i]);
-            if (!h->ps.pps_list[i])
-                return AVERROR(ENOMEM);
-        }
+        ret = av_buffer_replace(&h->ps.pps_list[i], h1->ps.pps_list[i]);
+        if (ret < 0)
+            return ret;
     }
 
-    av_buffer_unref(&h->ps.pps_ref);
+    ret = av_buffer_replace(&h->ps.pps_ref, h1->ps.pps_ref);
+    if (ret < 0)
+        return ret;
     h->ps.pps = NULL;
     h->ps.sps = NULL;
     if (h1->ps.pps_ref) {
-        h->ps.pps_ref = av_buffer_ref(h1->ps.pps_ref);
-        if (!h->ps.pps_ref)
-            return AVERROR(ENOMEM);
         h->ps.pps = (const PPS*)h->ps.pps_ref->data;
         h->ps.sps = h->ps.pps->sps;
     }
@@ -432,12 +425,29 @@ int ff_h264_update_thread_context(AVCodecContext *dst,
 
     h->frame_recovered       = h1->frame_recovered;
 
-    av_buffer_unref(&h->sei.a53_caption.buf_ref);
-    if (h1->sei.a53_caption.buf_ref) {
-        h->sei.a53_caption.buf_ref = av_buffer_ref(h1->sei.a53_caption.buf_ref);
-        if (!h->sei.a53_caption.buf_ref)
-            return AVERROR(ENOMEM);
+    ret = av_buffer_replace(&h->sei.a53_caption.buf_ref, h1->sei.a53_caption.buf_ref);
+    if (ret < 0)
+        return ret;
+
+    for (i = 0; i < h->sei.unregistered.nb_buf_ref; i++)
+        av_buffer_unref(&h->sei.unregistered.buf_ref[i]);
+    h->sei.unregistered.nb_buf_ref = 0;
+
+    if (h1->sei.unregistered.nb_buf_ref) {
+        ret = av_reallocp_array(&h->sei.unregistered.buf_ref,
+                                h1->sei.unregistered.nb_buf_ref,
+                                sizeof(*h->sei.unregistered.buf_ref));
+        if (ret < 0)
+            return ret;
+
+        for (i = 0; i < h1->sei.unregistered.nb_buf_ref; i++) {
+            h->sei.unregistered.buf_ref[i] = av_buffer_ref(h1->sei.unregistered.buf_ref[i]);
+            if (!h->sei.unregistered.buf_ref[i])
+                return AVERROR(ENOMEM);
+            h->sei.unregistered.nb_buf_ref++;
+        }
     }
+    h->sei.unregistered.x264_build = h1->sei.unregistered.x264_build;
 
     if (!h->cur_pic_ptr)
         return 0;
@@ -1125,9 +1135,10 @@ static int h264_export_frame_props(H264Context *h)
 {
     const SPS *sps = h->ps.sps;
     H264Picture *cur = h->cur_pic_ptr;
+    AVFrame *out = cur->f;
 
-    cur->f->interlaced_frame = 0;
-    cur->f->repeat_pict      = 0;
+    out->interlaced_frame = 0;
+    out->repeat_pict      = 0;
 
     /* Signal interlacing information externally. */
     /* Prioritize picture timing SEI information over used
@@ -1150,59 +1161,59 @@ static int h264_export_frame_props(H264Context *h)
             break;
         case H264_SEI_PIC_STRUCT_TOP_FIELD:
         case H264_SEI_PIC_STRUCT_BOTTOM_FIELD:
-            cur->f->interlaced_frame = 1;
+            out->interlaced_frame = 1;
             break;
         case H264_SEI_PIC_STRUCT_TOP_BOTTOM:
         case H264_SEI_PIC_STRUCT_BOTTOM_TOP:
             if (FIELD_OR_MBAFF_PICTURE(h))
-                cur->f->interlaced_frame = 1;
+                out->interlaced_frame = 1;
             else
                 // try to flag soft telecine progressive
-                cur->f->interlaced_frame = h->prev_interlaced_frame;
+                out->interlaced_frame = h->prev_interlaced_frame;
             break;
         case H264_SEI_PIC_STRUCT_TOP_BOTTOM_TOP:
         case H264_SEI_PIC_STRUCT_BOTTOM_TOP_BOTTOM:
             /* Signal the possibility of telecined film externally
              * (pic_struct 5,6). From these hints, let the applications
              * decide if they apply deinterlacing. */
-            cur->f->repeat_pict = 1;
+            out->repeat_pict = 1;
             break;
         case H264_SEI_PIC_STRUCT_FRAME_DOUBLING:
-            cur->f->repeat_pict = 2;
+            out->repeat_pict = 2;
             break;
         case H264_SEI_PIC_STRUCT_FRAME_TRIPLING:
-            cur->f->repeat_pict = 4;
+            out->repeat_pict = 4;
             break;
         }
 
         if ((pt->ct_type & 3) &&
             pt->pic_struct <= H264_SEI_PIC_STRUCT_BOTTOM_TOP)
-            cur->f->interlaced_frame = (pt->ct_type & (1 << 1)) != 0;
+            out->interlaced_frame = (pt->ct_type & (1 << 1)) != 0;
     } else {
         /* Derive interlacing flag from used decoding process. */
-        cur->f->interlaced_frame = FIELD_OR_MBAFF_PICTURE(h);
+        out->interlaced_frame = FIELD_OR_MBAFF_PICTURE(h);
     }
-    h->prev_interlaced_frame = cur->f->interlaced_frame;
+    h->prev_interlaced_frame = out->interlaced_frame;
 
     if (cur->field_poc[0] != cur->field_poc[1]) {
         /* Derive top_field_first from field pocs. */
-        cur->f->top_field_first = cur->field_poc[0] < cur->field_poc[1];
+        out->top_field_first = cur->field_poc[0] < cur->field_poc[1];
     } else {
         if (sps->pic_struct_present_flag && h->sei.picture_timing.present) {
             /* Use picture timing SEI information. Even if it is a
              * information of a past frame, better than nothing. */
             if (h->sei.picture_timing.pic_struct == H264_SEI_PIC_STRUCT_TOP_BOTTOM ||
                 h->sei.picture_timing.pic_struct == H264_SEI_PIC_STRUCT_TOP_BOTTOM_TOP)
-                cur->f->top_field_first = 1;
+                out->top_field_first = 1;
             else
-                cur->f->top_field_first = 0;
-        } else if (cur->f->interlaced_frame) {
+                out->top_field_first = 0;
+        } else if (out->interlaced_frame) {
             /* Default to top field first when pic_struct_present_flag
              * is not set but interlaced frame detected */
-            cur->f->top_field_first = 1;
+            out->top_field_first = 1;
         } else {
             /* Most likely progressive */
-            cur->f->top_field_first = 0;
+            out->top_field_first = 0;
         }
     }
 
@@ -1211,7 +1222,7 @@ static int h264_export_frame_props(H264Context *h)
         h->sei.frame_packing.content_interpretation_type > 0 &&
         h->sei.frame_packing.content_interpretation_type < 3) {
         H264SEIFramePacking *fp = &h->sei.frame_packing;
-        AVStereo3D *stereo = av_stereo3d_create_side_data(cur->f);
+        AVStereo3D *stereo = av_stereo3d_create_side_data(out);
         if (stereo) {
         switch (fp->arrangement_type) {
         case H264_SEI_FPA_TYPE_CHECKERBOARD:
@@ -1258,7 +1269,7 @@ static int h264_export_frame_props(H264Context *h)
          h->sei.display_orientation.vflip)) {
         H264SEIDisplayOrientation *o = &h->sei.display_orientation;
         double angle = o->anticlockwise_rotation * 360 / (double) (1 << 16);
-        AVFrameSideData *rotation = av_frame_new_side_data(cur->f,
+        AVFrameSideData *rotation = av_frame_new_side_data(out,
                                                            AV_FRAME_DATA_DISPLAYMATRIX,
                                                            sizeof(int32_t) * 9);
         if (rotation) {
@@ -1269,7 +1280,7 @@ static int h264_export_frame_props(H264Context *h)
     }
 
     if (h->sei.afd.present) {
-        AVFrameSideData *sd = av_frame_new_side_data(cur->f, AV_FRAME_DATA_AFD,
+        AVFrameSideData *sd = av_frame_new_side_data(out, AV_FRAME_DATA_AFD,
                                                      sizeof(uint8_t));
 
         if (sd) {
@@ -1281,7 +1292,7 @@ static int h264_export_frame_props(H264Context *h)
     if (h->sei.a53_caption.buf_ref) {
         H264SEIA53Caption *a53 = &h->sei.a53_caption;
 
-        AVFrameSideData *sd = av_frame_new_side_data_from_buf(cur->f, AV_FRAME_DATA_A53_CC, a53->buf_ref);
+        AVFrameSideData *sd = av_frame_new_side_data_from_buf(out, AV_FRAME_DATA_A53_CC, a53->buf_ref);
         if (!sd)
             av_buffer_unref(&a53->buf_ref);
         a53->buf_ref = NULL;
@@ -1293,7 +1304,7 @@ static int h264_export_frame_props(H264Context *h)
         H264SEIUnregistered *unreg = &h->sei.unregistered;
 
         if (unreg->buf_ref[i]) {
-            AVFrameSideData *sd = av_frame_new_side_data_from_buf(cur->f,
+            AVFrameSideData *sd = av_frame_new_side_data_from_buf(out,
                     AV_FRAME_DATA_SEI_UNREGISTERED,
                     unreg->buf_ref[i]);
             if (!sd)
@@ -1305,8 +1316,9 @@ static int h264_export_frame_props(H264Context *h)
 
     if (h->sei.picture_timing.timecode_cnt > 0) {
         uint32_t *tc_sd;
+        char tcbuf[AV_TIMECODE_STR_SIZE];
 
-        AVFrameSideData *tcside = av_frame_new_side_data(cur->f,
+        AVFrameSideData *tcside = av_frame_new_side_data(out,
                                                          AV_FRAME_DATA_S12M_TIMECODE,
                                                          sizeof(uint32_t)*4);
         if (!tcside)
@@ -1323,6 +1335,8 @@ static int h264_export_frame_props(H264Context *h)
             int   ff = h->sei.picture_timing.timecode[i].frame;
 
             tc_sd[i + 1] = av_timecode_get_smpte(h->avctx->framerate, drop, hh, mm, ss, ff);
+            av_timecode_make_smpte_tc_string2(tcbuf, h->avctx->framerate, tc_sd[i + 1], 0, 0);
+            av_dict_set(&out->metadata, "timecode", tcbuf, 0);
         }
         h->sei.picture_timing.timecode_cnt = 0;
     }
@@ -1592,7 +1606,7 @@ static int h264_field_start(H264Context *h, const H264SliceContext *sl,
                               prev->f->format,
                               prev->f->width,
                               prev->f->height);
-                h->short_ref[0]->poc = prev->poc + 2;
+                h->short_ref[0]->poc = prev->poc + 2U;
             } else if (!h->frame_recovered && !h->avctx->hwaccel)
                 ff_color_frame(h->short_ref[0]->f, c);
             h->short_ref[0]->frame_num = h->poc.prev_frame_num;
