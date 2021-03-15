@@ -257,6 +257,7 @@ static void filter(USPPContext *p, uint8_t *dst[3], uint8_t *src[3],
             av_log(p->avctx_enc[i], AV_LOG_ERROR, "Encoding failed\n");
             continue;
         }
+        av_packet_unref(&pkt);
 
         p->frame_dec = p->avctx_enc[i]->coded_frame;
 
@@ -425,6 +426,8 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
                 out = ff_get_video_buffer(outlink, aligned_w, aligned_h);
                 if (!out) {
                     av_frame_free(&in);
+                    if (qp_table != uspp->non_b_qp_table)
+                        av_free(qp_table);
                     return AVERROR(ENOMEM);
                 }
                 av_frame_copy_props(out, in);

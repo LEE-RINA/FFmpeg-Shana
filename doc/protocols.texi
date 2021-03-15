@@ -341,6 +341,12 @@ operation. ff* tools may produce incomplete content due to server limitations.
 
 Gopher protocol.
 
+@section gophers
+
+Gophers protocol.
+
+The Gopher protocol with TLS encapsulation.
+
 @section hls
 
 Read Apple HTTP Live Streaming compliant segmented stream as
@@ -689,6 +695,42 @@ Example usage:
 @example
 -f rtp_mpegts -fec prompeg=l=8:d=4 rtp://@var{hostname}:@var{port}
 @end example
+
+@section rist
+
+Reliable Internet Streaming Transport protocol
+
+The accepted options are:
+@table @option
+@item rist_profile
+Supported values:
+@table @samp
+@item simple
+@item main
+This one is default.
+@item advanced
+@end table
+
+@item buffer_size
+Set internal RIST buffer size in milliseconds for retransmission of data.
+Default value is 0 which means the librist default (1 sec). Maximum value is 30
+seconds.
+
+@item pkt_size
+Set maximum packet size for sending data. 1316 by default.
+
+@item log_level
+Set loglevel for RIST logging messages. You only need to set this if you
+explicitly want to enable debug level messages or packet loss simulation,
+otherwise the regular loglevel is respected.
+
+@item secret
+Set override of encryption secret, by default is unset.
+
+@item encryption
+Set encryption type, by default is disabled.
+Acceptable values are 128 and 256.
+@end table
 
 @section rtmp
 
