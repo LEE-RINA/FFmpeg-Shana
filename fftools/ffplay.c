@@ -4123,7 +4123,8 @@ static void event_loop(VideoState *cur_stream)
                         cur_stream->vis_texture = NULL;
                     }
                 case SDL_WINDOWEVENT_EXPOSED:
-                    cur_stream->force_refresh = 1;
+                    if (!cur_stream->seek_display_s)
+                        cur_stream->force_refresh = 1;
             }
             break;
         case SDL_MOUSEWHEEL:

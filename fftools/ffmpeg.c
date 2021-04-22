@@ -1525,8 +1525,8 @@ static int reap_filters(int flush)
          * encoder. Thus, if we have gotten to an audio stream, initialize
          * the encoder earlier than receiving the first AVFrame.
          */
-        if (av_buffersink_get_type(filter) == AVMEDIA_TYPE_AUDIO)
-            init_output_stream_wrapper(ost, NULL, 1);
+        // if (av_buffersink_get_type(filter) == AVMEDIA_TYPE_AUDIO) // For fixing this issue: https://shana.pe.kr/101967
+        init_output_stream_wrapper(ost, NULL, 1);
 
         if (!ost->filtered_frame && !(ost->filtered_frame = av_frame_alloc())) {
             return AVERROR(ENOMEM);
@@ -4659,8 +4659,8 @@ static int transcode_step(void)
          * of the peeked AVFrame as-is), we could get rid of this additional
          * early encoder initialization.
          */
-        if (av_buffersink_get_type(ost->filter->filter) == AVMEDIA_TYPE_AUDIO)
-            init_output_stream_wrapper(ost, NULL, 1);
+        // if (av_buffersink_get_type(ost->filter->filter) == AVMEDIA_TYPE_AUDIO) // For fixing this issue: https://shana.pe.kr/101967
+        init_output_stream_wrapper(ost, NULL, 1);
 
         if ((ret = transcode_from_filter(ost->filter->graph, &ist)) < 0)
             return ret;
