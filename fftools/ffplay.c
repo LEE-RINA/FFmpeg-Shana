@@ -393,7 +393,7 @@ static const char **vfilters_list = NULL;
 static int nb_vfilters = 0;
 static char *afilters = NULL;
 #endif
-static int autorotate = 0;
+static int autorotate = 1;
 static int find_stream_info = 1;
 static int filter_nbthreads = 0;
 
@@ -561,7 +561,7 @@ static void s_shanaencoder_fsb_seg(VideoState *is, double lpData, int dwData)
                 stream_toggle_pause(is);
 
             is->tmp_status_flag_s = 0;
-            if (is->audio_st) {
+            if (is->audio_st && is->audioq.size) { // 오디오 요청
                 is->aud_pts_s = floorf(pts * 1000) / 1000;
                 is->seek_aud_req_s = 1;
             }
@@ -709,7 +709,7 @@ static int s_shanaencoder_fsb_video(VideoState *is, AVFrame *frame, double dpts)
                 av_frame_unref(frame);
                 is->seek_forward_s = 1;
                 is->seek_vid_re_req_s = 1;
-                if (is->audio_st) { // 오디오 요청
+                if (is->audio_st && is->audioq.size) { // 오디오 요청
                     is->aud_pts_s = floorf(f_prev_pts * 1000) / 1000;
                     is->seek_aud_req_s = 1;
                 }
@@ -723,7 +723,7 @@ static int s_shanaencoder_fsb_video(VideoState *is, AVFrame *frame, double dpts)
                 av_frame_unref(frame);
                 is->seek_vid_re_req_s = 1;
                 is->vid_last_drop_pts_s = floorf((is->vid_last_drop_pts_s - is->vid_duration_s) * 1000) / 1000;
-                if (is->audio_st) { // 오디오 요청
+                if (is->audio_st && is->audioq.size) { // 오디오 요청
                     is->aud_pts_s = floorf(f_prev_pts * 1000) / 1000;
                     is->seek_aud_req_s = 1;
                 }
@@ -1882,6 +1882,7 @@ static void stream_close(VideoState *is)
 static void do_exit(VideoState *is)
 {
     if (is) {
+        is->seek_interrupt_s = 1;
         SDL_DelEventWatch(s_wm_copydata_event_watcher, is);
         stream_close(is);
     }
@@ -3923,7 +3924,7 @@ static void event_loop(VideoState *cur_stream)
                                         if (!cur_stream->paused)
                                             stream_toggle_pause(cur_stream);
                                         incr = -1.0;
-                                        if (cur_stream->audio_st) {
+                                        if (cur_stream->audio_st && cur_stream->audioq.size) { // 오디오 요청
                                             cur_stream->aud_pts_s = floorf((cur_stream->vid_pts_s - cur_stream->vid_duration_s) * 1000) / 1000;
                                             cur_stream->seek_aud_req_s = 1;
                                         }

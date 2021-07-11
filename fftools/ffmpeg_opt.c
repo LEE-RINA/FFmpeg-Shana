@@ -810,7 +810,7 @@ static void add_input_streams(OptionsContext *o, AVFormatContext *ic)
         ist->ts_scale = 1.0;
         MATCH_PER_STREAM_OPT(ts_scale, dbl, ist->ts_scale, ic, st);
 
-        ist->autorotate = 0;
+        ist->autorotate = 1;
         MATCH_PER_STREAM_OPT(autorotate, i, ist->autorotate, ic, st);
 
         MATCH_PER_STREAM_OPT(codec_tags, str, codec_tag, ic, st);
