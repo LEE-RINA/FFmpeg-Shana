@@ -30,6 +30,7 @@
 #include "libavutil/mathematics.h"
 
 #include "avcodec.h"
+#include "encode.h"
 #include "internal.h"
 #include "libopenh264.h"
 
@@ -192,7 +193,7 @@ static av_cold int svc_encode_init(AVCodecContext *avctx)
 #endif
     param.bPrefixNalAddingCtrl       = 0;
     param.iLoopFilterDisableIdc      = !s->loopfilter;
-    param.iEntropyCodingModeFlag     = 0;
+    param.iEntropyCodingModeFlag     = s->coder >= 0 ? s->coder : 1;
     param.iMultipleThreadIdc         = avctx->thread_count;
 
     /* Allow specifying the libopenh264 profile through AVCodecContext. */
@@ -210,16 +211,6 @@ static av_cold int svc_encode_init(AVCodecContext *avctx)
             break;
         }
 
-#if FF_API_CODER_TYPE && FF_API_OPENH264_CABAC
-FF_DISABLE_DEPRECATION_WARNINGS
-    if (s->coder < 0 && avctx->coder_type == FF_CODER_TYPE_AC)
-        s->coder = 1;
-
-    if (s->coder < 0)
-        s->coder = s->cabac;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
-
     if (s->profile == FF_PROFILE_UNKNOWN && s->coder >= 0)
         s->profile = s->coder == 0 ? FF_PROFILE_H264_CONSTRAINED_BASELINE :
 #if OPENH264_VER_AT_LEAST(1, 8)
@@ -229,26 +220,25 @@ FF_ENABLE_DEPRECATION_WARNINGS
 #endif
 
     switch (s->profile) {
-#if OPENH264_VER_AT_LEAST(1, 8)
     case FF_PROFILE_H264_HIGH:
-        param.iEntropyCodingModeFlag = 1;
-        av_log(avctx, AV_LOG_VERBOSE, "Using CABAC, "
-                "select EProfileIdc PRO_HIGH in libopenh264.\n");
+        av_log(avctx, AV_LOG_VERBOSE, "Using %s, "
+                "select EProfileIdc PRO_HIGH in libopenh264.\n",
+                param.iEntropyCodingModeFlag ? "CABAC" : "CAVLC");
         break;
-#else
     case FF_PROFILE_H264_MAIN:
-        param.iEntropyCodingModeFlag = 1;
-        av_log(avctx, AV_LOG_VERBOSE, "Using CABAC, "
-                "select EProfileIdc PRO_MAIN in libopenh264.\n");
+        av_log(avctx, AV_LOG_VERBOSE, "Using %s, "
+                "select EProfileIdc PRO_MAIN in libopenh264.\n",
+                param.iEntropyCodingModeFlag ? "CABAC" : "CAVLC");
         break;
-#endif
     case FF_PROFILE_H264_CONSTRAINED_BASELINE:
     case FF_PROFILE_UNKNOWN:
+        s->profile = FF_PROFILE_H264_CONSTRAINED_BASELINE;
         param.iEntropyCodingModeFlag = 0;
         av_log(avctx, AV_LOG_VERBOSE, "Using CAVLC, "
                "select EProfileIdc PRO_BASELINE in libopenh264.\n");
         break;
     default:
+        s->profile = FF_PROFILE_H264_CONSTRAINED_BASELINE;
         param.iEntropyCodingModeFlag = 0;
         av_log(avctx, AV_LOG_WARNING, "Unsupported profile, "
                "select EProfileIdc PRO_BASELINE in libopenh264.\n");
@@ -260,6 +250,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
     param.sSpatialLayers[0].fFrameRate          = param.fMaxFrameRate;
     param.sSpatialLayers[0].iSpatialBitrate     = param.iTargetBitrate;
     param.sSpatialLayers[0].iMaxSpatialBitrate  = param.iMaxBitrate;
+    param.sSpatialLayers[0].uiProfileIdc        = s->profile;
 
 #if OPENH264_VER_AT_LEAST(1, 7)
     if (avctx->sample_aspect_ratio.num && avctx->sample_aspect_ratio.den) {
@@ -339,6 +330,28 @@ FF_ENABLE_DEPRECATION_WARNINGS
         }
     }
 
+#if OPENH264_VER_AT_LEAST(1, 6)
+    param.sSpatialLayers[0].uiVideoFormat = VF_UNDEF;
+    if (avctx->color_range != AVCOL_RANGE_UNSPECIFIED) {
+        param.sSpatialLayers[0].bVideoSignalTypePresent = true;
+        param.sSpatialLayers[0].bFullRange = (avctx->color_range == AVCOL_RANGE_JPEG);
+    }
+
+    if (avctx->colorspace != AVCOL_SPC_UNSPECIFIED      ||
+        avctx->color_primaries != AVCOL_PRI_UNSPECIFIED ||
+        avctx->color_trc != AVCOL_TRC_UNSPECIFIED) {
+        param.sSpatialLayers[0].bVideoSignalTypePresent = true;
+        param.sSpatialLayers[0].bColorDescriptionPresent = true;
+    }
+
+    if (avctx->colorspace != AVCOL_SPC_UNSPECIFIED)
+        param.sSpatialLayers[0].uiColorMatrix = avctx->colorspace;
+    if (avctx->color_primaries != AVCOL_PRI_UNSPECIFIED)
+        param.sSpatialLayers[0].uiColorPrimaries = avctx->color_primaries;
+    if (avctx->color_trc != AVCOL_TRC_UNSPECIFIED)
+        param.sSpatialLayers[0].uiTransferCharacteristics = avctx->color_trc;
+#endif
+
     if ((*s->encoder)->InitializeExt(s->encoder, &param) != cmResultSuccess) {
         av_log(avctx, AV_LOG_ERROR, "Initialize failed\n");
         return AVERROR_UNKNOWN;
@@ -414,10 +427,9 @@ static int svc_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
     }
     av_log(avctx, AV_LOG_DEBUG, "%d slices\n", fbi.sLayerInfo[fbi.iLayerNum - 1].iNalCount);
 
-    if ((ret = ff_alloc_packet2(avctx, avpkt, size, size))) {
-        av_log(avctx, AV_LOG_ERROR, "Error getting output packet\n");
+    if ((ret = ff_get_encode_buffer(avctx, avpkt, size, 0)))
         return ret;
-    }
+
     size = 0;
     for (layer = first_layer; layer < fbi.iLayerNum; layer++) {
         memcpy(avpkt->data + size, fbi.sLayerInfo[layer].pBsBuf, layer_size[layer]);
@@ -438,17 +450,18 @@ static const AVCodecDefault svc_enc_defaults[] = {
     { NULL },
 };
 
-AVCodec ff_libopenh264_encoder = {
+const AVCodec ff_libopenh264_encoder = {
     .name           = "libopenh264",
     .long_name      = NULL_IF_CONFIG_SMALL("OpenH264 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10"),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_H264,
+    .capabilities   = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_OTHER_THREADS,
     .priv_data_size = sizeof(SVCContext),
     .init           = svc_encode_init,
     .encode2        = svc_encode_frame,
     .close          = svc_encode_close,
-    .capabilities   = AV_CODEC_CAP_AUTO_THREADS,
-    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
+    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP |
+                      FF_CODEC_CAP_AUTO_THREADS,
     .pix_fmts       = (const enum AVPixelFormat[]){ AV_PIX_FMT_YUV420P,
                                                     AV_PIX_FMT_NONE },
     .defaults       = svc_enc_defaults,

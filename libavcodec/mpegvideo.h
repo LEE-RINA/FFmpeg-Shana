@@ -49,31 +49,19 @@
 #include "pixblockdsp.h"
 #include "put_bits.h"
 #include "ratecontrol.h"
+#if FF_API_FLAG_TRUNCATED
 #include "parser.h"
+#endif
 #include "mpegutils.h"
-#include "mpeg12data.h"
 #include "qpeldsp.h"
-#include "thread.h"
+#include "rl.h"
 #include "videodsp.h"
 
 #include "libavutil/opt.h"
-#include "libavutil/timecode.h"
 
 #define MAX_THREADS 32
 
 #define MAX_B_FRAMES 16
-
-/* Start codes. */
-#define SEQ_END_CODE            0x000001b7
-#define SEQ_START_CODE          0x000001b3
-#define GOP_START_CODE          0x000001b8
-#define PICTURE_START_CODE      0x00000100
-#define SLICE_MIN_START_CODE    0x00000101
-#define SLICE_MAX_START_CODE    0x000001af
-#define EXT_START_CODE          0x000001b5
-#define USER_START_CODE         0x000001b2
-#define SLICE_START_CODE        0x000001b7
-
 
 /**
  * MpegEncContext.
@@ -137,7 +125,7 @@ typedef struct MpegEncContext {
     Picture **input_picture;   ///< next pictures on display order for encoding
     Picture **reordered_input_picture; ///< pointer to the next pictures in coded order for encoding
 
-    int64_t user_specified_pts; ///< last non-zero pts from AVFrame which was passed into avcodec_encode_video2()
+    int64_t user_specified_pts; ///< last non-zero pts from AVFrame which was passed into avcodec_send_frame()
     /**
      * pts difference between the first and second input frame, used for
      * calculating dts of the first frame when there's a delay */
@@ -208,14 +196,11 @@ typedef struct MpegEncContext {
     int *lambda_table;
     int adaptive_quant;         ///< use adaptive quantization
     int dquant;                 ///< qscale difference to prev qscale
-    int closed_gop;             ///< MPEG1/2 GOP is closed
     int pict_type;              ///< AV_PICTURE_TYPE_I, AV_PICTURE_TYPE_P, AV_PICTURE_TYPE_B, ...
     int vbv_delay;
     int last_pict_type; //FIXME removes
     int last_non_b_pict_type;   ///< used for MPEG-4 gmc B-frames & ratecontrol
     int droppable;
-    int frame_rate_index;
-    AVRational mpeg2_frame_rate_ext;
     int last_lambda_for[5];     ///< last lambda for a specific pict type
     int skipdct;                ///< skip dct and code zero residual
 
@@ -243,8 +228,8 @@ typedef struct MpegEncContext {
     int16_t (*b_bidir_forw_mv_table_base)[2];
     int16_t (*b_bidir_back_mv_table_base)[2];
     int16_t (*b_direct_mv_table_base)[2];
-    int16_t (*p_field_mv_table_base[2][2])[2];
-    int16_t (*b_field_mv_table_base[2][2][2])[2];
+    int16_t (*p_field_mv_table_base)[2];
+    int16_t (*b_field_mv_table_base)[2];
     int16_t (*p_mv_table)[2];            ///< MV table (1MV per MB) P-frame encoding
     int16_t (*b_forw_mv_table)[2];       ///< MV table (1MV per MB) forward mode B-frame encoding
     int16_t (*b_back_mv_table)[2];       ///< MV table (1MV per MB) backward mode B-frame encoding
@@ -253,8 +238,8 @@ typedef struct MpegEncContext {
     int16_t (*b_direct_mv_table)[2];     ///< MV table (1MV per MB) direct mode B-frame encoding
     int16_t (*p_field_mv_table[2][2])[2];   ///< MV table (2MV per MB) interlaced P-frame encoding
     int16_t (*b_field_mv_table[2][2][2])[2];///< MV table (4MV per MB) interlaced B-frame encoding
-    uint8_t (*p_field_select_table[2]);
-    uint8_t (*b_field_select_table[2][2]);
+    uint8_t (*p_field_select_table[2]);  ///< Only the first element is allocated
+    uint8_t (*b_field_select_table[2][2]); ///< Only the first element is allocated
     int motion_est;                      ///< ME algorithm
     int me_penalty_compensation;
     int me_pre;                          ///< prepass for motion estimation
@@ -301,7 +286,6 @@ typedef struct MpegEncContext {
     uint16_t chroma_intra_matrix[64];
     uint16_t inter_matrix[64];
     uint16_t chroma_inter_matrix[64];
-    int force_duplicated_matrix; ///< Force duplication of mjpeg matrices, useful for rtp streaming
 
     int intra_quant_bias;    ///< bias for the quantizer
     int inter_quant_bias;    ///< bias for the quantizer
@@ -357,9 +341,10 @@ typedef struct MpegEncContext {
     int resync_mb_y;                 ///< y position of last resync marker
     GetBitContext last_resync_gb;    ///< used to search for the next resync marker
     int mb_num_left;                 ///< number of MBs left in this video packet (for partitioned Slices only)
-    int next_p_frame_damaged;        ///< set if the next p frame is damaged, to avoid showing trashed B-frames
 
+#if FF_API_FLAG_TRUNCATED
     ParseContext parse_context;
+#endif
 
     /* H.263 specific */
     int gob_index;
@@ -369,9 +354,6 @@ typedef struct MpegEncContext {
     uint8_t *mb_info_ptr;
     int mb_info_size;
     int ehc_mode;
-#if FF_API_MPV_RC_STRATEGY
-    int rc_strategy;                ///< deprecated
-#endif
 
     /* H.263+ specific */
     int umvplus;                    ///< == H.263+ && unrestricted_mv
@@ -401,12 +383,10 @@ typedef struct MpegEncContext {
     int mcsel;
     int quant_precision;
     int quarter_sample;              ///< 1->qpel, 0->half pel ME/MC
-    int aspect_ratio_info; //FIXME remove
     int sprite_warping_accuracy;
     int data_partitioning;           ///< data partitioning flag from header
     int partitioned_frame;           ///< is current frame partitioned
     int low_delay;                   ///< no reordering needed / has no B-frames
-    int vo_type;
     PutBitContext tex_pb;            ///< used for data partitioned VOPs
     PutBitContext pb2;               ///< used for data partitioned VOPs
     int mpeg_quant;
@@ -425,8 +405,6 @@ typedef struct MpegEncContext {
     /* MJPEG specific */
     struct MJpegContext *mjpeg_ctx;
     int esc_pos;
-    int pred;
-    int huffman;
 
     /* MSMPEG4 specific */
     int mv_table_index;
@@ -453,19 +431,16 @@ typedef struct MpegEncContext {
     GetBitContext gb;
 
     /* MPEG-1 specific */
-    int gop_picture_number;  ///< index of the first picture of a GOP based on fake_pic_num & MPEG-1 specific
     int last_mv_dir;         ///< last mv_dir, used for B-frame encoding
-    uint8_t *vbv_delay_ptr;  ///< pointer to vbv_delay in the bitstream
+    int vbv_delay_pos;       ///< offset of vbv_delay in the bitstream
 
     /* MPEG-2-specific - I wished not to have to support this mess. */
     int progressive_sequence;
     int mpeg_f_code[2][2];
-    int a53_cc;
 
     // picture structure defines are loaded from mpegutils.h
     int picture_structure;
 
-    int64_t timecode_frame_start; ///< GOP timecode frame start number, in non drop frame format
     int intra_dc_precision;
     int frame_pred_frame_dct;
     int top_field_first;
@@ -474,8 +449,6 @@ typedef struct MpegEncContext {
     int brd_scale;
     int intra_vlc_format;
     int alternate_scan;
-    int seq_disp_ext;
-    int video_format;
 #define VIDEO_FORMAT_COMPONENT   0
 #define VIDEO_FORMAT_PAL         1
 #define VIDEO_FORMAT_NTSC        2
@@ -495,15 +468,10 @@ typedef struct MpegEncContext {
     int full_pel[2];
     int interlaced_dct;
     int first_field;         ///< is 1 for the first field of a field picture 0 otherwise
-    int drop_frame_timecode; ///< timecode is in drop frame format.
-    int scan_offset;         ///< reserve space for SVCD scan offset user data.
 
     /* RTP specific */
     int rtp_mode;
     int rtp_payload_size;
-
-    char *tc_opt_str;        ///< timecode option string
-    AVTimecode tc;           ///< timecode context
 
     uint8_t *ptr_lastgob;
     int swap_uv;             //vcr2 codec is an MPEG-2 variant with U and V swapped
@@ -513,10 +481,6 @@ typedef struct MpegEncContext {
     int16_t (*block)[64]; ///< points to one of the following blocks
     int16_t (*blocks)[12][64]; // for HQ mode we need to keep the best block
     int (*decode_mb)(struct MpegEncContext *s, int16_t block[12][64]); // used by some codecs to avoid a switch()
-
-    int32_t (*block32)[12][64];
-    int dpcm_direction;          // 0 = DCT, 1 = DPCM top to bottom scan, -1 = DPCM bottom to top scan
-    int16_t (*dpcm_macroblock)[3][256];
 
 #define SLICE_OK         0
 #define SLICE_ERROR     -1
@@ -587,6 +551,10 @@ typedef struct MpegEncContext {
     int noise_reduction;
 
     int intra_penalty;
+
+#if FF_API_MPEGVIDEO_OPTS || FF_API_MJPEG_PRED
+    int dummy;               ///< used as target for deprecated options
+#endif
 } MpegEncContext;
 
 /* mpegvideo_enc common options */
@@ -616,14 +584,6 @@ typedef struct MpegEncContext {
 
 #ifndef FF_MPV_OFFSET
 #define FF_MPV_OFFSET(x) offsetof(MpegEncContext, x)
-#endif
-#if FF_API_MPV_RC_STRATEGY
-#define FF_MPV_RC_STRATEGY_OPTS \
-{"rc_strategy", "ratecontrol method",                               FF_MPV_OFFSET(rc_strategy), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 1, FF_MPV_OPT_FLAGS | AV_OPT_FLAG_DEPRECATED, "rc_strategy" },   \
-    { "ffmpeg", "deprecated, does nothing", 0, AV_OPT_TYPE_CONST, { .i64 = 0 }, 0, 0, FF_MPV_OPT_FLAGS | AV_OPT_FLAG_DEPRECATED, "rc_strategy" }, \
-    { "xvid",   "deprecated, does nothing", 0, AV_OPT_TYPE_CONST, { .i64 = 0 }, 0, 0, FF_MPV_OPT_FLAGS | AV_OPT_FLAG_DEPRECATED, "rc_strategy" },
-#else
-#define FF_MPV_RC_STRATEGY_OPTS
 #endif
 #define FF_MPV_OPT_FLAGS (AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM)
 #define FF_MPV_COMMON_OPTS \
@@ -662,25 +622,36 @@ FF_MPV_OPT_CMP_FUNC, \
 { "zero", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = FF_ME_ZERO }, 0, 0, FF_MPV_OPT_FLAGS, "motion_est" }, \
 { "epzs", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = FF_ME_EPZS }, 0, 0, FF_MPV_OPT_FLAGS, "motion_est" }, \
 { "xone", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = FF_ME_XONE }, 0, 0, FF_MPV_OPT_FLAGS, "motion_est" }, \
-{ "force_duplicated_matrix", "Always write luma and chroma matrix for mjpeg, useful for rtp streaming.", FF_MPV_OFFSET(force_duplicated_matrix), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, FF_MPV_OPT_FLAGS },   \
-{"b_strategy", "Strategy to choose between I/P/B-frames",           FF_MPV_OFFSET(b_frame_strategy), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 2, FF_MPV_OPT_FLAGS }, \
-{"b_sensitivity", "Adjust sensitivity of b_frame_strategy 1",       FF_MPV_OFFSET(b_sensitivity), AV_OPT_TYPE_INT, {.i64 = 40 }, 1, INT_MAX, FF_MPV_OPT_FLAGS }, \
-{"brd_scale", "Downscale frames for dynamic B-frame decision",      FF_MPV_OFFSET(brd_scale), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 3, FF_MPV_OPT_FLAGS }, \
 {"skip_threshold", "Frame skip threshold",                          FF_MPV_OFFSET(frame_skip_threshold), AV_OPT_TYPE_INT, {.i64 = 0 }, INT_MIN, INT_MAX, FF_MPV_OPT_FLAGS }, \
 {"skip_factor", "Frame skip factor",                                FF_MPV_OFFSET(frame_skip_factor), AV_OPT_TYPE_INT, {.i64 = 0 }, INT_MIN, INT_MAX, FF_MPV_OPT_FLAGS }, \
 {"skip_exp", "Frame skip exponent",                                 FF_MPV_OFFSET(frame_skip_exp), AV_OPT_TYPE_INT, {.i64 = 0 }, INT_MIN, INT_MAX, FF_MPV_OPT_FLAGS }, \
 {"skip_cmp", "Frame skip compare function",                         FF_MPV_OFFSET(frame_skip_cmp), AV_OPT_TYPE_INT, {.i64 = FF_CMP_DCTMAX }, INT_MIN, INT_MAX, FF_MPV_OPT_FLAGS, "cmp_func" }, \
 {"sc_threshold", "Scene change threshold",                          FF_MPV_OFFSET(scenechange_threshold), AV_OPT_TYPE_INT, {.i64 = 0 }, INT_MIN, INT_MAX, FF_MPV_OPT_FLAGS }, \
 {"noise_reduction", "Noise reduction",                              FF_MPV_OFFSET(noise_reduction), AV_OPT_TYPE_INT, {.i64 = 0 }, INT_MIN, INT_MAX, FF_MPV_OPT_FLAGS }, \
-{"mpeg_quant", "Use MPEG quantizers instead of H.263",              FF_MPV_OFFSET(mpeg_quant), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 1, FF_MPV_OPT_FLAGS }, \
 {"ps", "RTP payload size in bytes",                             FF_MPV_OFFSET(rtp_payload_size), AV_OPT_TYPE_INT, {.i64 = 0 }, INT_MIN, INT_MAX, FF_MPV_OPT_FLAGS }, \
 {"mepc", "Motion estimation bitrate penalty compensation (1.0 = 256)", FF_MPV_OFFSET(me_penalty_compensation), AV_OPT_TYPE_INT, {.i64 = 256 }, INT_MIN, INT_MAX, FF_MPV_OPT_FLAGS }, \
 {"mepre", "pre motion estimation", FF_MPV_OFFSET(me_pre), AV_OPT_TYPE_INT, {.i64 = 0 }, INT_MIN, INT_MAX, FF_MPV_OPT_FLAGS }, \
 {"intra_penalty", "Penalty for intra blocks in block decision", FF_MPV_OFFSET(intra_penalty), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, INT_MAX/2, FF_MPV_OPT_FLAGS }, \
-{"a53cc", "Use A53 Closed Captions (if available)", FF_MPV_OFFSET(a53_cc), AV_OPT_TYPE_BOOL, {.i64 = 1}, 0, 1, FF_MPV_OPT_FLAGS }, \
-FF_MPV_RC_STRATEGY_OPTS
 
-extern const AVOption ff_mpv_generic_options[];
+#define FF_MPV_COMMON_BFRAME_OPTS \
+{"b_strategy", "Strategy to choose between I/P/B-frames",      FF_MPV_OFFSET(b_frame_strategy), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 2, FF_MPV_OPT_FLAGS }, \
+{"b_sensitivity", "Adjust sensitivity of b_frame_strategy 1",  FF_MPV_OFFSET(b_sensitivity), AV_OPT_TYPE_INT, {.i64 = 40 }, 1, INT_MAX, FF_MPV_OPT_FLAGS }, \
+{"brd_scale", "Downscale frames for dynamic B-frame decision", FF_MPV_OFFSET(brd_scale), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 3, FF_MPV_OPT_FLAGS },
+
+#if FF_API_MPEGVIDEO_OPTS
+#define FF_MPV_DEPRECATED_MPEG_QUANT_OPT \
+    { "mpeg_quant", "Deprecated, does nothing", FF_MPV_OFFSET(mpeg_quant), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 0, FF_MPV_OPT_FLAGS | AV_OPT_FLAG_DEPRECATED },
+#define FF_MPV_DEPRECATED_A53_CC_OPT \
+    { "a53cc",      "Deprecated, does nothing", FF_MPV_OFFSET(dummy),      AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FF_MPV_OPT_FLAGS | AV_OPT_FLAG_DEPRECATED },
+#define FF_MPV_DEPRECATED_MATRIX_OPT \
+   { "force_duplicated_matrix", "Deprecated, does nothing", FF_MPV_OFFSET(dummy), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, FF_MPV_OPT_FLAGS | AV_OPT_FLAG_DEPRECATED },
+#define FF_MPV_DEPRECATED_BFRAME_OPTS \
+   { "b_strategy",    "Deprecated, does nothing", FF_MPV_OFFSET(b_frame_strategy), AV_OPT_TYPE_INT, { .i64 =  0 }, 0, 2, FF_MPV_OPT_FLAGS | AV_OPT_FLAG_DEPRECATED }, \
+   { "b_sensitivity", "Deprecated, does nothing", FF_MPV_OFFSET(b_sensitivity),    AV_OPT_TYPE_INT, { .i64 = 40 }, 1, INT_MAX, FF_MPV_OPT_FLAGS | AV_OPT_FLAG_DEPRECATED }, \
+   { "brd_scale",     "Deprecated, does nothing", FF_MPV_OFFSET(brd_scale),        AV_OPT_TYPE_INT, { .i64 =  0 }, 0, 3, FF_MPV_OPT_FLAGS | AV_OPT_FLAG_DEPRECATED },
+#endif
+
+extern const AVClass ff_mpv_enc_class;
 
 /**
  * Set the given MpegEncContext to common defaults (same for encoding
@@ -698,10 +669,32 @@ void ff_mpv_common_init_neon(MpegEncContext *s);
 void ff_mpv_common_init_ppc(MpegEncContext *s);
 void ff_mpv_common_init_x86(MpegEncContext *s);
 void ff_mpv_common_init_mips(MpegEncContext *s);
+/**
+ * Initialize an MpegEncContext's thread contexts. Presumes that
+ * slice_context_count is already set and that all the fields
+ * that are freed/reset in free_duplicate_context() are NULL.
+ */
+int ff_mpv_init_duplicate_contexts(MpegEncContext *s);
+/**
+ * Initialize and allocates MpegEncContext fields dependent on the resolution.
+ */
+int ff_mpv_init_context_frame(MpegEncContext *s);
+/**
+ * Frees and resets MpegEncContext fields depending on the resolution
+ * as well as the slice thread contexts.
+ * Is used during resolution changes to avoid a full reinitialization of the
+ * codec.
+ */
+void ff_mpv_free_context_frame(MpegEncContext *s);
 
 int ff_mpv_common_frame_size_change(MpegEncContext *s);
 void ff_mpv_common_end(MpegEncContext *s);
 
+/**
+ * Initialize the given MpegEncContext for decoding.
+ * the changed fields will not depend upon
+ * the prior state of the MpegEncContext.
+ */
 void ff_mpv_decode_init(MpegEncContext *s, AVCodecContext *avctx);
 void ff_mpv_reconstruct_mb(MpegEncContext *s, int16_t block[12][64]);
 void ff_mpv_report_decode_progress(MpegEncContext *s);

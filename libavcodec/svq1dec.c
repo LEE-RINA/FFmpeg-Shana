@@ -37,7 +37,7 @@
 
 #include "avcodec.h"
 #include "get_bits.h"
-#include "h263.h"
+#include "h263data.h"
 #include "hpeldsp.h"
 #include "internal.h"
 #include "mathops.h"
@@ -843,7 +843,7 @@ static void svq1_flush(AVCodecContext *avctx)
     av_frame_unref(s->prev);
 }
 
-AVCodec ff_svq1_decoder = {
+const AVCodec ff_svq1_decoder = {
     .name           = "svq1",
     .long_name      = NULL_IF_CONFIG_SMALL("Sorenson Vector Quantizer 1 / Sorenson Video 1 / SVQ1"),
     .type           = AVMEDIA_TYPE_VIDEO,

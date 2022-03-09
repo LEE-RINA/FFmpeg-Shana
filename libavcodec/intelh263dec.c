@@ -20,7 +20,8 @@
 
 #include "mpegutils.h"
 #include "mpegvideo.h"
-#include "h263.h"
+#include "h263data.h"
+#include "h263dec.h"
 #include "mpegvideodata.h"
 
 /* don't understand why they choose a different header ! */
@@ -66,7 +67,6 @@ int ff_intel_h263_decode_picture_header(MpegEncContext *s)
         return -1;      /* SAC: off */
     }
     s->obmc= get_bits1(&s->gb);
-    s->unrestricted_mv = s->obmc || s->h263_long_vectors;
     s->pb_frame = get_bits1(&s->gb);
 
     if (format < 6) {
@@ -128,7 +128,7 @@ int ff_intel_h263_decode_picture_header(MpegEncContext *s)
     return 0;
 }
 
-AVCodec ff_h263i_decoder = {
+const AVCodec ff_h263i_decoder = {
     .name           = "h263i",
     .long_name      = NULL_IF_CONFIG_SMALL("Intel H.263"),
     .type           = AVMEDIA_TYPE_VIDEO,

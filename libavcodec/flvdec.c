@@ -21,7 +21,7 @@
 #include "libavutil/imgutils.h"
 
 #include "flv.h"
-#include "h263.h"
+#include "h263dec.h"
 #include "mpegvideo.h"
 #include "mpegvideodata.h"
 
@@ -90,7 +90,6 @@ int ff_flv_decode_picture_header(MpegEncContext *s)
 
     s->h263_plus = 0;
 
-    s->unrestricted_mv   = 1;
     s->h263_long_vectors = 0;
 
     /* PEI */
@@ -113,7 +112,7 @@ int ff_flv_decode_picture_header(MpegEncContext *s)
     return 0;
 }
 
-AVCodec ff_flv_decoder = {
+const AVCodec ff_flv_decoder = {
     .name           = "flv",
     .long_name      = NULL_IF_CONFIG_SMALL("FLV / Sorenson Spark / Sorenson H.263 (Flash Video)"),
     .type           = AVMEDIA_TYPE_VIDEO,

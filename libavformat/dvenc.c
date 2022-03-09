@@ -201,8 +201,9 @@ static void dv_inject_audio(DVMuxContext *c, int channel, uint8_t* frame_ptr)
                 if (of*2 >= size)
                     continue;
 
-                frame_ptr[d]   = *av_fifo_peek2(c->audio_data[channel], of*2+1); // FIXME: maybe we have to admit
-                frame_ptr[d+1] = *av_fifo_peek2(c->audio_data[channel], of*2);   //        that DV is a big-endian PCM
+                // FIXME: maybe we have to admit that DV is a big-endian PCM
+                av_fifo_generic_peek_at(c->audio_data[channel], frame_ptr + d, of * 2, 2, NULL);
+                FFSWAP(uint8_t, frame_ptr[d], frame_ptr[d + 1]);
             }
             frame_ptr += 16 * 80; /* 15 Video DIFs + 1 Audio DIF */
         }
@@ -436,7 +437,7 @@ static void dv_deinit(AVFormatContext *s)
         av_fifo_freep(&c->audio_data[i]);
 }
 
-AVOutputFormat ff_dv_muxer = {
+const AVOutputFormat ff_dv_muxer = {
     .name              = "dv",
     .long_name         = NULL_IF_CONFIG_SMALL("DV (Digital Video)"),
     .extensions        = "dv",

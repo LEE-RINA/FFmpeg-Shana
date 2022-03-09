@@ -39,6 +39,7 @@
 #include "mpegvideo.h"
 #include "h263.h"
 #include "h263data.h"
+#include "h263dec.h"
 #include "internal.h"
 #include "mathops.h"
 #include "mpegutils.h"
@@ -217,11 +218,11 @@ int ff_h263_resync(MpegEncContext *s){
     if(s->codec_id==AV_CODEC_ID_MPEG4 && s->studio_profile) {
         align_get_bits(&s->gb);
 
-        while (get_bits_left(&s->gb) >= 32 && show_bits_long(&s->gb, 32) != SLICE_START_CODE) {
+        while (get_bits_left(&s->gb) >= 32 && show_bits_long(&s->gb, 32) != SLICE_STARTCODE) {
             get_bits(&s->gb, 8);
         }
 
-        if (get_bits_left(&s->gb) >= 32 && show_bits_long(&s->gb, 32) == SLICE_START_CODE)
+        if (get_bits_left(&s->gb) >= 32 && show_bits_long(&s->gb, 32) == SLICE_STARTCODE)
             return get_bits_count(&s->gb);
         else
             return -1;
@@ -439,6 +440,93 @@ static void h263_decode_dquant(MpegEncContext *s){
     ff_set_qscale(s, s->qscale);
 }
 
+static void h263_pred_acdc(MpegEncContext * s, int16_t *block, int n)
+{
+    int x, y, wrap, a, c, pred_dc, scale;
+    int16_t *dc_val, *ac_val, *ac_val1;
+
+    /* find prediction */
+    if (n < 4) {
+        x = 2 * s->mb_x + (n & 1);
+        y = 2 * s->mb_y + (n>> 1);
+        wrap = s->b8_stride;
+        dc_val = s->dc_val[0];
+        ac_val = s->ac_val[0][0];
+        scale = s->y_dc_scale;
+    } else {
+        x = s->mb_x;
+        y = s->mb_y;
+        wrap = s->mb_stride;
+        dc_val = s->dc_val[n - 4 + 1];
+        ac_val = s->ac_val[n - 4 + 1][0];
+        scale = s->c_dc_scale;
+    }
+
+    ac_val += ((y) * wrap + (x)) * 16;
+    ac_val1 = ac_val;
+
+    /* B C
+     * A X
+     */
+    a = dc_val[(x - 1) + (y) * wrap];
+    c = dc_val[(x) + (y - 1) * wrap];
+
+    /* No prediction outside GOB boundary */
+    if (s->first_slice_line && n != 3) {
+        if (n != 2) c= 1024;
+        if (n != 1 && s->mb_x == s->resync_mb_x) a= 1024;
+    }
+
+    if (s->ac_pred) {
+        pred_dc = 1024;
+        if (s->h263_aic_dir) {
+            /* left prediction */
+            if (a != 1024) {
+                ac_val -= 16;
+                for (int i = 1; i < 8; i++) {
+                    block[s->idsp.idct_permutation[i << 3]] += ac_val[i];
+                }
+                pred_dc = a;
+            }
+        } else {
+            /* top prediction */
+            if (c != 1024) {
+                ac_val -= 16 * wrap;
+                for (int i = 1; i < 8; i++) {
+                    block[s->idsp.idct_permutation[i]] += ac_val[i + 8];
+                }
+                pred_dc = c;
+            }
+        }
+    } else {
+        /* just DC prediction */
+        if (a != 1024 && c != 1024)
+            pred_dc = (a + c) >> 1;
+        else if (a != 1024)
+            pred_dc = a;
+        else
+            pred_dc = c;
+    }
+
+    /* we assume pred is positive */
+    block[0] = block[0] * scale + pred_dc;
+
+    if (block[0] < 0)
+        block[0] = 0;
+    else
+        block[0] |= 1;
+
+    /* Update AC/DC tables */
+    dc_val[(x) + (y) * wrap] = block[0];
+
+    /* left copy */
+    for (int i = 1; i < 8; i++)
+        ac_val1[i]     = block[s->idsp.idct_permutation[i << 3]];
+    /* top copy */
+    for (int i = 1; i < 8; i++)
+        ac_val1[8 + i] = block[s->idsp.idct_permutation[i]];
+}
+
 static int h263_decode_block(MpegEncContext * s, int16_t * block,
                              int n, int coded)
 {
@@ -579,7 +667,7 @@ retry:
     }
 not_coded:
     if (s->mb_intra && s->h263_aic) {
-        ff_h263_pred_acdc(s, block, n);
+        h263_pred_acdc(s, block, n);
         i = 63;
     }
     s->block_last_index[n] = i;
@@ -1063,7 +1151,6 @@ int ff_h263_decode_picture_header(MpegEncContext *s)
             return -1; /* SAC: off */
         }
         s->obmc= get_bits1(&s->gb); /* Advanced prediction mode */
-        s->unrestricted_mv = s->h263_long_vectors || s->obmc;
 
         s->pb_frame = get_bits1(&s->gb);
         s->chroma_qscale= s->qscale = get_bits(&s->gb, 5);
@@ -1093,7 +1180,6 @@ int ff_h263_decode_picture_header(MpegEncContext *s)
             s->obmc= get_bits1(&s->gb); /* Advanced prediction mode */
             s->h263_aic = get_bits1(&s->gb); /* Advanced Intra Coding (AIC) */
             s->loop_filter= get_bits1(&s->gb);
-            s->unrestricted_mv = s->umvplus || s->obmc || s->loop_filter;
             if(s->avctx->lowres)
                 s->loop_filter = 0;
 
@@ -1136,8 +1222,8 @@ int ff_h263_decode_picture_header(MpegEncContext *s)
         if (ufep) {
             if (format == 6) {
                 /* Custom Picture Format (CPFMT) */
-                s->aspect_ratio_info = get_bits(&s->gb, 4);
-                ff_dlog(s->avctx, "aspect: %d\n", s->aspect_ratio_info);
+                int aspect_ratio_info = get_bits(&s->gb, 4);
+                ff_dlog(s->avctx, "aspect: %d\n", aspect_ratio_info);
                 /* aspect ratios:
                 0 - forbidden
                 1 - 1:1
@@ -1151,12 +1237,12 @@ int ff_h263_decode_picture_header(MpegEncContext *s)
                 check_marker(s->avctx, &s->gb, "in dimensions");
                 height = get_bits(&s->gb, 9) * 4;
                 ff_dlog(s->avctx, "\nH.263+ Custom picture: %dx%d\n",width,height);
-                if (s->aspect_ratio_info == FF_ASPECT_EXTENDED) {
+                if (aspect_ratio_info == FF_ASPECT_EXTENDED) {
                     /* expected dimensions */
                     s->avctx->sample_aspect_ratio.num= get_bits(&s->gb, 8);
                     s->avctx->sample_aspect_ratio.den= get_bits(&s->gb, 8);
                 }else{
-                    s->avctx->sample_aspect_ratio= ff_h263_pixel_aspect[s->aspect_ratio_info];
+                    s->avctx->sample_aspect_ratio= ff_h263_pixel_aspect[aspect_ratio_info];
                 }
             } else {
                 width = ff_h263_format[format][0];

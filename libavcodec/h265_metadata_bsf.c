@@ -335,7 +335,7 @@ static int h265_metadata_update_fragment(AVBSFContext *bsf, AVPacket *pkt,
     int err, i;
 
     // If an AUD is present, it must be the first NAL unit.
-    if (au->units[0].type == HEVC_NAL_AUD) {
+    if (au->nb_units && au->units[0].type == HEVC_NAL_AUD) {
         if (ctx->aud == BSF_ELEMENT_REMOVE)
             ff_cbs_delete_unit(au, 0);
     } else {
@@ -439,7 +439,7 @@ static const AVOption h265_metadata_options[] = {
         { .i64 = -1 }, -1, 6, FLAGS },
 
     { "tick_rate",
-        "Set VPS and VUI tick rate (num_units_in_tick / time_scale)",
+        "Set VPS and VUI tick rate (time_scale / num_units_in_tick)",
         OFFSET(tick_rate), AV_OPT_TYPE_RATIONAL,
         { .dbl = 0.0 }, 0, UINT_MAX, FLAGS },
     { "num_ticks_poc_diff_one",

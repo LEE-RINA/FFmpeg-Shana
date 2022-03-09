@@ -31,6 +31,7 @@
 
 #define VP9_MAX_QUANT 255
 
+#define VP9_MAX_TILE_WIDTH 4096
 
 typedef struct VAAPIEncodeVP9Picture {
     int slot;
@@ -82,9 +83,16 @@ static int vaapi_encode_vp9_init_picture_params(AVCodecContext *avctx,
     VAAPIEncodeVP9Picture          *hpic = pic->priv_data;
     VAEncPictureParameterBufferVP9 *vpic = pic->codec_picture_params;
     int i;
+    int num_tile_columns;
 
     vpic->reconstructed_frame = pic->recon_surface;
     vpic->coded_buf = pic->output_buffer;
+
+    // Maximum width of a tile in units of superblocks is MAX_TILE_WIDTH_B64(64)
+    // So the number of tile columns is related to the width of the picture.
+    // We set the minimum possible number for num_tile_columns as default value.
+    num_tile_columns = (vpic->frame_width_src + VP9_MAX_TILE_WIDTH - 1) / VP9_MAX_TILE_WIDTH;
+    vpic->log2_tile_columns = num_tile_columns == 1 ? 0 : av_log2(num_tile_columns - 1) + 1;
 
     switch (pic->type) {
     case PICTURE_TYPE_IDR:
@@ -279,7 +287,7 @@ static const AVClass vaapi_encode_vp9_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-AVCodec ff_vp9_vaapi_encoder = {
+const AVCodec ff_vp9_vaapi_encoder = {
     .name           = "vp9_vaapi",
     .long_name      = NULL_IF_CONFIG_SMALL("VP9 (VAAPI)"),
     .type           = AVMEDIA_TYPE_VIDEO,
@@ -289,7 +297,8 @@ AVCodec ff_vp9_vaapi_encoder = {
     .receive_packet = &ff_vaapi_encode_receive_packet,
     .close          = &ff_vaapi_encode_close,
     .priv_class     = &vaapi_encode_vp9_class,
-    .capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_HARDWARE,
+    .capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_HARDWARE |
+                      AV_CODEC_CAP_DR1,
     .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
     .defaults       = vaapi_encode_vp9_defaults,
     .pix_fmts = (const enum AVPixelFormat[]) {

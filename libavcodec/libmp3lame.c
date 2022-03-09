@@ -34,6 +34,7 @@
 #include "libavutil/opt.h"
 #include "avcodec.h"
 #include "audio_frame_queue.h"
+#include "encode.h"
 #include "internal.h"
 #include "mpegaudio.h"
 #include "mpegaudiodecheader.h"
@@ -196,7 +197,7 @@ static av_cold int mp3lame_encode_init(AVCodecContext *avctx)
 
     /* set specified parameters */
     if (lame_init_params(s->gfp) < 0) {
-        ret = -1;
+        ret = AVERROR_EXTERNAL;
         goto error;
     }
 
@@ -289,7 +290,7 @@ static int mp3lame_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
                    "lame: output buffer too small (buffer index: %d, free bytes: %d)\n",
                    s->buffer_index, s->buffer_size - s->buffer_index);
         }
-        return -1;
+        return AVERROR(ENOMEM);
     }
     s->buffer_index += lame_result;
     ret = realloc_buffer(s);
@@ -317,13 +318,13 @@ static int mp3lame_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
         return AVERROR_BUG;
     } else if (ret) {
         av_log(avctx, AV_LOG_ERROR, "free format output not supported\n");
-        return -1;
+        return AVERROR_INVALIDDATA;
     }
     len = hdr.frame_size;
     ff_dlog(avctx, "in:%d packet-len:%d index:%d\n", avctx->frame_size, len,
             s->buffer_index);
     if (len <= s->buffer_index) {
-        if ((ret = ff_alloc_packet2(avctx, avpkt, len, 0)) < 0)
+        if ((ret = ff_get_encode_buffer(avctx, avpkt, len, 0)) < 0)
             return ret;
         memcpy(avpkt->data, s->buffer, len);
         s->buffer_index -= len;
@@ -355,7 +356,6 @@ static int mp3lame_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
             AV_WL32(side_data + 4, discard_padding);
         }
 
-        avpkt->size = len;
         *got_packet_ptr = 1;
     }
     return 0;
@@ -398,16 +398,17 @@ static const int libmp3lame_sample_rates[] = {
     44100, 48000,  32000, 22050, 24000, 16000, 11025, 12000, 8000, 0
 };
 
-AVCodec ff_libmp3lame_encoder = {
+const AVCodec ff_libmp3lame_encoder = {
     .name                  = "libmp3lame",
     .long_name             = NULL_IF_CONFIG_SMALL("libmp3lame MP3 (MPEG audio layer 3)"),
     .type                  = AVMEDIA_TYPE_AUDIO,
     .id                    = AV_CODEC_ID_MP3,
+    .capabilities          = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_DELAY |
+                             AV_CODEC_CAP_SMALL_LAST_FRAME,
     .priv_data_size        = sizeof(LAMEContext),
     .init                  = mp3lame_encode_init,
     .encode2               = mp3lame_encode_frame,
     .close                 = mp3lame_encode_close,
-    .capabilities          = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_SMALL_LAST_FRAME,
     .sample_fmts           = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_S32P,
                                                              AV_SAMPLE_FMT_FLTP,
                                                              AV_SAMPLE_FMT_S16P,

@@ -8,8 +8,13 @@ FATE_MPEG4-$(call DEMDEC, H263, H263) := $(addprefix fate-mpeg4-resolution-chang
 fate-mpeg4-bsf-unpack-bframes: CMD = md5 -i $(TARGET_SAMPLES)/mpeg4/packed_bframes.avi -flags +bitexact -fflags +bitexact -c:v copy -bsf mpeg4_unpack_bframes -f avi
 FATE_MPEG4-$(call ALLYES, AVI_DEMUXER MPEG4_UNPACK_BFRAMES_BSF AVI_MUXER) += fate-mpeg4-bsf-unpack-bframes
 
-fate-mpeg4-packed: CMD = framecrc -flags +bitexact -idct simple -i $(TARGET_SAMPLES)/mpeg4/packed_bframes.avi -flags +bitexact -fflags +bitexact -vsync 1
+fate-mpeg4-packed: CMD = framecrc -flags +bitexact -idct simple -i $(TARGET_SAMPLES)/mpeg4/packed_bframes.avi -flags +bitexact -fflags +bitexact -vsync cfr
 FATE_MPEG4-$(call ALLYES, AVI_DEMUXER MPEG4_DECODER) += fate-mpeg4-packed
+
+FATE_MPEG4-$(call ALLYES, FILE_PROTOCOL M4V_DEMUXER MPEG4_DECODER SCALE_FILTER \
+                          RAWVIDEO_ENCODER FRAMECRC_MUXER PIPE_PROTOCOL) \
+                          += fate-mpeg4-simple-studio-profile
+fate-mpeg4-simple-studio-profile: CMD = framecrc -bitexact -idct simple -i $(TARGET_SAMPLES)/mpeg4/mpeg4_sstp_dpcm.m4v -sws_flags +accurate_rnd+bitexact -pix_fmt yuv422p10le -vf scale
 
 FATE_MPEG4-$(call DEMDEC, M4V, MPEG4) += fate-m4v  fate-m4v-cfr
 fate-m4v:     CMD = framecrc -flags +bitexact -idct simple -i $(TARGET_SAMPLES)/mpeg4/demo.m4v

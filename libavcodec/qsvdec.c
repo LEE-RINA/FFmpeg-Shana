@@ -38,6 +38,7 @@
 #include "libavutil/pixfmt.h"
 #include "libavutil/time.h"
 #include "libavutil/imgutils.h"
+#include "libavutil/film_grain_params.h"
 
 #include "avcodec.h"
 #include "internal.h"
@@ -46,9 +47,20 @@
 #include "qsv.h"
 #include "qsv_internal.h"
 
+static const AVRational mfx_tb = { 1, 90000 };
+
+#define PTS_TO_MFX_PTS(pts, pts_tb) ((pts) == AV_NOPTS_VALUE ? \
+    MFX_TIMESTAMP_UNKNOWN : pts_tb.num ? \
+    av_rescale_q(pts, pts_tb, mfx_tb) : pts)
+
+#define MFX_PTS_TO_PTS(mfx_pts, pts_tb) ((mfx_pts) == MFX_TIMESTAMP_UNKNOWN ? \
+    AV_NOPTS_VALUE : pts_tb.num ? \
+    av_rescale_q(mfx_pts, mfx_tb, pts_tb) : mfx_pts)
+
 typedef struct QSVContext {
     // the session used for decoding
     mfxSession session;
+    mfxVersion ver;
 
     // the session we allocated internally, in case the caller did not provide
     // one
@@ -89,7 +101,7 @@ static const AVCodecHWConfigInternal *const qsv_hw_configs[] = {
         .public = {
             .pix_fmt     = AV_PIX_FMT_QSV,
             .methods     = AV_CODEC_HW_CONFIG_METHOD_HW_FRAMES_CTX |
-                           AV_CODEC_HW_CONFIG_METHOD_AD_HOC,
+                           AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX,
             .device_type = AV_HWDEVICE_TYPE_QSV,
         },
         .hwaccel = NULL,
@@ -192,6 +204,18 @@ static int qsv_init_session(AVCodecContext *avctx, QSVContext *q, mfxSession ses
         q->session = q->internal_qs.session;
     }
 
+    if (MFXQueryVersion(q->session, &q->ver) != MFX_ERR_NONE) {
+        av_log(avctx, AV_LOG_ERROR, "Error querying the session version. \n");
+        q->session = NULL;
+
+        if (q->internal_qs.session) {
+            MFXClose(q->internal_qs.session);
+            q->internal_qs.session = NULL;
+        }
+
+        return AVERROR_EXTERNAL;
+    }
+
     /* make sure the decoder is uninitialized */
     MFXVideoDECODE_Close(q->session);
 
@@ -236,6 +260,35 @@ static int qsv_decode_preinit(AVCodecContext *avctx, QSVContext *q, enum AVPixel
         iopattern         = user_ctx->iopattern;
         q->ext_buffers    = user_ctx->ext_buffers;
         q->nb_ext_buffers = user_ctx->nb_ext_buffers;
+    }
+
+    if (avctx->hw_device_ctx && !avctx->hw_frames_ctx && ret == AV_PIX_FMT_QSV) {
+        AVHWFramesContext *hwframes_ctx;
+        AVQSVFramesContext *frames_hwctx;
+
+        avctx->hw_frames_ctx = av_hwframe_ctx_alloc(avctx->hw_device_ctx);
+
+        if (!avctx->hw_frames_ctx) {
+            av_log(avctx, AV_LOG_ERROR, "av_hwframe_ctx_alloc failed\n");
+            return AVERROR(ENOMEM);
+        }
+
+        hwframes_ctx = (AVHWFramesContext*)avctx->hw_frames_ctx->data;
+        frames_hwctx = hwframes_ctx->hwctx;
+        hwframes_ctx->width             = FFALIGN(avctx->coded_width,  32);
+        hwframes_ctx->height            = FFALIGN(avctx->coded_height, 32);
+        hwframes_ctx->format            = AV_PIX_FMT_QSV;
+        hwframes_ctx->sw_format         = avctx->sw_pix_fmt;
+        hwframes_ctx->initial_pool_size = 64 + avctx->extra_hw_frames;
+        frames_hwctx->frame_type        = MFX_MEMTYPE_VIDEO_MEMORY_DECODER_TARGET;
+
+        ret = av_hwframe_ctx_init(avctx->hw_frames_ctx);
+
+        if (ret < 0) {
+            av_log(NULL, AV_LOG_ERROR, "Error initializing a QSV frame pool\n");
+            av_buffer_unref(&avctx->hw_frames_ctx);
+            return ret;
+        }
     }
 
     if (avctx->hw_frames_ctx) {
@@ -301,14 +354,15 @@ static int qsv_decode_header(AVCodecContext *avctx, QSVContext *q,
                              mfxVideoParam *param)
 {
     int ret;
-
+    mfxExtVideoSignalInfo video_signal_info = { 0 };
+    mfxExtBuffer *header_ext_params[1] = { (mfxExtBuffer *)&video_signal_info };
     mfxBitstream bs = { 0 };
 
     if (avpkt->size) {
         bs.Data       = avpkt->data;
         bs.DataLength = avpkt->size;
         bs.MaxLength  = bs.DataLength;
-        bs.TimeStamp  = avpkt->pts;
+        bs.TimeStamp  = PTS_TO_MFX_PTS(avpkt->pts, avctx->pkt_timebase);
         if (avctx->field_order == AV_FIELD_PROGRESSIVE)
             bs.DataFlag   |= MFX_BITSTREAM_COMPLETE_FRAME;
     } else
@@ -326,6 +380,12 @@ static int qsv_decode_header(AVCodecContext *avctx, QSVContext *q,
         return ret;
 
     param->mfx.CodecId = ret;
+    video_signal_info.Header.BufferId = MFX_EXTBUFF_VIDEO_SIGNAL_INFO;
+    video_signal_info.Header.BufferSz = sizeof(video_signal_info);
+    // The SDK doesn't support other ext buffers when calling MFXVideoDECODE_DecodeHeader,
+    // so do not append this buffer to the existent buffer array
+    param->ExtParam    = header_ext_params;
+    param->NumExtParam = 1;
     ret = MFXVideoDECODE_DecodeHeader(q->session, &bs, param);
     if (MFX_ERR_MORE_DATA == ret) {
        return AVERROR(EAGAIN);
@@ -333,6 +393,22 @@ static int qsv_decode_header(AVCodecContext *avctx, QSVContext *q,
     if (ret < 0)
         return ff_qsv_print_error(avctx, ret,
                 "Error decoding stream header");
+
+    avctx->color_range = video_signal_info.VideoFullRange ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
+
+    if (video_signal_info.ColourDescriptionPresent) {
+        avctx->color_primaries = video_signal_info.ColourPrimaries;
+        avctx->color_trc = video_signal_info.TransferCharacteristics;
+        avctx->colorspace = video_signal_info.MatrixCoefficients;
+    }
+
+    param->ExtParam    = q->ext_buffers;
+    param->NumExtParam = q->nb_ext_buffers;
+
+#if QSV_VERSION_ATLEAST(1, 34)
+    if (QSV_RUNTIME_VERSION_ATLEAST(q->ver, 1, 34) && avctx->codec_id == AV_CODEC_ID_AV1)
+        param->mfx.FilmGrain = (avctx->export_side_data & AV_CODEC_EXPORT_DATA_FILM_GRAIN) ? 0 : param->mfx.FilmGrain;
+#endif
 
     return 0;
 }
@@ -366,11 +442,21 @@ static int alloc_frame(AVCodecContext *avctx, QSVContext *q, QSVFrame *frame)
 
         frame->surface.Data.MemId = &q->frames_ctx.mids[ret];
     }
-    frame->surface.Data.ExtParam    = &frame->ext_param;
-    frame->surface.Data.NumExtParam = 1;
-    frame->ext_param                = (mfxExtBuffer*)&frame->dec_info;
+
+    frame->surface.Data.ExtParam    = frame->ext_param;
+    frame->surface.Data.NumExtParam = 0;
+    frame->num_ext_params           = 0;
     frame->dec_info.Header.BufferId = MFX_EXTBUFF_DECODED_FRAME_INFO;
     frame->dec_info.Header.BufferSz = sizeof(frame->dec_info);
+    ff_qsv_frame_add_ext_param(avctx, frame, (mfxExtBuffer *)&frame->dec_info);
+#if QSV_VERSION_ATLEAST(1, 34)
+    if (QSV_RUNTIME_VERSION_ATLEAST(q->ver, 1, 34) && avctx->codec_id == AV_CODEC_ID_AV1) {
+        frame->av1_film_grain_param.Header.BufferId = MFX_EXTBUFF_AV1_FILM_GRAIN_PARAM;
+        frame->av1_film_grain_param.Header.BufferSz = sizeof(frame->av1_film_grain_param);
+        frame->av1_film_grain_param.FilmGrainFlags = 0;
+        ff_qsv_frame_add_ext_param(avctx, frame, (mfxExtBuffer *)&frame->av1_film_grain_param);
+    }
+#endif
 
     frame->used = 1;
 
@@ -441,6 +527,73 @@ static QSVFrame *find_frame(QSVContext *q, mfxFrameSurface1 *surf)
     return NULL;
 }
 
+#if QSV_VERSION_ATLEAST(1, 34)
+static int qsv_export_film_grain(AVCodecContext *avctx, mfxExtAV1FilmGrainParam *ext_param, AVFrame *frame)
+{
+    AVFilmGrainParams *fgp;
+    AVFilmGrainAOMParams *aom;
+    int i;
+
+    if (!(ext_param->FilmGrainFlags & MFX_FILM_GRAIN_APPLY))
+        return 0;
+
+    fgp = av_film_grain_params_create_side_data(frame);
+
+    if (!fgp)
+        return AVERROR(ENOMEM);
+
+    fgp->type = AV_FILM_GRAIN_PARAMS_AV1;
+    fgp->seed = ext_param->GrainSeed;
+    aom = &fgp->codec.aom;
+
+    aom->chroma_scaling_from_luma = !!(ext_param->FilmGrainFlags & MFX_FILM_GRAIN_CHROMA_SCALING_FROM_LUMA);
+    aom->scaling_shift = ext_param->GrainScalingMinus8 + 8;
+    aom->ar_coeff_lag = ext_param->ArCoeffLag;
+    aom->ar_coeff_shift = ext_param->ArCoeffShiftMinus6 + 6;
+    aom->grain_scale_shift = ext_param->GrainScaleShift;
+    aom->overlap_flag = !!(ext_param->FilmGrainFlags & MFX_FILM_GRAIN_OVERLAP);
+    aom->limit_output_range = !!(ext_param->FilmGrainFlags & MFX_FILM_GRAIN_CLIP_TO_RESTRICTED_RANGE);
+
+    aom->num_y_points = ext_param->NumYPoints;
+
+    for (i = 0; i < aom->num_y_points; i++) {
+        aom->y_points[i][0] = ext_param->PointY[i].Value;
+        aom->y_points[i][1] = ext_param->PointY[i].Scaling;
+    }
+
+    aom->num_uv_points[0] = ext_param->NumCbPoints;
+
+    for (i = 0; i < aom->num_uv_points[0]; i++) {
+        aom->uv_points[0][i][0] = ext_param->PointCb[i].Value;
+        aom->uv_points[0][i][1] = ext_param->PointCb[i].Scaling;
+    }
+
+    aom->num_uv_points[1] = ext_param->NumCrPoints;
+
+    for (i = 0; i < aom->num_uv_points[1]; i++) {
+        aom->uv_points[1][i][0] = ext_param->PointCr[i].Value;
+        aom->uv_points[1][i][1] = ext_param->PointCr[i].Scaling;
+    }
+
+    for (i = 0; i < 24; i++)
+        aom->ar_coeffs_y[i] = ext_param->ArCoeffsYPlus128[i] - 128;
+
+    for (i = 0; i < 25; i++) {
+        aom->ar_coeffs_uv[0][i] = ext_param->ArCoeffsCbPlus128[i] - 128;
+        aom->ar_coeffs_uv[1][i] = ext_param->ArCoeffsCrPlus128[i] - 128;
+    }
+
+    aom->uv_mult[0] = ext_param->CbMult;
+    aom->uv_mult[1] = ext_param->CrMult;
+    aom->uv_mult_luma[0] = ext_param->CbLumaMult;
+    aom->uv_mult_luma[1] = ext_param->CrLumaMult;
+    aom->uv_offset[0] = ext_param->CbOffset;
+    aom->uv_offset[1] = ext_param->CrOffset;
+
+    return 0;
+}
+#endif
+
 static int qsv_decode(AVCodecContext *avctx, QSVContext *q,
                       AVFrame *frame, int *got_frame,
                       const AVPacket *avpkt)
@@ -456,7 +609,7 @@ static int qsv_decode(AVCodecContext *avctx, QSVContext *q,
         bs.Data       = avpkt->data;
         bs.DataLength = avpkt->size;
         bs.MaxLength  = bs.DataLength;
-        bs.TimeStamp  = avpkt->pts;
+        bs.TimeStamp  = PTS_TO_MFX_PTS(avpkt->pts, avctx->pkt_timebase);
         if (avctx->field_order == AV_FIELD_PROGRESSIVE)
             bs.DataFlag   |= MFX_BITSTREAM_COMPLETE_FRAME;
     }
@@ -513,7 +666,7 @@ static int qsv_decode(AVCodecContext *avctx, QSVContext *q,
             return AVERROR_BUG;
         }
 
-        out_frame->queued = 1;
+        out_frame->queued += 1;
         av_fifo_generic_write(q->async_fifo, &out_frame, sizeof(out_frame), NULL);
         av_fifo_generic_write(q->async_fifo, &sync,      sizeof(sync),      NULL);
     } else {
@@ -526,7 +679,7 @@ static int qsv_decode(AVCodecContext *avctx, QSVContext *q,
 
         av_fifo_generic_read(q->async_fifo, &out_frame, sizeof(out_frame), NULL);
         av_fifo_generic_read(q->async_fifo, &sync,      sizeof(sync),      NULL);
-        out_frame->queued = 0;
+        out_frame->queued -= 1;
 
         if (avctx->pix_fmt != AV_PIX_FMT_QSV) {
             do {
@@ -544,12 +697,17 @@ static int qsv_decode(AVCodecContext *avctx, QSVContext *q,
 
         outsurf = &out_frame->surface;
 
-#if FF_API_PKT_PTS
-FF_DISABLE_DEPRECATION_WARNINGS
-        frame->pkt_pts = outsurf->Data.TimeStamp;
-FF_ENABLE_DEPRECATION_WARNINGS
+        frame->pts = MFX_PTS_TO_PTS(outsurf->Data.TimeStamp, avctx->pkt_timebase);
+#if QSV_VERSION_ATLEAST(1, 34)
+        if ((avctx->export_side_data & AV_CODEC_EXPORT_DATA_FILM_GRAIN) &&
+            QSV_RUNTIME_VERSION_ATLEAST(q->ver, 1, 34) &&
+            avctx->codec_id == AV_CODEC_ID_AV1) {
+            ret = qsv_export_film_grain(avctx, &out_frame->av1_film_grain_param, frame);
+
+            if (ret < 0)
+                return ret;
+        }
 #endif
-        frame->pts = outsurf->Data.TimeStamp;
 
         frame->repeat_pict =
             outsurf->Info.PicStruct & MFX_PICSTRUCT_FRAME_TRIPLING ? 4 :
@@ -702,8 +860,6 @@ static av_cold int qsv_decode_close(AVCodecContext *avctx)
 {
     QSVDecContext *s = avctx->priv_data;
 
-    av_freep(&s->qsv.load_plugins);
-
     qsv_decode_close_qsvcontext(&s->qsv);
 
     qsv_clear_buffers(s);
@@ -752,6 +908,9 @@ static av_cold int qsv_decode_init(AVCodecContext *avctx)
         ret = AVERROR(ENOMEM);
         goto fail;
     }
+
+    if (!avctx->pkt_timebase.num)
+        av_log(avctx, AV_LOG_WARNING, "Invalid pkt_timebase, passing timestamps as-is.\n");
 
     return 0;
 fail:
@@ -834,7 +993,7 @@ static const AVClass x##_qsv_class = { \
     .option     = opt, \
     .version    = LIBAVUTIL_VERSION_INT, \
 }; \
-AVCodec ff_##x##_qsv_decoder = { \
+const AVCodec ff_##x##_qsv_decoder = { \
     .name           = #x "_qsv", \
     .long_name      = NULL_IF_CONFIG_SMALL(#X " video (Intel Quick Sync Video acceleration)"), \
     .priv_data_size = sizeof(QSVDecContext), \

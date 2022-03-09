@@ -34,6 +34,7 @@
 #include "error_resilience.h"
 #include "h263.h"
 #include "h263data.h"
+#include "h263dec.h"
 #include "internal.h"
 #include "mpeg_er.h"
 #include "mpegutils.h"
@@ -149,12 +150,11 @@ static int rv10_decode_picture_header(MpegEncContext *s)
     }
     skip_bits(&s->gb, 3);   /* ignored */
     s->f_code          = 1;
-    s->unrestricted_mv = 1;
 
     return mb_count;
 }
 
-static int rv20_decode_picture_header(RVDecContext *rv)
+static int rv20_decode_picture_header(RVDecContext *rv, int whole_size)
 {
     MpegEncContext *s = &rv->m;
     int seq, mb_pos, i, ret;
@@ -226,12 +226,16 @@ static int rv20_decode_picture_header(RVDecContext *rv)
             new_w = rv->orig_width;
             new_h = rv->orig_height;
         }
-        if (new_w != s->width || new_h != s->height) {
+        if (new_w != s->width || new_h != s->height || !s->context_initialized) {
             AVRational old_aspect = s->avctx->sample_aspect_ratio;
             av_log(s->avctx, AV_LOG_DEBUG,
                    "attempting to change resolution to %dx%d\n", new_w, new_h);
             if (av_image_check_size(new_w, new_h, 0, s->avctx) < 0)
                 return AVERROR_INVALIDDATA;
+
+            if (whole_size < (new_w + 15)/16 * ((new_h + 15)/16) / 8)
+                return AVERROR_INVALIDDATA;
+
             ff_mpv_common_end(s);
 
             // attempt to keep aspect during typical resolution switches
@@ -294,7 +298,6 @@ static int rv20_decode_picture_header(RVDecContext *rv)
         skip_bits(&s->gb, 5);
 
     s->f_code          = 1;
-    s->unrestricted_mv = 1;
     s->h263_aic        = s->pict_type == AV_PICTURE_TYPE_I;
     s->modified_quant  = 1;
     if (!s->avctx->lowres)
@@ -447,7 +450,7 @@ static int rv10_decode_packet(AVCodecContext *avctx, const uint8_t *buf,
     if (s->codec_id == AV_CODEC_ID_RV10)
         mb_count = rv10_decode_picture_header(s);
     else
-        mb_count = rv20_decode_picture_header(rv);
+        mb_count = rv20_decode_picture_header(rv, whole_size);
     if (mb_count < 0) {
         if (mb_count != ERROR_SKIP_FRAME)
             av_log(s->avctx, AV_LOG_ERROR, "HEADER ERROR\n");
@@ -677,7 +680,7 @@ static int rv10_decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
     return avpkt->size;
 }
 
-AVCodec ff_rv10_decoder = {
+const AVCodec ff_rv10_decoder = {
     .name           = "rv10",
     .long_name      = NULL_IF_CONFIG_SMALL("RealVideo 1.0"),
     .type           = AVMEDIA_TYPE_VIDEO,
@@ -687,7 +690,6 @@ AVCodec ff_rv10_decoder = {
     .close          = rv10_decode_end,
     .decode         = rv10_decode_frame,
     .capabilities   = AV_CODEC_CAP_DR1,
-    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
     .max_lowres     = 3,
     .pix_fmts       = (const enum AVPixelFormat[]) {
         AV_PIX_FMT_YUV420P,
@@ -695,7 +697,7 @@ AVCodec ff_rv10_decoder = {
     },
 };
 
-AVCodec ff_rv20_decoder = {
+const AVCodec ff_rv20_decoder = {
     .name           = "rv20",
     .long_name      = NULL_IF_CONFIG_SMALL("RealVideo 2.0"),
     .type           = AVMEDIA_TYPE_VIDEO,
@@ -705,7 +707,6 @@ AVCodec ff_rv20_decoder = {
     .close          = rv10_decode_end,
     .decode         = rv10_decode_frame,
     .capabilities   = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_DELAY,
-    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
     .flush          = ff_mpeg_flush,
     .max_lowres     = 3,
     .pix_fmts       = (const enum AVPixelFormat[]) {

@@ -37,6 +37,7 @@
 #include "idctdsp.h"
 #include "internal.h"
 #include "mpeg12.h"
+#include "mpeg12data.h"
 
 typedef struct TqiContext {
     AVCodecContext *avctx;
@@ -181,7 +182,7 @@ static av_cold int tqi_decode_end(AVCodecContext *avctx)
     return 0;
 }
 
-AVCodec ff_eatqi_decoder = {
+const AVCodec ff_eatqi_decoder = {
     .name           = "eatqi",
     .long_name      = NULL_IF_CONFIG_SMALL("Electronic Arts TQI Video"),
     .type           = AVMEDIA_TYPE_VIDEO,
