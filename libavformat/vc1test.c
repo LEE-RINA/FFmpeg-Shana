@@ -28,6 +28,7 @@
 
 #include "libavutil/intreadwrite.h"
 #include "avformat.h"
+#include "demux.h"
 #include "internal.h"
 
 #define VC1_EXTRADATA_SIZE 4
@@ -100,7 +101,7 @@ static int vc1t_read_packet(AVFormatContext *s,
     uint32_t pts;
 
     if(avio_feof(pb))
-        return AVERROR(EIO);
+        return AVERROR_EOF;
 
     frame_size = avio_rl24(pb);
     if(avio_r8(pb) & 0x80)

@@ -22,13 +22,13 @@
 #include <float.h>
 
 #include "libavutil/common.h"
+#include "libavutil/file_open.h"
 #include "libavutil/float_dsp.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/mem_internal.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
-#include "formats.h"
 #include "internal.h"
 #include "video.h"
 
@@ -166,13 +166,15 @@ AVFILTER_DEFINE_CLASS(nnedi);
 static int config_output(AVFilterLink *outlink)
 {
     AVFilterContext *ctx = outlink->src;
+    const NNEDIContext *const s = ctx->priv;
 
     outlink->time_base     = av_mul_q(ctx->inputs[0]->time_base, (AVRational){1, 2});
     outlink->w             = ctx->inputs[0]->w;
     outlink->h             = ctx->inputs[0]->h;
 
-    outlink->frame_rate = av_mul_q(ctx->inputs[0]->frame_rate,
-                                   (AVRational){2, 1});
+    if (s->field == -2 || s->field > 1)
+        outlink->frame_rate = av_mul_q(ctx->inputs[0]->frame_rate,
+                                       (AVRational){2, 1});
 
     return 0;
 }
@@ -538,8 +540,8 @@ static int filter_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
     const float in_scale = s->in_scale;
     const float out_scale = s->out_scale;
     const int depth = s->depth;
-    const int interlaced = in->interlaced_frame;
-    const int tff = s->field_n == (s->field < 0 ? interlaced ? in->top_field_first : 1 :
+    const int interlaced = !!(in->flags & AV_FRAME_FLAG_INTERLACED);
+    const int tff = s->field_n == (s->field < 0 ? interlaced ? (in->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST) : 1 :
                                   (s->field & 1) ^ 1);
 
 
@@ -663,7 +665,12 @@ static int get_frame(AVFilterContext *ctx, int is_second)
     if (!dst)
         return AVERROR(ENOMEM);
     av_frame_copy_props(dst, s->prev);
+#if FF_API_INTERLACED_FRAME
+FF_DISABLE_DEPRECATION_WARNINGS
     dst->interlaced_frame = 0;
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
+    dst->flags &= ~AV_FRAME_FLAG_INTERLACED;
     dst->pts = s->pts;
 
     ff_filter_execute(ctx, filter_slice, dst, NULL,
@@ -686,7 +693,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
         return 0;
     }
 
-    if ((s->deint && !s->prev->interlaced_frame) || ctx->is_disabled) {
+    if ((s->deint && !(s->prev->flags & AV_FRAME_FLAG_INTERLACED)) || ctx->is_disabled) {
         s->prev->pts *= 2;
         ret = ff_filter_frame(ctx->outputs[0], s->prev);
         s->prev = in;
@@ -955,7 +962,7 @@ static av_cold int init(AVFilterContext *ctx)
     size_t bytes_read;
     int ret = 0;
 
-    weights_file = av_fopen_utf8(s->weights_file, "rb");
+    weights_file = avpriv_fopen_utf8(s->weights_file, "rb");
     if (!weights_file) {
         av_log(ctx, AV_LOG_ERROR, "No weights file provided, aborting!\n");
         return AVERROR(EINVAL);

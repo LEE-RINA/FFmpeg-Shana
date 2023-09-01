@@ -20,13 +20,12 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "avcodec.h"
 #include "bytestream.h"
-#include "internal.h"
+#include "codec_internal.h"
+#include "decode.h"
 #include "scpr.h"
 #include "scpr3.h"
 
@@ -459,6 +458,9 @@ static int decompress_p(AVCodecContext *avctx,
                 int run, bx = x * 16 + sx1, by = y * 16 + sy1;
                 uint32_t r, g, b, clr, ptype = 0;
 
+                if (bx >= avctx->width)
+                    return AVERROR_INVALIDDATA;
+
                 for (; by < y * 16 + sy2 && by < avctx->height;) {
                     ret = decode_value(s, s->op_model[ptype], 6, 1000, &ptype);
                     if (ret < 0)
@@ -491,12 +493,11 @@ static int decompress_p(AVCodecContext *avctx,
     return 0;
 }
 
-static int decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
-                        AVPacket *avpkt)
+static int decode_frame(AVCodecContext *avctx, AVFrame *frame,
+                        int *got_frame, AVPacket *avpkt)
 {
     SCPRContext *s = avctx->priv_data;
     GetByteContext *gb = &s->gb;
-    AVFrame *frame = data;
     int ret, type;
 
     if (avctx->bits_per_coded_sample == 16) {
@@ -515,18 +516,18 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
         s->version = 1;
         s->get_freq = get_freq0;
         s->decode = decode0;
-        frame->key_frame = 1;
+        frame->flags |= AV_FRAME_FLAG_KEY;
         ret = decompress_i(avctx, (uint32_t *)s->current_frame->data[0],
                            s->current_frame->linesize[0] / 4);
     } else if (type == 18) {
         s->version = 2;
         s->get_freq = get_freq;
         s->decode = decode;
-        frame->key_frame = 1;
+        frame->flags |= AV_FRAME_FLAG_KEY;
         ret = decompress_i(avctx, (uint32_t *)s->current_frame->data[0],
                            s->current_frame->linesize[0] / 4);
     } else if (type == 34) {
-        frame->key_frame = 1;
+        frame->flags |= AV_FRAME_FLAG_KEY;
         s->version = 3;
         ret = decompress_i3(avctx, (uint32_t *)s->current_frame->data[0],
                             s->current_frame->linesize[0] / 4);
@@ -537,7 +538,7 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
         if (bytestream2_get_bytes_left(gb) < 3)
             return AVERROR_INVALIDDATA;
 
-        frame->key_frame = 1;
+        frame->flags |= AV_FRAME_FLAG_KEY;
         bytestream2_skip(gb, 1);
         if (avctx->bits_per_coded_sample == 16) {
             uint16_t value = bytestream2_get_le16(gb);
@@ -556,7 +557,7 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
             dst += s->current_frame->linesize[0] / 4;
         }
     } else if (type == 0 || type == 1) {
-        frame->key_frame = 0;
+        frame->flags &= ~AV_FRAME_FLAG_KEY;
 
         if (s->version == 1 || s->version == 2)
             ret = decompress_p(avctx, (uint32_t *)s->current_frame->data[0],
@@ -581,7 +582,7 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
         return AVERROR_INVALIDDATA;
 
     if (avctx->bits_per_coded_sample != 16) {
-        ret = av_frame_ref(data, s->current_frame);
+        ret = av_frame_ref(frame, s->current_frame);
         if (ret < 0)
             return ret;
     } else {
@@ -611,7 +612,7 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
         }
     }
 
-    frame->pict_type = frame->key_frame ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_P;
+    frame->pict_type = (frame->flags & AV_FRAME_FLAG_KEY) ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_P;
 
     FFSWAP(AVFrame *, s->current_frame, s->last_frame);
 
@@ -667,16 +668,15 @@ static av_cold int decode_close(AVCodecContext *avctx)
     return 0;
 }
 
-const AVCodec ff_scpr_decoder = {
-    .name             = "scpr",
-    .long_name        = NULL_IF_CONFIG_SMALL("ScreenPressor"),
-    .type             = AVMEDIA_TYPE_VIDEO,
-    .id               = AV_CODEC_ID_SCPR,
+const FFCodec ff_scpr_decoder = {
+    .p.name           = "scpr",
+    CODEC_LONG_NAME("ScreenPressor"),
+    .p.type           = AVMEDIA_TYPE_VIDEO,
+    .p.id             = AV_CODEC_ID_SCPR,
     .priv_data_size   = sizeof(SCPRContext),
     .init             = decode_init,
     .close            = decode_close,
-    .decode           = decode_frame,
-    .capabilities     = AV_CODEC_CAP_DR1,
-    .caps_internal    = FF_CODEC_CAP_INIT_THREADSAFE |
-                        FF_CODEC_CAP_INIT_CLEANUP,
+    FF_CODEC_DECODE_CB(decode_frame),
+    .p.capabilities   = AV_CODEC_CAP_DR1,
+    .caps_internal    = FF_CODEC_CAP_INIT_CLEANUP,
 };

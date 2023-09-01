@@ -25,10 +25,8 @@
 #include <string.h>
 
 #include "libavutil/avassert.h"
-#include "libavutil/internal.h"
 #include "libavutil/mem.h"
 
-#include "internal.h"
 #include "parser.h"
 
 AVCodecParserContext *av_parser_init(int codec_id)
@@ -168,6 +166,10 @@ int av_parser_parse2(AVCodecParserContext *s, AVCodecContext *avctx,
 #define FILL(name) if(s->name > 0 && avctx->name <= 0) avctx->name = s->name
     if (avctx->codec_type == AVMEDIA_TYPE_VIDEO) {
         FILL(field_order);
+        FILL(coded_width);
+        FILL(coded_height);
+        FILL(width);
+        FILL(height);
     }
 
     /* update the file pointer */

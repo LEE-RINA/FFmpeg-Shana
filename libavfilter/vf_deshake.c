@@ -50,10 +50,10 @@
  */
 
 #include "avfilter.h"
-#include "formats.h"
 #include "internal.h"
 #include "video.h"
 #include "libavutil/common.h"
+#include "libavutil/file_open.h"
 #include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
@@ -353,7 +353,7 @@ static av_cold int init(AVFilterContext *ctx)
     }
 
     if (deshake->filename)
-        deshake->fp = fopen(deshake->filename, "w");
+        deshake->fp = avpriv_fopen_utf8(deshake->filename, "w");
     if (deshake->fp)
         fwrite("Ori x, Avg x, Fin x, Ori y, Avg y, Fin y, Ori angle, Avg angle, Fin angle, Ori zoom, Avg zoom, Fin zoom\n", 1, 104, deshake->fp);
 
@@ -535,13 +535,6 @@ static const AVFilterPad deshake_inputs[] = {
     },
 };
 
-static const AVFilterPad deshake_outputs[] = {
-    {
-        .name = "default",
-        .type = AVMEDIA_TYPE_VIDEO,
-    },
-};
-
 const AVFilter ff_vf_deshake = {
     .name          = "deshake",
     .description   = NULL_IF_CONFIG_SMALL("Stabilize shaky video."),
@@ -549,7 +542,7 @@ const AVFilter ff_vf_deshake = {
     .init          = init,
     .uninit        = uninit,
     FILTER_INPUTS(deshake_inputs),
-    FILTER_OUTPUTS(deshake_outputs),
+    FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
     .priv_class    = &deshake_class,
 };

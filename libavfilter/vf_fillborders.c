@@ -25,7 +25,6 @@
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
 #include "drawutils.h"
-#include "formats.h"
 #include "internal.h"
 #include "video.h"
 
@@ -707,20 +706,13 @@ static const AVFilterPad fillborders_inputs[] = {
     },
 };
 
-static const AVFilterPad fillborders_outputs[] = {
-    {
-        .name = "default",
-        .type = AVMEDIA_TYPE_VIDEO,
-    },
-};
-
 const AVFilter ff_vf_fillborders = {
     .name          = "fillborders",
     .description   = NULL_IF_CONFIG_SMALL("Fill borders of the input video."),
     .priv_size     = sizeof(FillBordersContext),
     .priv_class    = &fillborders_class,
     FILTER_INPUTS(fillborders_inputs),
-    FILTER_OUTPUTS(fillborders_outputs),
+    FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
     .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
     .process_command = process_command,

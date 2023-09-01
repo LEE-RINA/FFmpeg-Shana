@@ -21,6 +21,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "config_components.h"
+
 #include "libavutil/avstring.h"
 #include "libavutil/bprint.h"
 #include "libavutil/mem.h"
@@ -294,6 +296,8 @@ static av_cold int concatf_open(URLContext *h, const char *uri, int flags)
     av_bprint_finalize(&bp, NULL);
     data->length = i;
 
+    if (!data->length)
+        err = AVERROR_INVALIDDATA;
     if (err < 0)
         concat_close(h);
 

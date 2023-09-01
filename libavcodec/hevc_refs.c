@@ -22,12 +22,12 @@
  */
 
 #include "libavutil/avassert.h"
-#include "libavutil/pixdesc.h"
 
-#include "internal.h"
+#include "decode.h"
 #include "thread.h"
 #include "hevc.h"
 #include "hevcdec.h"
+#include "threadframe.h"
 
 void ff_hevc_unref_frame(HEVCContext *s, HEVCFrame *frame, int flags)
 {
@@ -37,8 +37,8 @@ void ff_hevc_unref_frame(HEVCContext *s, HEVCFrame *frame, int flags)
 
     frame->flags &= ~flags;
     if (!frame->flags) {
-        ff_thread_release_buffer(s->avctx, &frame->tf);
-        ff_thread_release_buffer(s->avctx, &frame->tf_grain);
+        ff_thread_release_ext_buffer(s->avctx, &frame->tf);
+        ff_thread_release_buffer(s->avctx, frame->frame_grain);
         frame->needs_fg = 0;
 
         av_buffer_unref(&frame->tab_mvf_buf);
@@ -56,13 +56,14 @@ void ff_hevc_unref_frame(HEVCContext *s, HEVCFrame *frame, int flags)
     }
 }
 
-RefPicList *ff_hevc_get_ref_list(HEVCContext *s, HEVCFrame *ref, int x0, int y0)
+const RefPicList *ff_hevc_get_ref_list(const HEVCContext *s,
+                                       const HEVCFrame *ref, int x0, int y0)
 {
     int x_cb         = x0 >> s->ps.sps->log2_ctb_size;
     int y_cb         = y0 >> s->ps.sps->log2_ctb_size;
     int pic_width_cb = s->ps.sps->ctb_width;
     int ctb_addr_ts  = s->ps.pps->ctb_addr_rs_to_ts[y_cb * pic_width_cb + x_cb];
-    return (RefPicList *)ref->rpl_tab[ctb_addr_ts];
+    return &ref->rpl_tab[ctb_addr_ts]->refPicList[0];
 }
 
 void ff_hevc_clear_refs(HEVCContext *s)
@@ -89,8 +90,8 @@ static HEVCFrame *alloc_frame(HEVCContext *s)
         if (frame->frame->buf[0])
             continue;
 
-        ret = ff_thread_get_buffer(s->avctx, &frame->tf,
-                                   AV_GET_BUFFER_FLAG_REF);
+        ret = ff_thread_get_ext_buffer(s->avctx, &frame->tf,
+                                       AV_GET_BUFFER_FLAG_REF);
         if (ret < 0)
             return NULL;
 
@@ -111,19 +112,16 @@ static HEVCFrame *alloc_frame(HEVCContext *s)
         for (j = 0; j < frame->ctb_count; j++)
             frame->rpl_tab[j] = (RefPicListTab *)frame->rpl_buf->data;
 
-        frame->frame->top_field_first  = s->sei.picture_timing.picture_struct == AV_PICTURE_STRUCTURE_TOP_FIELD;
-        frame->frame->interlaced_frame = (s->sei.picture_timing.picture_struct == AV_PICTURE_STRUCTURE_TOP_FIELD) || (s->sei.picture_timing.picture_struct == AV_PICTURE_STRUCTURE_BOTTOM_FIELD);
+        if (s->sei.picture_timing.picture_struct == AV_PICTURE_STRUCTURE_TOP_FIELD)
+            frame->frame->flags |= AV_FRAME_FLAG_TOP_FIELD_FIRST;
+        if ((s->sei.picture_timing.picture_struct == AV_PICTURE_STRUCTURE_TOP_FIELD) ||
+            (s->sei.picture_timing.picture_struct == AV_PICTURE_STRUCTURE_BOTTOM_FIELD))
+            frame->frame->flags |= AV_FRAME_FLAG_INTERLACED;
 
-        if (s->avctx->hwaccel) {
-            const AVHWAccel *hwaccel = s->avctx->hwaccel;
-            av_assert0(!frame->hwaccel_picture_private);
-            if (hwaccel->frame_priv_data_size) {
-                frame->hwaccel_priv_buf = av_buffer_allocz(hwaccel->frame_priv_data_size);
-                if (!frame->hwaccel_priv_buf)
-                    goto fail;
-                frame->hwaccel_picture_private = frame->hwaccel_priv_buf->data;
-            }
-        }
+        ret = ff_hwaccel_frame_priv_alloc(s->avctx, &frame->hwaccel_picture_private,
+                                          &frame->hwaccel_priv_buf);
+        if (ret < 0)
+            goto fail;
 
         return frame;
 fail:
@@ -173,22 +171,35 @@ int ff_hevc_set_new_ref(HEVCContext *s, AVFrame **frame, int poc)
     return 0;
 }
 
+static void unref_missing_refs(HEVCContext *s)
+{
+    for (int i = 0; i < FF_ARRAY_ELEMS(s->DPB); i++) {
+         HEVCFrame *frame = &s->DPB[i];
+         if (frame->sequence == HEVC_SEQUENCE_COUNTER_INVALID) {
+             ff_hevc_unref_frame(s, frame, ~0);
+         }
+    }
+}
+
 int ff_hevc_output_frame(HEVCContext *s, AVFrame *out, int flush)
 {
+    if (IS_IRAP(s) && s->no_rasl_output_flag == 1) {
+        const static int mask = HEVC_FRAME_FLAG_BUMPING | HEVC_FRAME_FLAG_OUTPUT;
+        for (int i = 0; i < FF_ARRAY_ELEMS(s->DPB); i++) {
+            HEVCFrame *frame = &s->DPB[i];
+            if ((frame->flags & mask) == HEVC_FRAME_FLAG_OUTPUT &&
+                frame->sequence != s->seq_decode) {
+                if (s->sh.no_output_of_prior_pics_flag == 1)
+                    ff_hevc_unref_frame(s, frame, HEVC_FRAME_FLAG_OUTPUT);
+                else
+                    frame->flags |= HEVC_FRAME_FLAG_BUMPING;
+            }
+        }
+    }
     do {
         int nb_output = 0;
         int min_poc   = INT_MAX;
         int i, min_idx, ret;
-
-        if (s->sh.no_output_of_prior_pics_flag == 1 && s->no_rasl_output_flag == 1) {
-            for (i = 0; i < FF_ARRAY_ELEMS(s->DPB); i++) {
-                HEVCFrame *frame = &s->DPB[i];
-                if (!(frame->flags & HEVC_FRAME_FLAG_BUMPING) && frame->poc != s->poc &&
-                        frame->sequence == s->seq_output) {
-                    ff_hevc_unref_frame(s, frame, HEVC_FRAME_FLAG_OUTPUT);
-                }
-            }
-        }
 
         for (i = 0; i < FF_ARRAY_ELEMS(s->DPB); i++) {
             HEVCFrame *frame = &s->DPB[i];
@@ -230,7 +241,7 @@ int ff_hevc_output_frame(HEVCContext *s, AVFrame *out, int flush)
         }
 
         if (s->seq_output != s->seq_decode)
-            s->seq_output = (s->seq_output + 1) & 0xff;
+            s->seq_output = (s->seq_output + 1) & HEVC_SEQUENCE_COUNTER_MASK;
         else
             break;
     } while (1);
@@ -309,7 +320,7 @@ int ff_hevc_slice_rpl(HEVCContext *s)
         return ret;
 
     if (!(s->rps[ST_CURR_BEF].nb_refs + s->rps[ST_CURR_AFT].nb_refs +
-          s->rps[LT_CURR].nb_refs)) {
+          s->rps[LT_CURR].nb_refs) && !s->ps.pps->pps_curr_pic_ref_enabled_flag) {
         av_log(s->avctx, AV_LOG_ERROR, "Zero refs in the frame RPS.\n");
         return AVERROR_INVALIDDATA;
     }
@@ -336,6 +347,13 @@ int ff_hevc_slice_rpl(HEVCContext *s)
                     rpl_tmp.nb_refs++;
                 }
             }
+            // Construct RefPicList0, RefPicList1 (8-8, 8-10)
+            if (s->ps.pps->pps_curr_pic_ref_enabled_flag && rpl_tmp.nb_refs < HEVC_MAX_REFS) {
+                rpl_tmp.list[rpl_tmp.nb_refs]           = s->ref->poc;
+                rpl_tmp.ref[rpl_tmp.nb_refs]            = s->ref;
+                rpl_tmp.isLongTerm[rpl_tmp.nb_refs]     = 1;
+                rpl_tmp.nb_refs++;
+            }
         }
 
         /* reorder the references if necessary */
@@ -358,6 +376,14 @@ int ff_hevc_slice_rpl(HEVCContext *s)
             rpl->nb_refs = FFMIN(rpl->nb_refs, sh->nb_refs[list_idx]);
         }
 
+        // 8-9
+        if (s->ps.pps->pps_curr_pic_ref_enabled_flag &&
+            !sh->rpl_modification_flag[list_idx] &&
+            rpl_tmp.nb_refs > sh->nb_refs[L0]) {
+            rpl->list[sh->nb_refs[L0] - 1] = s->ref->poc;
+            rpl->ref[sh->nb_refs[L0] - 1]  = s->ref;
+        }
+
         if (sh->collocated_list == list_idx &&
             sh->collocated_ref_idx < rpl->nb_refs)
             s->ref->collocated_ref = rpl->ref[sh->collocated_ref_idx];
@@ -374,7 +400,7 @@ static HEVCFrame *find_ref_idx(HEVCContext *s, int poc, uint8_t use_msb)
     for (i = 0; i < FF_ARRAY_ELEMS(s->DPB); i++) {
         HEVCFrame *ref = &s->DPB[i];
         if (ref->frame->buf[0] && ref->sequence == s->seq_decode) {
-            if ((ref->poc & mask) == poc)
+            if ((ref->poc & mask) == poc && (use_msb || ref->poc != s->poc))
                 return ref;
         }
     }
@@ -402,9 +428,9 @@ static HEVCFrame *generate_missing_ref(HEVCContext *s, int poc)
 
     if (!s->avctx->hwaccel) {
         if (!s->ps.sps->pixel_shift) {
-            for (i = 0; frame->frame->buf[i]; i++)
-                memset(frame->frame->buf[i]->data, 1 << (s->ps.sps->bit_depth - 1),
-                       frame->frame->buf[i]->size);
+            for (i = 0; frame->frame->data[i]; i++)
+                memset(frame->frame->data[i], 1 << (s->ps.sps->bit_depth - 1),
+                       frame->frame->linesize[i] * AV_CEIL_RSHIFT(s->ps.sps->height, s->ps.sps->vshift[i]));
         } else {
             for (i = 0; frame->frame->data[i]; i++)
                 for (y = 0; y < (s->ps.sps->height >> s->ps.sps->vshift[i]); y++) {
@@ -416,7 +442,7 @@ static HEVCFrame *generate_missing_ref(HEVCContext *s, int poc)
     }
 
     frame->poc      = poc;
-    frame->sequence = s->seq_decode;
+    frame->sequence = HEVC_SEQUENCE_COUNTER_INVALID;
     frame->flags    = 0;
 
     if (s->threads_type == FF_THREAD_FRAME)
@@ -459,6 +485,8 @@ int ff_hevc_frame_rps(HEVCContext *s)
         rps[0].nb_refs = rps[1].nb_refs = 0;
         return 0;
     }
+
+    unref_missing_refs(s);
 
     /* clear the reference flags on all frames except the current one */
     for (i = 0; i < FF_ARRAY_ELEMS(s->DPB); i++) {
@@ -526,5 +554,9 @@ int ff_hevc_frame_nb_refs(const HEVCContext *s)
         for (i = 0; i < long_rps->nb_refs; i++)
             ret += !!long_rps->used[i];
     }
+
+    if (s->ps.pps->pps_curr_pic_ref_enabled_flag)
+        ret++;
+
     return ret;
 }

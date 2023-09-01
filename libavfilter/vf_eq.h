@@ -30,7 +30,9 @@
 
 static const char *const var_names[] = {
     "n",   // frame count
+#if FF_API_FRAME_PKT
     "pos", // frame position
+#endif
     "r",   // frame rate
     "t",   // timestamp expressed in seconds
     NULL
@@ -38,7 +40,9 @@ static const char *const var_names[] = {
 
 enum var_name {
     VAR_N,
+#if FF_API_FRAME_PKT
     VAR_POS,
+#endif
     VAR_R,
     VAR_T,
     VAR_NB
@@ -100,7 +104,32 @@ typedef struct EQContext {
     enum EvalMode { EVAL_MODE_INIT, EVAL_MODE_FRAME, EVAL_MODE_NB } eval_mode;
 } EQContext;
 
-void ff_eq_init(EQContext *eq);
+static void process_c(EQParameters *param, uint8_t *dst, int dst_stride,
+                      const uint8_t *src, int src_stride, int w, int h)
+{
+    int contrast = (int) (param->contrast * 256 * 16);
+    int brightness = ((int) (100.0 * param->brightness + 100.0) * 511) / 200 - 128 - contrast / 32;
+
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            int pel = ((src[y * src_stride + x] * contrast) >> 12) + brightness;
+
+            if (pel & ~255)
+                pel = (-pel) >> 31;
+
+            dst[y * dst_stride + x] = pel;
+        }
+    }
+}
+
 void ff_eq_init_x86(EQContext *eq);
+
+static av_unused void ff_eq_init(EQContext *eq)
+{
+    eq->process = process_c;
+#if ARCH_X86
+    ff_eq_init_x86(eq);
+#endif
+}
 
 #endif /* AVFILTER_EQ_H */

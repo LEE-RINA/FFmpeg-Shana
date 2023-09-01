@@ -24,9 +24,9 @@
 #include "libavutil/intfloat.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/timecode.h"
-#include "bytestream.h"
 #include "avcodec.h"
-#include "internal.h"
+#include "codec_internal.h"
+#include "decode.h"
 
 enum DPX_TRC {
     DPX_TRC_USER_DEFINED       = 0,
@@ -149,14 +149,11 @@ static uint16_t read12in32(const uint8_t **ptr, uint32_t *lbuf,
     }
 }
 
-static int decode_frame(AVCodecContext *avctx,
-                        void *data,
-                        int *got_frame,
-                        AVPacket *avpkt)
+static int decode_frame(AVCodecContext *avctx, AVFrame *p,
+                        int *got_frame, AVPacket *avpkt)
 {
     const uint8_t *buf = avpkt->data;
     int buf_size       = avpkt->size;
-    AVFrame *const p = data;
     uint8_t *ptr[AV_NUM_DATA_POINTERS];
     uint32_t header_version, version = 0;
     char creator[101] = { 0 };
@@ -479,14 +476,31 @@ static int decode_frame(AVCodecContext *avctx,
         avctx->colorspace = AVCOL_SPC_RGB;
     }
 
+    av_strlcpy(creator, avpkt->data + 160, 100);
+    creator[100] = '\0';
+    av_dict_set(&p->metadata, "Creator", creator, 0);
+
+    av_strlcpy(input_device, avpkt->data + 1556, 32);
+    input_device[32] = '\0';
+    av_dict_set(&p->metadata, "Input Device", input_device, 0);
+
+    // Some devices do not pad 10bit samples to whole 32bit words per row
+    if (!memcmp(input_device, "Scanity", 7) ||
+        !memcmp(creator, "Lasergraphics Inc.", 18)) {
+        if (bits_per_color == 10)
+            unpadded_10bit = 1;
+    }
+
     // Table 3c: Runs will always break at scan line boundaries. Packing
     // will always break to the next 32-bit word at scan-line boundaries.
     // Unfortunately, the encoder produced invalid files, so attempt
     // to detect it
+    // Also handle special case with unpadded content
     need_align = FFALIGN(stride, 4);
-    if (need_align*avctx->height + (int64_t)offset > avpkt->size) {
+    if (need_align*avctx->height + (int64_t)offset > avpkt->size &&
+        (!unpadded_10bit || (avctx->width * avctx->height * elements + 2) / 3 * 4 + (int64_t)offset > avpkt->size)) {
         // Alignment seems unappliable, try without
-        if (stride*avctx->height + (int64_t)offset > avpkt->size) {
+        if (stride*avctx->height + (int64_t)offset > avpkt->size || unpadded_10bit) {
             av_log(avctx, AV_LOG_ERROR, "Overread buffer. Invalid header?\n");
             return AVERROR_INVALIDDATA;
         } else {
@@ -611,20 +625,6 @@ static int decode_frame(AVCodecContext *avctx,
 
     if ((ret = ff_get_buffer(avctx, p, 0)) < 0)
         return ret;
-
-    av_strlcpy(creator, avpkt->data + 160, 100);
-    creator[100] = '\0';
-    av_dict_set(&p->metadata, "Creator", creator, 0);
-
-    av_strlcpy(input_device, avpkt->data + 1556, 32);
-    input_device[32] = '\0';
-    av_dict_set(&p->metadata, "Input Device", input_device, 0);
-
-    // Some devices do not pad 10bit samples to whole 32bit words per row
-    if (!memcmp(input_device, "Scanity", 7) ||
-        !memcmp(creator, "Lasergraphics Inc.", 18)) {
-        unpadded_10bit = 1;
-    }
 
     // Move pointer to offset from start of file
     buf =  avpkt->data + offset;
@@ -762,11 +762,11 @@ static int decode_frame(AVCodecContext *avctx,
     return buf_size;
 }
 
-const AVCodec ff_dpx_decoder = {
-    .name           = "dpx",
-    .long_name      = NULL_IF_CONFIG_SMALL("DPX (Digital Picture Exchange) image"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_DPX,
-    .decode         = decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
+const FFCodec ff_dpx_decoder = {
+    .p.name         = "dpx",
+    CODEC_LONG_NAME("DPX (Digital Picture Exchange) image"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_DPX,
+    FF_CODEC_DECODE_CB(decode_frame),
+    .p.capabilities = AV_CODEC_CAP_DR1,
 };

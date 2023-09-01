@@ -23,7 +23,6 @@
 #include "bsf.h"
 #include "bsf_internal.h"
 
-#include "libavutil/avstring.h"
 #include "libavutil/log.h"
 #include "libavutil/opt.h"
 #include "libavutil/eval.h"
@@ -85,6 +84,12 @@ static int noise_init(AVBSFContext *ctx)
         s->amount_str = (!s->drop_str && !s->dropamount) ? av_strdup("-1") : av_strdup("0");
         if (!s->amount_str)
             return AVERROR(ENOMEM);
+    }
+
+    if (ctx->par_in->codec_id == AV_CODEC_ID_WRAPPED_AVFRAME &&
+        strcmp(s->amount_str, "0")) {
+        av_log(ctx, AV_LOG_ERROR, "Wrapped AVFrame noising is unsupported\n");
+        return AVERROR_PATCHWELCOME;
     }
 
     ret = av_expr_parse(&s->amount_pexpr, s->amount_str,
@@ -220,10 +225,10 @@ static const AVClass noise_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-const AVBitStreamFilter ff_noise_bsf = {
-    .name           = "noise",
+const FFBitStreamFilter ff_noise_bsf = {
+    .p.name         = "noise",
+    .p.priv_class   = &noise_class,
     .priv_data_size = sizeof(NoiseContext),
-    .priv_class     = &noise_class,
     .init           = noise_init,
     .close          = noise_close,
     .filter         = noise,

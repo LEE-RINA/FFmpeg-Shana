@@ -34,7 +34,6 @@
 
 #include "avfilter.h"
 #include "filters.h"
-#include "formats.h"
 #include "internal.h"
 #include "video.h"
 
@@ -142,7 +141,7 @@ static int config_output(AVFilterLink *outlink)
         height *= 2;
         break;
     default:
-        av_log(ctx, AV_LOG_ERROR, "Unknown packing mode.");
+        av_log(ctx, AV_LOG_ERROR, "Unknown packing mode.\n");
         return AVERROR_INVALIDDATA;
     }
 
@@ -329,8 +328,10 @@ static int try_push_frame(AVFilterContext *ctx)
 
         for (i = 0; i < 2; i++) {
             // set correct timestamps
-            if (pts != AV_NOPTS_VALUE)
+            if (pts != AV_NOPTS_VALUE) {
                 s->input_views[i]->pts = i == 0 ? pts * 2 : pts * 2 + av_rescale_q(1, av_inv_q(outlink->frame_rate), outlink->time_base);
+                s->input_views[i]->duration = av_rescale_q(1, av_inv_q(outlink->frame_rate), outlink->time_base);
+            }
 
             // set stereo3d side data
             stereo = av_stereo3d_create_side_data(s->input_views[i]);
@@ -403,14 +404,12 @@ static int activate(AVFilterContext *ctx)
     FF_FILTER_FORWARD_STATUS(ctx->inputs[1], outlink);
 
     if (ff_outlink_frame_wanted(ctx->outputs[0]) &&
-        !ff_outlink_get_status(ctx->inputs[0]) &&
         !s->input_views[0]) {
         ff_inlink_request_frame(ctx->inputs[0]);
         return 0;
     }
 
     if (ff_outlink_frame_wanted(ctx->outputs[0]) &&
-        !ff_outlink_get_status(ctx->inputs[1]) &&
         !s->input_views[1]) {
         ff_inlink_request_frame(ctx->inputs[1]);
         return 0;

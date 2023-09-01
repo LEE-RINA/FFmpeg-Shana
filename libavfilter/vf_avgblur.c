@@ -25,7 +25,6 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
-#include "formats.h"
 #include "internal.h"
 #include "video.h"
 
@@ -187,11 +186,20 @@ static void build_lut(AVFilterContext *ctx, int max)
     }
 }
 
+static av_cold void uninit(AVFilterContext *ctx)
+{
+    AverageBlurContext *s = ctx->priv;
+
+    av_freep(&s->buffer);
+}
+
 static int config_input(AVFilterLink *inlink)
 {
     AVFilterContext *ctx = inlink->dst;
     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(inlink->format);
     AverageBlurContext *s = ctx->priv;
+
+    uninit(ctx);
 
     s->depth = desc->comp[0].depth;
     s->max = 1 << s->depth;
@@ -316,26 +324,12 @@ static int process_command(AVFilterContext *ctx, const char *cmd, const char *ar
     return 0;
 }
 
-static av_cold void uninit(AVFilterContext *ctx)
-{
-    AverageBlurContext *s = ctx->priv;
-
-    av_freep(&s->buffer);
-}
-
 static const AVFilterPad avgblur_inputs[] = {
     {
         .name         = "default",
         .type         = AVMEDIA_TYPE_VIDEO,
         .config_props = config_input,
         .filter_frame = filter_frame,
-    },
-};
-
-static const AVFilterPad avgblur_outputs[] = {
-    {
-        .name = "default",
-        .type = AVMEDIA_TYPE_VIDEO,
     },
 };
 
@@ -346,7 +340,7 @@ const AVFilter ff_vf_avgblur = {
     .priv_class    = &avgblur_class,
     .uninit        = uninit,
     FILTER_INPUTS(avgblur_inputs),
-    FILTER_OUTPUTS(avgblur_outputs),
+    FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
     .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
     .process_command = process_command,

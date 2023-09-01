@@ -24,6 +24,8 @@
  * value, and apply it to input video.
  */
 
+#include "config_components.h"
+
 #include "libavutil/attributes.h"
 #include "libavutil/bswap.h"
 #include "libavutil/common.h"
@@ -580,11 +582,6 @@ static const AVFilterPad inputs[] = {
       .config_props = config_props,
     },
 };
-static const AVFilterPad outputs[] = {
-    { .name = "default",
-      .type = AVMEDIA_TYPE_VIDEO,
-    },
-};
 
 #define DEFINE_LUT_FILTER(name_, description_, priv_class_)             \
     const AVFilter ff_vf_##name_ = {                                    \
@@ -595,7 +592,7 @@ static const AVFilterPad outputs[] = {
         .init          = name_##_init,                                  \
         .uninit        = uninit,                                        \
         FILTER_INPUTS(inputs),                                          \
-        FILTER_OUTPUTS(outputs),                                        \
+        FILTER_OUTPUTS(ff_video_default_filterpad),                     \
         FILTER_QUERY_FUNC(query_formats),                               \
         .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC |       \
                          AVFILTER_FLAG_SLICE_THREADS,                   \

@@ -21,11 +21,9 @@
 #include "libavutil/channel_layout.h"
 #include "libavutil/common.h"
 #include "libavutil/float_dsp.h"
-#include "libavutil/opt.h"
 
 #include "audio.h"
 #include "avfilter.h"
-#include "formats.h"
 #include "filters.h"
 #include "internal.h"
 
@@ -128,8 +126,8 @@ static int config_output(AVFilterLink *outlink)
     AudioMultiplyContext *s = ctx->priv;
     AVFilterLink *inlink = ctx->inputs[0];
 
-    s->channels = inlink->channels;
-    s->planes = av_sample_fmt_is_planar(inlink->format) ? inlink->channels : 1;
+    s->channels = inlink->ch_layout.nb_channels;
+    s->planes = av_sample_fmt_is_planar(inlink->format) ? inlink->ch_layout.nb_channels : 1;
     s->samples_align = 16;
 
     return 0;

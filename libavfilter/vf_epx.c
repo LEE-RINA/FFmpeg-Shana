@@ -19,6 +19,7 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "internal.h"
+#include "video.h"
 
 typedef struct EPXContext {
     const AVClass *class;
@@ -100,7 +101,7 @@ static int epx2_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
             src_line[1] = src_line[2];
             src_line[2] = src_line[1];
 
-            if (y < height - 1)
+            if (y < height - 2)
                 src_line[2] += src_linesize;
         }
     }
@@ -187,7 +188,7 @@ static int epx3_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
             src_line[1] = src_line[2];
             src_line[2] = src_line[1];
 
-            if (y < height - 1)
+            if (y < height - 2)
                 src_line[2] += src_linesize;
         }
     }

@@ -21,7 +21,6 @@
 #include "cbs.h"
 #include "cbs_internal.h"
 #include "cbs_vp9.h"
-#include "internal.h"
 
 
 static int cbs_vp9_read_s(CodedBitstreamContext *ctx, GetBitContext *gbc,
@@ -252,8 +251,6 @@ static int cbs_vp9_write_le(CodedBitstreamContext *ctx, PutBitContext *pbc,
 
 #define SUBSCRIPTS(subs, ...) (subs > 0 ? ((int[subs + 1]){ subs, __VA_ARGS__ }) : NULL)
 
-#define f(width, name) \
-        xf(width, name, current->name, 0, )
 #define s(width, name) \
         xs(width, name, current->name, 0, )
 #define fs(width, name, subs, ...) \
@@ -265,6 +262,12 @@ static int cbs_vp9_write_le(CodedBitstreamContext *ctx, PutBitContext *pbc,
 #define READWRITE read
 #define RWContext GetBitContext
 
+#define f(width, name) do { \
+        uint32_t value; \
+        CHECK(ff_cbs_read_simple_unsigned(ctx, rw, width, #name, \
+                                          &value)); \
+        current->name = value; \
+    } while (0)
 #define xf(width, name, var, subs, ...) do { \
         uint32_t value; \
         CHECK(ff_cbs_read_unsigned(ctx, rw, width, #name, \
@@ -330,6 +333,7 @@ static int cbs_vp9_write_le(CodedBitstreamContext *ctx, PutBitContext *pbc,
 #undef READ
 #undef READWRITE
 #undef RWContext
+#undef f
 #undef xf
 #undef xs
 #undef increment
@@ -345,6 +349,10 @@ static int cbs_vp9_write_le(CodedBitstreamContext *ctx, PutBitContext *pbc,
 #define READWRITE write
 #define RWContext PutBitContext
 
+#define f(width, name) do { \
+        CHECK(ff_cbs_write_simple_unsigned(ctx, rw, width, #name, \
+                                           current->name)); \
+    } while (0)
 #define xf(width, name, var, subs, ...) do { \
         CHECK(ff_cbs_write_unsigned(ctx, rw, width, #name, \
                                     SUBSCRIPTS(subs, __VA_ARGS__), \
@@ -397,6 +405,7 @@ static int cbs_vp9_write_le(CodedBitstreamContext *ctx, PutBitContext *pbc,
 #undef WRITE
 #undef READWRITE
 #undef RWContext
+#undef f
 #undef xf
 #undef xs
 #undef increment
@@ -451,7 +460,7 @@ static int cbs_vp9_split_fragment(CodedBitstreamContext *ctx,
                 return AVERROR_INVALIDDATA;
             }
 
-            err = ff_cbs_insert_unit_data(frag, -1, 0,
+            err = ff_cbs_append_unit_data(frag, 0,
                                           frag->data + pos,
                                           sfi.frame_sizes[i],
                                           frag->data_ref);
@@ -469,7 +478,7 @@ static int cbs_vp9_split_fragment(CodedBitstreamContext *ctx,
         return 0;
 
     } else {
-        err = ff_cbs_insert_unit_data(frag, -1, 0,
+        err = ff_cbs_append_unit_data(frag, 0,
                                       frag->data, frag->data_size,
                                       frag->data_ref);
         if (err < 0)
@@ -490,7 +499,7 @@ static int cbs_vp9_read_unit(CodedBitstreamContext *ctx,
     if (err < 0)
         return err;
 
-    err = ff_cbs_alloc_unit_content2(ctx, unit);
+    err = ff_cbs_alloc_unit_content(ctx, unit);
     if (err < 0)
         return err;
     frame = unit->content;

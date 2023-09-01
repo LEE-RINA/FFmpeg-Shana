@@ -113,9 +113,7 @@ static int sol_read_header(AVFormatContext *s)
     st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
     st->codecpar->codec_tag = id;
     st->codecpar->codec_id = codec;
-    st->codecpar->channels = channels;
-    st->codecpar->channel_layout = channels == 1 ? AV_CH_LAYOUT_MONO :
-                                                   AV_CH_LAYOUT_STEREO;
+    av_channel_layout_default(&st->codecpar->ch_layout,channels);
     st->codecpar->sample_rate = rate;
     avpriv_set_pts_info(st, 64, 1, rate);
     return 0;
@@ -129,7 +127,8 @@ static int sol_read_packet(AVFormatContext *s,
     int ret;
 
     if (avio_feof(s->pb))
-        return AVERROR(EIO);
+        return AVERROR_EOF;
+
     ret= av_get_packet(s->pb, pkt, MAX_SIZE);
     if (ret < 0)
         return ret;

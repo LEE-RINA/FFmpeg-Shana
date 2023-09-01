@@ -47,7 +47,7 @@
 
 #if HAVE_OPENCL_VAAPI_INTEL_MEDIA
 #if CONFIG_LIBMFX
-#include <mfx/mfxstructures.h>
+#include <mfxstructures.h>
 #endif
 #include <va/va.h>
 #include <CL/cl_va_api_media_sharing_intel.h>
@@ -1411,7 +1411,8 @@ static int opencl_get_plane_format(enum AVPixelFormat pixfmt,
         // The bits in each component must be packed in the
         // most-significant-bits of the relevant bytes.
         if (comp->shift + comp->depth != 8 &&
-            comp->shift + comp->depth != 16)
+            comp->shift + comp->depth != 16 &&
+            comp->shift + comp->depth != 32)
             return AVERROR(EINVAL);
         // The depth must not vary between components.
         if (depth && comp->depth != depth)
@@ -1455,6 +1456,8 @@ static int opencl_get_plane_format(enum AVPixelFormat pixfmt,
     } else {
         if (depth <= 16)
             image_format->image_channel_data_type = CL_UNORM_INT16;
+        else if (depth == 32)
+            image_format->image_channel_data_type = CL_FLOAT;
         else
             return AVERROR(EINVAL);
     }
@@ -2152,6 +2155,7 @@ fail:
             clReleaseMemObject(mapping->frame.planes[p]);
     }
     av_free(mapping);
+    memset(dst->data, 0, sizeof(dst->data));
     return err;
 }
 
@@ -2329,6 +2333,7 @@ fail:
         if (desc->planes[p])
             clReleaseMemObject(desc->planes[p]);
     av_freep(&desc);
+    memset(dst->data, 0, sizeof(dst->data));
     return err;
 }
 
@@ -2419,6 +2424,7 @@ fail:
         0, NULL, &event);
     if (cle == CL_SUCCESS)
         opencl_wait_events(dst_fc, &event, 1);
+    memset(dst->data, 0, sizeof(dst->data));
     return err;
 }
 
@@ -2574,6 +2580,7 @@ fail:
         0, NULL, &event);
     if (cle == CL_SUCCESS)
         opencl_wait_events(dst_fc, &event, 1);
+    memset(dst->data, 0, sizeof(dst->data));
     return err;
 }
 
@@ -2805,6 +2812,7 @@ fail:
             clReleaseMemObject(mapping->object_buffers[i]);
     }
     av_free(mapping);
+    memset(dst->data, 0, sizeof(dst->data));
     return err;
 }
 

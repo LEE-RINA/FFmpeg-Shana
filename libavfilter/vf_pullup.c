@@ -23,7 +23,6 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
-#include "formats.h"
 #include "internal.h"
 #include "video.h"
 #include "vf_pullup.h"
@@ -207,8 +206,9 @@ static int config_input(AVFilterLink *inlink)
     s->comb = comb_c;
     s->var  = var_c;
 
-    if (ARCH_X86)
-        ff_pullup_init_x86(s);
+#if ARCH_X86
+    ff_pullup_init_x86(s);
+#endif
     return 0;
 }
 
@@ -669,7 +669,8 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
                   (const uint8_t**)in->data, in->linesize,
                   inlink->format, inlink->w, inlink->h);
 
-    p = in->interlaced_frame ? !in->top_field_first : 0;
+    p = (in->flags & AV_FRAME_FLAG_INTERLACED) ?
+        !(in->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST) : 0;
     pullup_submit_field(s, b, p  );
     pullup_submit_field(s, b, p^1);
 
@@ -747,13 +748,6 @@ static const AVFilterPad pullup_inputs[] = {
     },
 };
 
-static const AVFilterPad pullup_outputs[] = {
-    {
-        .name         = "default",
-        .type         = AVMEDIA_TYPE_VIDEO,
-    },
-};
-
 const AVFilter ff_vf_pullup = {
     .name          = "pullup",
     .description   = NULL_IF_CONFIG_SMALL("Pullup from field sequence to frames."),
@@ -761,6 +755,6 @@ const AVFilter ff_vf_pullup = {
     .priv_class    = &pullup_class,
     .uninit        = uninit,
     FILTER_INPUTS(pullup_inputs),
-    FILTER_OUTPUTS(pullup_outputs),
+    FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
 };

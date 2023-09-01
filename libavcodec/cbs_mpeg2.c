@@ -21,7 +21,7 @@
 #include "cbs.h"
 #include "cbs_internal.h"
 #include "cbs_mpeg2.h"
-#include "internal.h"
+#include "startcode.h"
 
 
 #define HEADER(name) do { \
@@ -40,8 +40,6 @@
 
 #define SUBSCRIPTS(subs, ...) (subs > 0 ? ((int[subs + 1]){ subs, __VA_ARGS__ }) : NULL)
 
-#define ui(width, name) \
-        xui(width, name, current->name, 0, MAX_UINT_BITS(width), 0, )
 #define uir(width, name) \
         xui(width, name, current->name, 1, MAX_UINT_BITS(width), 0, )
 #define uis(width, name, subs, ...) \
@@ -65,6 +63,12 @@
 #define READWRITE read
 #define RWContext GetBitContext
 
+#define ui(width, name) do { \
+        uint32_t value; \
+        CHECK(ff_cbs_read_simple_unsigned(ctx, rw, width, #name, \
+                                          &value)); \
+        current->name = value; \
+    } while (0)
 #define xuia(width, string, var, range_min, range_max, subs, ...) do { \
         uint32_t value; \
         CHECK(ff_cbs_read_unsigned(ctx, rw, width, string, \
@@ -95,6 +99,7 @@
 #undef READ
 #undef READWRITE
 #undef RWContext
+#undef ui
 #undef xuia
 #undef xsi
 #undef nextbits
@@ -104,6 +109,11 @@
 #define WRITE
 #define READWRITE write
 #define RWContext PutBitContext
+
+#define ui(width, name) do { \
+        CHECK(ff_cbs_write_simple_unsigned(ctx, rw, width, #name, \
+                                           current->name)); \
+    } while (0)
 
 #define xuia(width, string, var, range_min, range_max, subs, ...) do { \
         CHECK(ff_cbs_write_unsigned(ctx, rw, width, string, \
@@ -134,6 +144,7 @@
 #undef WRITE
 #undef READWRITE
 #undef RWContext
+#undef ui
 #undef xuia
 #undef xsi
 #undef nextbits
@@ -144,11 +155,9 @@ static int cbs_mpeg2_split_fragment(CodedBitstreamContext *ctx,
                                     CodedBitstreamFragment *frag,
                                     int header)
 {
-    const uint8_t *start, *end;
-    CodedBitstreamUnitType unit_type;
+    const uint8_t *start;
     uint32_t start_code = -1;
-    size_t unit_size;
-    int err, i, final = 0;
+    int err;
 
     start = avpriv_find_start_code(frag->data, frag->data + frag->data_size,
                                    &start_code);
@@ -157,17 +166,16 @@ static int cbs_mpeg2_split_fragment(CodedBitstreamContext *ctx,
         return AVERROR_INVALIDDATA;
     }
 
-    for (i = 0;; i++) {
-        unit_type = start_code & 0xff;
+    do {
+        CodedBitstreamUnitType unit_type = start_code & 0xff;
+        const uint8_t *end;
+        size_t unit_size;
 
-        if (start == frag->data + frag->data_size) {
-            // The last four bytes form a start code which constitutes
-            // a unit of its own.  In this situation avpriv_find_start_code
-            // won't modify start_code at all so modify start_code so that
-            // the next unit will be treated as the last unit.
-            start_code = 0;
-        }
-
+        // Reset start_code to ensure that avpriv_find_start_code()
+        // really reads a new start code and does not reuse the old
+        // start code in any way (as e.g. happens when there is a
+        // Sequence End unit at the very end of a packet).
+        start_code = UINT32_MAX;
         end = avpriv_find_start_code(start--, frag->data + frag->data_size,
                                      &start_code);
 
@@ -182,19 +190,17 @@ static int cbs_mpeg2_split_fragment(CodedBitstreamContext *ctx,
         } else {
            // We didn't find a start code, so this is the final unit.
            unit_size = end - start;
-           final     = 1;
         }
 
-        err = ff_cbs_insert_unit_data(frag, i, unit_type, (uint8_t*)start,
+        err = ff_cbs_append_unit_data(frag, unit_type, (uint8_t*)start,
                                       unit_size, frag->data_ref);
         if (err < 0)
             return err;
 
-        if (final)
-            break;
-
         start = end;
-    }
+
+        // Do we have a further unit to add to the fragment?
+    } while ((start_code >> 8) == 0x000001);
 
     return 0;
 }
@@ -209,7 +215,7 @@ static int cbs_mpeg2_read_unit(CodedBitstreamContext *ctx,
     if (err < 0)
         return err;
 
-    err = ff_cbs_alloc_unit_content2(ctx, unit);
+    err = ff_cbs_alloc_unit_content(ctx, unit);
     if (err < 0)
         return err;
 
@@ -397,14 +403,14 @@ static const CodedBitstreamUnitTypeDescriptor cbs_mpeg2_unit_types[] = {
 
     {
         .nb_unit_types         = CBS_UNIT_TYPE_RANGE,
-        .unit_type_range_start = 0x01,
-        .unit_type_range_end   = 0xaf,
+        .unit_type.range.start = 0x01,
+        .unit_type.range.end   = 0xaf,
 
         .content_type   = CBS_CONTENT_TYPE_INTERNAL_REFS,
         .content_size   = sizeof(MPEG2RawSlice),
-        .nb_ref_offsets = 2,
-        .ref_offsets    = { offsetof(MPEG2RawSlice, header.extra_information_slice.extra_information),
-                            offsetof(MPEG2RawSlice, data) },
+        .type.ref = { .nb_offsets = 2,
+                      .offsets    = { offsetof(MPEG2RawSlice, header.extra_information_slice.extra_information),
+                                      offsetof(MPEG2RawSlice, data) } },
     },
 
     CBS_UNIT_TYPE_INTERNAL_REF(MPEG2_START_USER_DATA, MPEG2RawUserData,

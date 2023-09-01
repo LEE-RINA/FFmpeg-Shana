@@ -26,8 +26,8 @@
 
 #include "avcodec.h"
 #include "bytestream.h"
+#include "codec_internal.h"
 #include "decode.h"
-#include "internal.h"
 
 typedef struct QpegContext{
     AVCodecContext *avctx;
@@ -265,13 +265,11 @@ static void av_noinline qpeg_decode_inter(QpegContext *qctx, uint8_t *dst,
     }
 }
 
-static int decode_frame(AVCodecContext *avctx,
-                        void *data, int *got_frame,
-                        AVPacket *avpkt)
+static int decode_frame(AVCodecContext *avctx, AVFrame *p,
+                        int *got_frame, AVPacket *avpkt)
 {
     uint8_t ctable[128];
     QpegContext * const a = avctx->priv_data;
-    AVFrame * const p = data;
     AVFrame * const ref = a->ref;
     uint8_t* outdata;
     int delta, intra, ret;
@@ -299,14 +297,24 @@ static int decode_frame(AVCodecContext *avctx,
     }
 
     /* make the palette available on the way out */
-    p->palette_has_changed = ff_copy_palette(a->pal, avpkt, avctx);
+#if FF_API_PALETTE_HAS_CHANGED
+FF_DISABLE_DEPRECATION_WARNINGS
+    p->palette_has_changed =
+#endif
+    ff_copy_palette(a->pal, avpkt, avctx);
+#if FF_API_PALETTE_HAS_CHANGED
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
     memcpy(p->data[1], a->pal, AVPALETTE_SIZE);
 
     av_frame_unref(ref);
     if ((ret = av_frame_ref(ref, p)) < 0)
         return ret;
 
-    p->key_frame = intra;
+    if (intra)
+        p->flags |= AV_FRAME_FLAG_KEY;
+    else
+        p->flags &= ~AV_FRAME_FLAG_KEY;
     p->pict_type = intra ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_P;
 
     *got_frame      = 1;
@@ -352,17 +360,16 @@ static av_cold int decode_init(AVCodecContext *avctx){
     return 0;
 }
 
-const AVCodec ff_qpeg_decoder = {
-    .name           = "qpeg",
-    .long_name      = NULL_IF_CONFIG_SMALL("Q-team QPEG"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_QPEG,
+const FFCodec ff_qpeg_decoder = {
+    .p.name         = "qpeg",
+    CODEC_LONG_NAME("Q-team QPEG"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_QPEG,
     .priv_data_size = sizeof(QpegContext),
     .init           = decode_init,
     .close          = decode_end,
-    .decode         = decode_frame,
+    FF_CODEC_DECODE_CB(decode_frame),
     .flush          = decode_flush,
-    .capabilities   = AV_CODEC_CAP_DR1,
-    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE |
-                      FF_CODEC_CAP_INIT_CLEANUP,
+    .p.capabilities = AV_CODEC_CAP_DR1,
+    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
 };

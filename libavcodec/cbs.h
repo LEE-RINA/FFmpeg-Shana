@@ -26,6 +26,7 @@
 
 #include "codec_id.h"
 #include "codec_par.h"
+#include "defs.h"
 #include "packet.h"
 
 
@@ -364,21 +365,12 @@ void ff_cbs_fragment_reset(CodedBitstreamFragment *frag);
 void ff_cbs_fragment_free(CodedBitstreamFragment *frag);
 
 /**
- * Allocate a new internal content buffer of the given size in the unit.
- *
- * The content will be zeroed.
- */
-int ff_cbs_alloc_unit_content(CodedBitstreamUnit *unit,
-                              size_t size,
-                              void (*free)(void *opaque, uint8_t *content));
-
-/**
  * Allocate a new internal content buffer matching the type of the unit.
  *
  * The content will be zeroed.
  */
-int ff_cbs_alloc_unit_content2(CodedBitstreamContext *ctx,
-                               CodedBitstreamUnit *unit);
+int ff_cbs_alloc_unit_content(CodedBitstreamContext *ctx,
+                              CodedBitstreamUnit *unit);
 
 /**
  * Insert a new unit into a fragment with the given content.
@@ -393,14 +385,13 @@ int ff_cbs_insert_unit_content(CodedBitstreamFragment *frag,
                                AVBufferRef *content_buf);
 
 /**
- * Insert a new unit into a fragment with the given data bitstream.
+ * Add a new unit to a fragment with the given data bitstream.
  *
  * If data_buf is not supplied then data must have been allocated with
  * av_malloc() and will on success become owned by the unit after this
  * call or freed on error.
  */
-int ff_cbs_insert_unit_data(CodedBitstreamFragment *frag,
-                            int position,
+int ff_cbs_append_unit_data(CodedBitstreamFragment *frag,
                             CodedBitstreamUnitType type,
                             uint8_t *data, size_t data_size,
                             AVBufferRef *data_buf);
@@ -442,5 +433,21 @@ int ff_cbs_make_unit_refcounted(CodedBitstreamContext *ctx,
 int ff_cbs_make_unit_writable(CodedBitstreamContext *ctx,
                               CodedBitstreamUnit *unit);
 
+enum CbsDiscardFlags {
+    DISCARD_FLAG_NONE = 0,
+
+    /**
+     * keep non-vcl units even if the picture has been dropped.
+     */
+    DISCARD_FLAG_KEEP_NON_VCL = 0x01,
+};
+
+/**
+ * Discard units accroding to 'skip'.
+ */
+void ff_cbs_discard_units(CodedBitstreamContext *ctx,
+                          CodedBitstreamFragment *frag,
+                          enum AVDiscard skip,
+                          int flags);
 
 #endif /* AVCODEC_CBS_H */

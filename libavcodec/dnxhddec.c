@@ -24,16 +24,17 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "libavutil/imgutils.h"
 #include "libavutil/mem_internal.h"
+#include "libavutil/pixdesc.h"
 
 #include "avcodec.h"
 #include "blockdsp.h"
+#include "codec_internal.h"
+#include "decode.h"
 #define  UNCHECKED_BITSTREAM_READER 1
 #include "get_bits.h"
 #include "dnxhddata.h"
 #include "idctdsp.h"
-#include "internal.h"
 #include "profiles.h"
 #include "thread.h"
 
@@ -64,7 +65,7 @@ typedef struct DNXHDContext {
     int cur_field;                      ///< current interlaced field
     VLC ac_vlc, dc_vlc, run_vlc;
     IDCTDSPContext idsp;
-    ScanTable scantable;
+    uint8_t permutated_scantable[64];
     const CIDEntry *cid_table;
     int bit_depth; // 8, 10, 12 or 0 if not initialized at all.
     int is_444;
@@ -194,8 +195,9 @@ static int dnxhd_decode_header(DNXHDContext *ctx, AVFrame *frame,
     }
     if (buf[5] & 2) { /* interlaced */
         ctx->cur_field = first_field ? buf[5] & 1 : !ctx->cur_field;
-        frame->interlaced_frame = 1;
-        frame->top_field_first  = first_field ^ ctx->cur_field;
+        frame->flags |= AV_FRAME_FLAG_INTERLACED;
+        if (first_field ^ ctx->cur_field)
+            frame->flags |= AV_FRAME_FLAG_TOP_FIELD_FIRST;
         av_log(ctx->avctx, AV_LOG_DEBUG,
                "interlaced %d, cur field %d\n", buf[5] & 3, ctx->cur_field);
     } else {
@@ -272,10 +274,10 @@ static int dnxhd_decode_header(DNXHDContext *ctx, AVFrame *frame,
 
     ctx->avctx->bits_per_raw_sample = ctx->bit_depth = bitdepth;
     if (ctx->bit_depth != old_bit_depth) {
-        ff_blockdsp_init(&ctx->bdsp, ctx->avctx);
+        ff_blockdsp_init(&ctx->bdsp);
         ff_idctdsp_init(&ctx->idsp, ctx->avctx);
-        ff_init_scantable(ctx->idsp.idct_permutation, &ctx->scantable,
-                          ff_zigzag_direct);
+        ff_permute_scantable(ctx->permutated_scantable, ff_zigzag_direct,
+                             ctx->idsp.idct_permutation);
     }
 
     // make sure profile size constraints are respected
@@ -297,7 +299,7 @@ static int dnxhd_decode_header(DNXHDContext *ctx, AVFrame *frame,
     ctx->mb_width  = (ctx->width + 15)>> 4;
     ctx->mb_height = AV_RB16(buf + 0x16c);
 
-    if ((ctx->height + 15) >> 4 == ctx->mb_height && frame->interlaced_frame)
+    if ((ctx->height + 15) >> 4 == ctx->mb_height && (frame->flags & AV_FRAME_FLAG_INTERLACED))
         ctx->height <<= 1;
 
     av_log(ctx->avctx, AV_LOG_VERBOSE, "%dx%d, 4:%s %d bits, MBAFF=%d ACT=%d\n",
@@ -315,7 +317,7 @@ static int dnxhd_decode_header(DNXHDContext *ctx, AVFrame *frame,
         }
         ctx->data_offset = 0x280;
     }
-    if ((ctx->mb_height << frame->interlaced_frame) > (ctx->height + 15) >> 4) {
+    if ((ctx->mb_height << !!(frame->flags & AV_FRAME_FLAG_INTERLACED)) > (ctx->height + 15) >> 4) {
         av_log(ctx->avctx, AV_LOG_ERROR,
                 "mb height too big: %d\n", ctx->mb_height);
         return AVERROR_INVALIDDATA;
@@ -435,7 +437,7 @@ static av_always_inline int dnxhd_decode_dct_block(const DNXHDContext *ctx,
             break;
         }
 
-        j     = ctx->scantable.permutated[i];
+        j      = ctx->permutated_scantable[i];
         level *= scale[i];
         level += scale[i] >> 1;
         if (level_bias < 32 || weight_matrix[i] != level_bias)
@@ -529,7 +531,7 @@ static int dnxhd_decode_macroblock(const DNXHDContext *ctx, RowContext *row,
             return AVERROR_INVALIDDATA;
     }
 
-    if (frame->interlaced_frame) {
+    if (frame->flags & AV_FRAME_FLAG_INTERLACED) {
         dct_linesize_luma   <<= 1;
         dct_linesize_chroma <<= 1;
     }
@@ -538,7 +540,7 @@ static int dnxhd_decode_macroblock(const DNXHDContext *ctx, RowContext *row,
     dest_u = frame->data[1] + ((y * dct_linesize_chroma) << 4) + (x << (3 + shift1 + ctx->is_444));
     dest_v = frame->data[2] + ((y * dct_linesize_chroma) << 4) + (x << (3 + shift1 + ctx->is_444));
 
-    if (frame->interlaced_frame && ctx->cur_field) {
+    if ((frame->flags & AV_FRAME_FLAG_INTERLACED) && ctx->cur_field) {
         dest_y += frame->linesize[0];
         dest_u += frame->linesize[1];
         dest_v += frame->linesize[2];
@@ -612,14 +614,12 @@ static int dnxhd_decode_row(AVCodecContext *avctx, void *data,
     return 0;
 }
 
-static int dnxhd_decode_frame(AVCodecContext *avctx, void *data,
+static int dnxhd_decode_frame(AVCodecContext *avctx, AVFrame *picture,
                               int *got_frame, AVPacket *avpkt)
 {
     const uint8_t *buf = avpkt->data;
     int buf_size = avpkt->size;
     DNXHDContext *ctx = avctx->priv_data;
-    ThreadFrame frame = { .f = data };
-    AVFrame *picture = data;
     int first_field = 1;
     int ret, i;
 
@@ -650,17 +650,17 @@ decode_coding_unit:
         return ret;
 
     if (first_field) {
-        if ((ret = ff_thread_get_buffer(avctx, &frame, 0)) < 0)
+        if ((ret = ff_thread_get_buffer(avctx, picture, 0)) < 0)
             return ret;
         picture->pict_type = AV_PICTURE_TYPE_I;
-        picture->key_frame = 1;
+        picture->flags |= AV_FRAME_FLAG_KEY;
     }
 
     ctx->buf_size = buf_size - ctx->data_offset;
     ctx->buf = buf + ctx->data_offset;
     avctx->execute2(avctx, dnxhd_decode_row, picture, NULL, ctx->mb_height);
 
-    if (first_field && picture->interlaced_frame) {
+    if (first_field && (picture->flags & AV_FRAME_FLAG_INTERLACED)) {
         buf      += ctx->cid_table->coding_unit_size;
         buf_size -= ctx->cid_table->coding_unit_size;
         first_field = 0;
@@ -725,17 +725,16 @@ static av_cold int dnxhd_decode_close(AVCodecContext *avctx)
     return 0;
 }
 
-const AVCodec ff_dnxhd_decoder = {
-    .name           = "dnxhd",
-    .long_name      = NULL_IF_CONFIG_SMALL("VC3/DNxHD"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_DNXHD,
+const FFCodec ff_dnxhd_decoder = {
+    .p.name         = "dnxhd",
+    CODEC_LONG_NAME("VC3/DNxHD"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_DNXHD,
     .priv_data_size = sizeof(DNXHDContext),
     .init           = dnxhd_decode_init,
     .close          = dnxhd_decode_close,
-    .decode         = dnxhd_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS |
+    FF_CODEC_DECODE_CB(dnxhd_decode_frame),
+    .p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS |
                       AV_CODEC_CAP_SLICE_THREADS,
-    .profiles       = NULL_IF_CONFIG_SMALL(ff_dnxhd_profiles),
-    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE,
+    .p.profiles     = NULL_IF_CONFIG_SMALL(ff_dnxhd_profiles),
 };

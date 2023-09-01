@@ -25,7 +25,7 @@
 
 #include "avcodec.h"
 #include "hevcdec.h"
-#include "hwconfig.h"
+#include "hwaccel_internal.h"
 #include "vaapi_decode.h"
 #include "vaapi_hevc.h"
 #include "h265_profile_level.h"
@@ -60,10 +60,10 @@ static void fill_vaapi_pic(VAPictureHEVC *va_pic, const HEVCFrame *pic, int rps_
     if (pic->flags & HEVC_FRAME_FLAG_LONG_REF)
         va_pic->flags |= VA_PICTURE_HEVC_LONG_TERM_REFERENCE;
 
-    if (pic->frame->interlaced_frame) {
+    if (pic->frame->flags & AV_FRAME_FLAG_INTERLACED) {
         va_pic->flags |= VA_PICTURE_HEVC_FIELD_PIC;
 
-        if (!pic->frame->top_field_first)
+        if (!(pic->frame->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST))
             va_pic->flags |= VA_PICTURE_HEVC_BOTTOM_FIELD;
     }
 }
@@ -71,6 +71,7 @@ static void fill_vaapi_pic(VAPictureHEVC *va_pic, const HEVCFrame *pic, int rps_
 static int find_frame_rps_type(const HEVCContext *h, const HEVCFrame *pic)
 {
     VASurfaceID pic_surf = ff_vaapi_get_surface_id(pic->frame);
+    const HEVCFrame *current_picture = h->ref;
     int i;
 
     for (i = 0; i < h->rps[ST_CURR_BEF].nb_refs; i++) {
@@ -88,6 +89,9 @@ static int find_frame_rps_type(const HEVCContext *h, const HEVCFrame *pic)
             return VA_PICTURE_HEVC_RPS_LT_CURR;
     }
 
+    if (h->ps.pps->pps_curr_pic_ref_enabled_flag && current_picture->poc == pic->poc)
+        return VA_PICTURE_HEVC_LONG_TERM_REFERENCE;
+
     return 0;
 }
 
@@ -100,7 +104,8 @@ static void fill_vaapi_reference_frames(const HEVCContext *h, VAPictureParameter
         const HEVCFrame *frame = NULL;
 
         while (!frame && j < FF_ARRAY_ELEMS(h->DPB)) {
-            if (&h->DPB[j] != current_picture && (h->DPB[j].flags & (HEVC_FRAME_FLAG_LONG_REF | HEVC_FRAME_FLAG_SHORT_REF)))
+            if ((&h->DPB[j] != current_picture || h->ps.pps->pps_curr_pic_ref_enabled_flag) &&
+                (h->DPB[j].flags & (HEVC_FRAME_FLAG_LONG_REF | HEVC_FRAME_FLAG_SHORT_REF)))
                 frame = &h->DPB[j];
             j++;
         }
@@ -125,6 +130,10 @@ static int vaapi_hevc_start_frame(AVCodecContext          *avctx,
 
     const ScalingList *scaling_list = NULL;
     int pic_param_size, err, i;
+
+#if VA_CHECK_VERSION(1, 2, 0)
+    int num_comps, pre_palette_size;
+#endif
 
     VAPictureParameterBufferHEVC *pic_param = (VAPictureParameterBufferHEVC *)&pic->pic_param;
 
@@ -218,7 +227,8 @@ static int vaapi_hevc_start_frame(AVCodecContext          *avctx,
     }
 
 #if VA_CHECK_VERSION(1, 2, 0)
-    if (avctx->profile == FF_PROFILE_HEVC_REXT) {
+    if (avctx->profile == FF_PROFILE_HEVC_REXT ||
+        avctx->profile == FF_PROFILE_HEVC_SCC) {
         pic->pic_param.rext = (VAPictureParameterBufferHEVCRext) {
             .range_extension_pic_fields.bits  = {
                 .transform_skip_rotation_enabled_flag       = sps->transform_skip_rotation_enabled_flag,
@@ -245,8 +255,46 @@ static int vaapi_hevc_start_frame(AVCodecContext          *avctx,
         for (i = 0; i < 6; i++)
             pic->pic_param.rext.cr_qp_offset_list[i]        = pps->cr_qp_offset_list[i];
     }
+
+    pre_palette_size = pps->pps_palette_predictor_initializers_present_flag ?
+                       pps->pps_num_palette_predictor_initializers :
+                       (sps->sps_palette_predictor_initializers_present_flag ?
+                       sps->sps_num_palette_predictor_initializers :
+                       0);
+
+    if (avctx->profile == FF_PROFILE_HEVC_SCC) {
+        pic->pic_param.scc = (VAPictureParameterBufferHEVCScc) {
+            .screen_content_pic_fields.bits = {
+                .pps_curr_pic_ref_enabled_flag              = pps->pps_curr_pic_ref_enabled_flag,
+                .palette_mode_enabled_flag                  = sps->palette_mode_enabled_flag,
+                .motion_vector_resolution_control_idc       = sps->motion_vector_resolution_control_idc,
+                .intra_boundary_filtering_disabled_flag     = sps->intra_boundary_filtering_disabled_flag,
+                .residual_adaptive_colour_transform_enabled_flag
+                                                            = pps->residual_adaptive_colour_transform_enabled_flag,
+                .pps_slice_act_qp_offsets_present_flag      = pps->pps_slice_act_qp_offsets_present_flag,
+            },
+            .palette_max_size                               = sps->palette_max_size,
+            .delta_palette_max_predictor_size               = sps->delta_palette_max_predictor_size,
+            .predictor_palette_size                         = pre_palette_size,
+            .pps_act_y_qp_offset_plus5                      = pps->residual_adaptive_colour_transform_enabled_flag ?
+                                                              pps->pps_act_y_qp_offset + 5 : 0,
+            .pps_act_cb_qp_offset_plus5                     = pps->residual_adaptive_colour_transform_enabled_flag ?
+                                                              pps->pps_act_cb_qp_offset + 5 : 0,
+            .pps_act_cr_qp_offset_plus3                     = pps->residual_adaptive_colour_transform_enabled_flag ?
+                                                              pps->pps_act_cr_qp_offset + 3 : 0,
+        };
+
+        num_comps = pps->monochrome_palette_flag ? 1 : 3;
+        for (int comp = 0; comp < num_comps; comp++)
+            for (int j = 0; j < pre_palette_size; j++)
+                pic->pic_param.scc.predictor_palette_entries[comp][j] =
+                    pps->pps_palette_predictor_initializers_present_flag ?
+                    pps->pps_palette_predictor_initializer[comp][j]:
+                    sps->sps_palette_predictor_initializer[comp][j];
+    }
+
 #endif
-    pic_param_size = avctx->profile == FF_PROFILE_HEVC_REXT ?
+    pic_param_size = avctx->profile >= FF_PROFILE_HEVC_REXT ?
                             sizeof(pic->pic_param) : sizeof(VAPictureParameterBufferHEVC);
 
     err = ff_vaapi_decode_make_param_buffer(avctx, &pic->pic,
@@ -299,7 +347,7 @@ static int vaapi_hevc_end_frame(AVCodecContext *avctx)
     VASliceParameterBufferHEVC *last_slice_param = (VASliceParameterBufferHEVC *)&pic->last_slice_param;
     int ret;
 
-    int slice_param_size = avctx->profile == FF_PROFILE_HEVC_REXT ?
+    int slice_param_size = avctx->profile >= FF_PROFILE_HEVC_REXT ?
                             sizeof(pic->last_slice_param) : sizeof(VASliceParameterBufferHEVC);
 
     if (pic->last_size) {
@@ -322,11 +370,20 @@ fail:
     return ret;
 }
 
-static void fill_pred_weight_table(const HEVCContext *h,
+static void fill_pred_weight_table(AVCodecContext *avctx,
+                                   const HEVCContext *h,
                                    const SliceHeader *sh,
                                    VASliceParameterBufferHEVC *slice_param)
 {
     int i;
+#if VA_CHECK_VERSION(1, 2, 0)
+    int is_rext = avctx->profile >= FF_PROFILE_HEVC_REXT;
+#else
+    int is_rext = 0;
+    if (avctx->profile >= FF_PROFILE_HEVC_REXT)
+        av_log(avctx, AV_LOG_WARNING, "Please consider to update to VAAPI 1.2.0 "
+               "or above, which can support REXT related setting correctly.\n");
+#endif
 
     memset(slice_param->delta_luma_weight_l0,   0, sizeof(slice_param->delta_luma_weight_l0));
     memset(slice_param->delta_luma_weight_l1,   0, sizeof(slice_param->delta_luma_weight_l1));
@@ -353,21 +410,25 @@ static void fill_pred_weight_table(const HEVCContext *h,
 
     for (i = 0; i < 15 && i < sh->nb_refs[L0]; i++) {
         slice_param->delta_luma_weight_l0[i] = sh->luma_weight_l0[i] - (1 << sh->luma_log2_weight_denom);
-        slice_param->luma_offset_l0[i] = sh->luma_offset_l0[i];
         slice_param->delta_chroma_weight_l0[i][0] = sh->chroma_weight_l0[i][0] - (1 << sh->chroma_log2_weight_denom);
         slice_param->delta_chroma_weight_l0[i][1] = sh->chroma_weight_l0[i][1] - (1 << sh->chroma_log2_weight_denom);
-        slice_param->ChromaOffsetL0[i][0] = sh->chroma_offset_l0[i][0];
-        slice_param->ChromaOffsetL0[i][1] = sh->chroma_offset_l0[i][1];
+        if (!is_rext) {
+            slice_param->luma_offset_l0[i] = sh->luma_offset_l0[i];
+            slice_param->ChromaOffsetL0[i][0] = sh->chroma_offset_l0[i][0];
+            slice_param->ChromaOffsetL0[i][1] = sh->chroma_offset_l0[i][1];
+        }
     }
 
     if (sh->slice_type == HEVC_SLICE_B) {
         for (i = 0; i < 15 && i < sh->nb_refs[L1]; i++) {
             slice_param->delta_luma_weight_l1[i] = sh->luma_weight_l1[i] - (1 << sh->luma_log2_weight_denom);
-            slice_param->luma_offset_l1[i] = sh->luma_offset_l1[i];
             slice_param->delta_chroma_weight_l1[i][0] = sh->chroma_weight_l1[i][0] - (1 << sh->chroma_log2_weight_denom);
             slice_param->delta_chroma_weight_l1[i][1] = sh->chroma_weight_l1[i][1] - (1 << sh->chroma_log2_weight_denom);
-            slice_param->ChromaOffsetL1[i][0] = sh->chroma_offset_l1[i][0];
-            slice_param->ChromaOffsetL1[i][1] = sh->chroma_offset_l1[i][1];
+            if (!is_rext) {
+                slice_param->luma_offset_l1[i] = sh->luma_offset_l1[i];
+                slice_param->ChromaOffsetL1[i][0] = sh->chroma_offset_l1[i][0];
+                slice_param->ChromaOffsetL1[i][1] = sh->chroma_offset_l1[i][1];
+            }
         }
     }
 }
@@ -400,7 +461,7 @@ static int vaapi_hevc_decode_slice(AVCodecContext *avctx,
     VAAPIDecodePictureHEVC *pic = h->ref->hwaccel_picture_private;
     VASliceParameterBufferHEVC *last_slice_param = (VASliceParameterBufferHEVC *)&pic->last_slice_param;
 
-    int slice_param_size = avctx->profile == FF_PROFILE_HEVC_REXT ?
+    int slice_param_size = avctx->profile >= FF_PROFILE_HEVC_REXT ?
                             sizeof(pic->last_slice_param) : sizeof(VASliceParameterBufferHEVC);
 
     int nb_list = (sh->slice_type == HEVC_SLICE_B) ?
@@ -462,24 +523,32 @@ static int vaapi_hevc_decode_slice(AVCodecContext *avctx,
             last_slice_param->RefPicList[list_idx][i] = get_ref_pic_index(h, rpl->ref[i]);
     }
 
-    fill_pred_weight_table(h, sh, last_slice_param);
+    fill_pred_weight_table(avctx, h, sh, last_slice_param);
 
 #if VA_CHECK_VERSION(1, 2, 0)
-    if (avctx->profile == FF_PROFILE_HEVC_REXT) {
+    if (avctx->profile >= FF_PROFILE_HEVC_REXT) {
         pic->last_slice_param.rext = (VASliceParameterBufferHEVCRext) {
             .slice_ext_flags.bits = {
                 .cu_chroma_qp_offset_enabled_flag = sh->cu_chroma_qp_offset_enabled_flag,
+                .use_integer_mv_flag = sh->use_integer_mv_flag,
             },
+            .slice_act_y_qp_offset  = sh->slice_act_y_qp_offset,
+            .slice_act_cb_qp_offset = sh->slice_act_cb_qp_offset,
+            .slice_act_cr_qp_offset = sh->slice_act_cr_qp_offset,
         };
+        for (i = 0; i < 15 && i < sh->nb_refs[L0]; i++) {
+            pic->last_slice_param.rext.luma_offset_l0[i] = sh->luma_offset_l0[i];
+            pic->last_slice_param.rext.ChromaOffsetL0[i][0] = sh->chroma_offset_l0[i][0];
+            pic->last_slice_param.rext.ChromaOffsetL0[i][1] = sh->chroma_offset_l0[i][1];
+        }
 
-        memcpy(pic->last_slice_param.rext.luma_offset_l0, pic->last_slice_param.base.luma_offset_l0,
-                                                    sizeof(pic->last_slice_param.base.luma_offset_l0));
-        memcpy(pic->last_slice_param.rext.luma_offset_l1, pic->last_slice_param.base.luma_offset_l1,
-                                                    sizeof(pic->last_slice_param.base.luma_offset_l1));
-        memcpy(pic->last_slice_param.rext.ChromaOffsetL0, pic->last_slice_param.base.ChromaOffsetL0,
-                                                    sizeof(pic->last_slice_param.base.ChromaOffsetL0));
-        memcpy(pic->last_slice_param.rext.ChromaOffsetL1, pic->last_slice_param.base.ChromaOffsetL1,
-                                                    sizeof(pic->last_slice_param.base.ChromaOffsetL1));
+        if (sh->slice_type == HEVC_SLICE_B) {
+            for (i = 0; i < 15 && i < sh->nb_refs[L1]; i++) {
+                pic->last_slice_param.rext.luma_offset_l1[i] = sh->luma_offset_l1[i];
+                pic->last_slice_param.rext.ChromaOffsetL1[i][0] = sh->chroma_offset_l1[i][0];
+                pic->last_slice_param.rext.ChromaOffsetL1[i][1] = sh->chroma_offset_l1[i][1];
+            }
+        }
     }
 #endif
 
@@ -521,9 +590,9 @@ static int ptl_convert(const PTLCommon *general_ptl, H265RawProfileTierLevel *h2
 }
 
 /*
- * Find exact va_profile for HEVC Range Extension
+ * Find exact va_profile for HEVC Range Extension and Screen Content Coding Extension
  */
-VAProfile ff_vaapi_parse_hevc_rext_profile(AVCodecContext *avctx)
+VAProfile ff_vaapi_parse_hevc_rext_scc_profile(AVCodecContext *avctx)
 {
     const HEVCContext *h = avctx->priv_data;
     const HEVCSPS *sps = h->ps.sps;
@@ -544,15 +613,34 @@ VAProfile ff_vaapi_parse_hevc_rext_profile(AVCodecContext *avctx)
     }
 
 #if VA_CHECK_VERSION(1, 2, 0)
-    if (!strcmp(profile->name, "Main 4:2:2 10") ||
+    if (!strcmp(profile->name, "Main 12") ||
+        !strcmp(profile->name, "Main 12 Intra"))
+        return VAProfileHEVCMain12;
+    else if (!strcmp(profile->name, "Main 4:2:2 10") ||
         !strcmp(profile->name, "Main 4:2:2 10 Intra"))
         return VAProfileHEVCMain422_10;
+    else if (!strcmp(profile->name, "Main 4:2:2 12") ||
+        !strcmp(profile->name, "Main 4:2:2 12 Intra"))
+        return VAProfileHEVCMain422_12;
     else if (!strcmp(profile->name, "Main 4:4:4") ||
              !strcmp(profile->name, "Main 4:4:4 Intra"))
         return VAProfileHEVCMain444;
     else if (!strcmp(profile->name, "Main 4:4:4 10") ||
              !strcmp(profile->name, "Main 4:4:4 10 Intra"))
         return VAProfileHEVCMain444_10;
+    else if (!strcmp(profile->name, "Main 4:4:4 12") ||
+             !strcmp(profile->name, "Main 4:4:4 12 Intra"))
+        return VAProfileHEVCMain444_12;
+    else if (!strcmp(profile->name, "Screen-Extended Main"))
+        return VAProfileHEVCSccMain;
+    else if (!strcmp(profile->name, "Screen-Extended Main 10"))
+        return VAProfileHEVCSccMain10;
+    else if (!strcmp(profile->name, "Screen-Extended Main 4:4:4"))
+        return VAProfileHEVCSccMain444;
+#if VA_CHECK_VERSION(1, 8, 0)
+    else if (!strcmp(profile->name, "Screen-Extended Main 4:4:4 10"))
+        return VAProfileHEVCSccMain444_10;
+#endif
 #else
     av_log(avctx, AV_LOG_WARNING, "HEVC profile %s is "
            "not supported with this VA version.\n", profile->name);
@@ -566,11 +654,11 @@ end:
         return VAProfileNone;
 }
 
-const AVHWAccel ff_hevc_vaapi_hwaccel = {
-    .name                 = "hevc_vaapi",
-    .type                 = AVMEDIA_TYPE_VIDEO,
-    .id                   = AV_CODEC_ID_HEVC,
-    .pix_fmt              = AV_PIX_FMT_VAAPI,
+const FFHWAccel ff_hevc_vaapi_hwaccel = {
+    .p.name               = "hevc_vaapi",
+    .p.type               = AVMEDIA_TYPE_VIDEO,
+    .p.id                 = AV_CODEC_ID_HEVC,
+    .p.pix_fmt            = AV_PIX_FMT_VAAPI,
     .start_frame          = vaapi_hevc_start_frame,
     .end_frame            = vaapi_hevc_end_frame,
     .decode_slice         = vaapi_hevc_decode_slice,

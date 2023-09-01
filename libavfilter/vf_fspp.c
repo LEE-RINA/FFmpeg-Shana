@@ -42,6 +42,7 @@
 #include "internal.h"
 #include "qp_table.h"
 #include "vf_fspp.h"
+#include "video.h"
 
 #define OFFSET(x) offsetof(FSPPContext, x)
 #define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM
@@ -525,8 +526,9 @@ static int config_input(AVFilterLink *inlink)
     fspp->row_idct     = row_idct_c;
     fspp->row_fdct     = row_fdct_c;
 
-    if (ARCH_X86)
-        ff_fspp_init_x86(fspp);
+#if ARCH_X86
+    ff_fspp_init_x86(fspp);
+#endif
 
     return 0;
 }
@@ -650,20 +652,13 @@ static const AVFilterPad fspp_inputs[] = {
     },
 };
 
-static const AVFilterPad fspp_outputs[] = {
-    {
-        .name = "default",
-        .type = AVMEDIA_TYPE_VIDEO,
-    },
-};
-
 const AVFilter ff_vf_fspp = {
     .name            = "fspp",
     .description     = NULL_IF_CONFIG_SMALL("Apply Fast Simple Post-processing filter."),
     .priv_size       = sizeof(FSPPContext),
     .uninit          = uninit,
     FILTER_INPUTS(fspp_inputs),
-    FILTER_OUTPUTS(fspp_outputs),
+    FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
     .priv_class      = &fspp_class,
     .flags           = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL,

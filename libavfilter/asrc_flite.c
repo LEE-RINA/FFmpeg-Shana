@@ -225,11 +225,13 @@ static int query_formats(AVFilterContext *ctx)
     int ret;
 
     AVFilterChannelLayouts *chlayouts = NULL;
-    int64_t chlayout = av_get_default_channel_layout(flite->wave->num_channels);
     AVFilterFormats *sample_formats = NULL;
     AVFilterFormats *sample_rates = NULL;
+    AVChannelLayout chlayout = { 0 };
 
-    if ((ret = ff_add_channel_layout         (&chlayouts     , chlayout                )) < 0 ||
+    av_channel_layout_default(&chlayout, flite->wave->num_channels);
+
+    if ((ret = ff_add_channel_layout         (&chlayouts     , &chlayout               )) < 0 ||
         (ret = ff_set_common_channel_layouts (ctx            , chlayouts               )) < 0 ||
         (ret = ff_add_format                 (&sample_formats, AV_SAMPLE_FMT_S16       )) < 0 ||
         (ret = ff_set_common_formats         (ctx            , sample_formats          )) < 0 ||
@@ -270,7 +272,11 @@ static int request_frame(AVFilterLink *outlink)
     memcpy(samplesref->data[0], flite->wave_samples,
            nb_samples * flite->wave->num_channels * 2);
     samplesref->pts = flite->pts;
+#if FF_API_FRAME_PKT
+FF_DISABLE_DEPRECATION_WARNINGS
     samplesref->pkt_pos = -1;
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
     samplesref->sample_rate = flite->wave->sample_rate;
     flite->pts += nb_samples;
     flite->wave_samples += nb_samples * flite->wave->num_channels;

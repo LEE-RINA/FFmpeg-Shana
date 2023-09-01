@@ -1,5 +1,5 @@
-7f3a5c46ccb2b95074bdabc034ee71d1 *tests/data/fate/matroska-qt-mode.matroska
-1884236 tests/data/fate/matroska-qt-mode.matroska
+a976ac0fd5c1ca916280f64525d12c10 *tests/data/fate/matroska-qt-mode.matroska
+1884254 tests/data/fate/matroska-qt-mode.matroska
 #extradata 0:       90, 0x817d0185
 #tb 0: 1/1000
 #media_type 0: video
@@ -10,7 +10,6 @@
 #media_type 1: audio
 #codec_id 1: pcm_u8
 #sample_rate 1: 22050
-#channel_layout 1: 4
 #channel_layout_name 1: mono
 0,          0,          0,       66,     3340, 0xcdb26464
 1,          0,          0,       46,     1024, 0x3c0f001e

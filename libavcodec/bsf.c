@@ -18,7 +18,7 @@
 
 #include <string.h>
 
-#include "config.h"
+#include "config_components.h"
 
 #include "libavutil/avassert.h"
 #include "libavutil/log.h"
@@ -31,8 +31,12 @@
 #include "bsf_internal.h"
 #include "codec_desc.h"
 #include "codec_par.h"
+#include "packet_internal.h"
 
-#define IS_EMPTY(pkt) (!(pkt)->data && !(pkt)->side_data_elems)
+static av_always_inline const FFBitStreamFilter *ff_bsf(const AVBitStreamFilter *bsf)
+{
+    return (const FFBitStreamFilter*)bsf;
+}
 
 typedef struct FFBSFContext {
     AVBSFContext pub;
@@ -56,8 +60,8 @@ void av_bsf_free(AVBSFContext **pctx)
     bsfi = ffbsfcontext(ctx);
 
     if (ctx->priv_data) {
-        if (ctx->filter->close)
-            ctx->filter->close(ctx);
+        if (ff_bsf(ctx->filter)->close)
+            ff_bsf(ctx->filter)->close(ctx);
         if (ctx->filter->priv_class)
             av_opt_free(ctx->priv_data);
         av_freep(&ctx->priv_data);
@@ -118,8 +122,8 @@ int av_bsf_alloc(const AVBitStreamFilter *filter, AVBSFContext **pctx)
         goto fail;
     }
     /* allocate priv data and init private options */
-    if (filter->priv_data_size) {
-        ctx->priv_data = av_mallocz(filter->priv_data_size);
+    if (ff_bsf(filter)->priv_data_size) {
+        ctx->priv_data = av_mallocz(ff_bsf(filter)->priv_data_size);
         if (!ctx->priv_data) {
             ret = AVERROR(ENOMEM);
             goto fail;
@@ -174,8 +178,8 @@ int av_bsf_init(AVBSFContext *ctx)
 
     ctx->time_base_out = ctx->time_base_in;
 
-    if (ctx->filter->init) {
-        ret = ctx->filter->init(ctx);
+    if (ff_bsf(ctx->filter)->init) {
+        ret = ff_bsf(ctx->filter)->init(ctx);
         if (ret < 0)
             return ret;
     }
@@ -191,8 +195,8 @@ void av_bsf_flush(AVBSFContext *ctx)
 
     av_packet_unref(bsfi->buffer_pkt);
 
-    if (ctx->filter->flush)
-        ctx->filter->flush(ctx);
+    if (ff_bsf(ctx->filter)->flush)
+        ff_bsf(ctx->filter)->flush(ctx);
 }
 
 int av_bsf_send_packet(AVBSFContext *ctx, AVPacket *pkt)
@@ -200,7 +204,7 @@ int av_bsf_send_packet(AVBSFContext *ctx, AVPacket *pkt)
     FFBSFContext *const bsfi = ffbsfcontext(ctx);
     int ret;
 
-    if (!pkt || IS_EMPTY(pkt)) {
+    if (!pkt || AVPACKET_IS_EMPTY(pkt)) {
         if (pkt)
             av_packet_unref(pkt);
         bsfi->eof = 1;
@@ -212,7 +216,7 @@ int av_bsf_send_packet(AVBSFContext *ctx, AVPacket *pkt)
         return AVERROR(EINVAL);
     }
 
-    if (!IS_EMPTY(bsfi->buffer_pkt))
+    if (!AVPACKET_IS_EMPTY(bsfi->buffer_pkt))
         return AVERROR(EAGAIN);
 
     ret = av_packet_make_refcounted(pkt);
@@ -225,7 +229,7 @@ int av_bsf_send_packet(AVBSFContext *ctx, AVPacket *pkt)
 
 int av_bsf_receive_packet(AVBSFContext *ctx, AVPacket *pkt)
 {
-    return ctx->filter->filter(ctx, pkt);
+    return ff_bsf(ctx->filter)->filter(ctx, pkt);
 }
 
 int ff_bsf_get_packet(AVBSFContext *ctx, AVPacket **pkt)
@@ -236,7 +240,7 @@ int ff_bsf_get_packet(AVBSFContext *ctx, AVPacket **pkt)
     if (bsfi->eof)
         return AVERROR_EOF;
 
-    if (IS_EMPTY(bsfi->buffer_pkt))
+    if (AVPACKET_IS_EMPTY(bsfi->buffer_pkt))
         return AVERROR(EAGAIN);
 
     tmp_pkt = av_packet_alloc();
@@ -256,7 +260,7 @@ int ff_bsf_get_packet_ref(AVBSFContext *ctx, AVPacket *pkt)
     if (bsfi->eof)
         return AVERROR_EOF;
 
-    if (IS_EMPTY(bsfi->buffer_pkt))
+    if (AVPACKET_IS_EMPTY(bsfi->buffer_pkt))
         return AVERROR(EAGAIN);
 
     av_packet_move_ref(pkt, bsfi->buffer_pkt);
@@ -398,10 +402,10 @@ static const AVClass bsf_list_class = {
         .version    = LIBAVUTIL_VERSION_INT,
 };
 
-static const AVBitStreamFilter list_bsf = {
-        .name           = "bsf_list",
+static const FFBitStreamFilter list_bsf = {
+        .p.name         = "bsf_list",
+        .p.priv_class   = &bsf_list_class,
         .priv_data_size = sizeof(BSFListContext),
-        .priv_class     = &bsf_list_class,
         .init           = bsf_list_init,
         .filter         = bsf_list_filter,
         .flush          = bsf_list_flush,
@@ -494,7 +498,7 @@ int av_bsf_list_finalize(AVBSFList **lst, AVBSFContext **bsf)
         goto end;
     }
 
-    ret = av_bsf_alloc(&list_bsf, bsf);
+    ret = av_bsf_alloc(&list_bsf.p, bsf);
     if (ret < 0)
         return ret;
 
@@ -549,9 +553,9 @@ end:
 int av_bsf_get_null_filter(AVBSFContext **bsf)
 {
 #if CONFIG_NULL_BSF
-    extern const AVBitStreamFilter ff_null_bsf;
-    return av_bsf_alloc(&ff_null_bsf, bsf);
+    extern const FFBitStreamFilter ff_null_bsf;
+    return av_bsf_alloc(&ff_null_bsf.p, bsf);
 #else
-    return av_bsf_alloc(&list_bsf, bsf);
+    return av_bsf_alloc(&list_bsf.p, bsf);
 #endif
 }

@@ -28,6 +28,7 @@
 #include "libavutil/opt.h"
 #include "avfilter.h"
 #include "filters.h"
+#include "formats.h"
 #include "internal.h"
 #include "video.h"
 #include "audio.h"
@@ -179,6 +180,7 @@ static int push_frame(AVFilterContext *ctx, unsigned in_no, AVFrame *buf)
     struct concat_in *in = &cat->in[in_no];
 
     buf->pts = av_rescale_q(buf->pts, inlink->time_base, outlink->time_base);
+    buf->duration = av_rescale_q(buf->duration, inlink->time_base, outlink->time_base);
     in->pts = buf->pts;
     in->nb_frames++;
     /* add duration to input PTS */
@@ -263,7 +265,7 @@ static int send_silence(AVFilterContext *ctx, unsigned in_no, unsigned out_no,
         if (!buf)
             return AVERROR(ENOMEM);
         av_samples_set_silence(buf->extended_data, 0, frame_nb_samples,
-                               outlink->channels, outlink->format);
+                               outlink->ch_layout.nb_channels, outlink->format);
         buf->pts = base_pts + av_rescale_q(sent, rate_tb, outlink->time_base);
         ret = ff_filter_frame(outlink, buf);
         if (ret < 0)

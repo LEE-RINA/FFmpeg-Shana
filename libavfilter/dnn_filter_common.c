@@ -68,7 +68,7 @@ int ff_dnn_init(DnnContext *ctx, DNNFunctionType func_type, AVFilterContext *fil
         return AVERROR(EINVAL);
     }
 
-    ctx->dnn_module = ff_get_dnn_module(ctx->backend_type);
+    ctx->dnn_module = ff_get_dnn_module(ctx->backend_type, filter_ctx);
     if (!ctx->dnn_module) {
         av_log(filter_ctx, AV_LOG_ERROR, "could not create DNN module for requested backend\n");
         return AVERROR(ENOMEM);
@@ -106,18 +106,18 @@ int ff_dnn_set_classify_post_proc(DnnContext *ctx, ClassifyPostProc post_proc)
     return 0;
 }
 
-DNNReturnType ff_dnn_get_input(DnnContext *ctx, DNNData *input)
+int ff_dnn_get_input(DnnContext *ctx, DNNData *input)
 {
     return ctx->model->get_input(ctx->model->model, input, ctx->model_inputname);
 }
 
-DNNReturnType ff_dnn_get_output(DnnContext *ctx, int input_width, int input_height, int *output_width, int *output_height)
+int ff_dnn_get_output(DnnContext *ctx, int input_width, int input_height, int *output_width, int *output_height)
 {
     return ctx->model->get_output(ctx->model->model, ctx->model_inputname, input_width, input_height,
                                     (const char *)ctx->model_outputnames[0], output_width, output_height);
 }
 
-DNNReturnType ff_dnn_execute_model(DnnContext *ctx, AVFrame *in_frame, AVFrame *out_frame)
+int ff_dnn_execute_model(DnnContext *ctx, AVFrame *in_frame, AVFrame *out_frame)
 {
     DNNExecBaseParams exec_params = {
         .input_name     = ctx->model_inputname,
@@ -129,7 +129,7 @@ DNNReturnType ff_dnn_execute_model(DnnContext *ctx, AVFrame *in_frame, AVFrame *
     return (ctx->dnn_module->execute_model)(ctx->model, &exec_params);
 }
 
-DNNReturnType ff_dnn_execute_model_classification(DnnContext *ctx, AVFrame *in_frame, AVFrame *out_frame, const char *target)
+int ff_dnn_execute_model_classification(DnnContext *ctx, AVFrame *in_frame, AVFrame *out_frame, const char *target)
 {
     DNNExecClassificationParams class_params = {
         {
@@ -149,7 +149,7 @@ DNNAsyncStatusType ff_dnn_get_result(DnnContext *ctx, AVFrame **in_frame, AVFram
     return (ctx->dnn_module->get_result)(ctx->model, in_frame, out_frame);
 }
 
-DNNReturnType ff_dnn_flush(DnnContext *ctx)
+int ff_dnn_flush(DnnContext *ctx)
 {
     return (ctx->dnn_module->flush)(ctx->model);
 }
@@ -158,6 +158,5 @@ void ff_dnn_uninit(DnnContext *ctx)
 {
     if (ctx->dnn_module) {
         (ctx->dnn_module->free_model)(&ctx->model);
-        av_freep(&ctx->dnn_module);
     }
 }

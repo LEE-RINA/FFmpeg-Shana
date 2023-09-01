@@ -16,6 +16,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "config_components.h"
+
 #include "libavutil/avassert.h"
 #include "libavutil/common.h"
 #include "libavutil/pixdesc.h"
@@ -261,13 +263,28 @@ static const struct {
 #ifdef VA_FOURCC_Y210
     MAP(Y210,    Y210),
 #endif
+#ifdef VA_FOURCC_Y212
+    MAP(Y212,    Y212),
+#endif
     // 4:4:0
     MAP(422V, YUV440P),
     // 4:4:4
     MAP(444P, YUV444P),
+#ifdef VA_FOURCC_XYUV
+    MAP(XYUV, VUYX),
+#endif
+#ifdef VA_FOURCC_Y410
+    MAP(Y410,    XV30),
+#endif
+#ifdef VA_FOURCC_Y412
+    MAP(Y412,    XV36),
+#endif
     // 4:2:0 10-bit
 #ifdef VA_FOURCC_P010
     MAP(P010, P010),
+#endif
+#ifdef VA_FOURCC_P012
+    MAP(P012, P012),
 #endif
 #ifdef VA_FOURCC_I010
     MAP(I010, YUV420P10),
@@ -355,6 +372,8 @@ static int vaapi_decode_find_best_format(AVCodecContext *avctx,
 
         ctx->pixel_format_attribute = (VASurfaceAttrib) {
             .type          = VASurfaceAttribPixelFormat,
+            .flags         = VA_SURFACE_ATTRIB_SETTABLE,
+            .value.type    = VAGenericValueTypeInteger,
             .value.value.i = best_fourcc,
         };
 
@@ -379,6 +398,11 @@ static const struct {
     MAP(MPEG4,       MPEG4_ADVANCED_SIMPLE,
                                MPEG4AdvancedSimple),
     MAP(MPEG4,       MPEG4_MAIN,      MPEG4Main   ),
+#if VA_CHECK_VERSION(1, 18, 0)
+    MAP(H264,        H264_HIGH_10_INTRA,
+                                      H264High10  ),
+    MAP(H264,        H264_HIGH_10,    H264High10  ),
+#endif
     MAP(H264,        H264_CONSTRAINED_BASELINE,
                            H264ConstrainedBaseline),
     MAP(H264,        H264_MAIN,       H264Main    ),
@@ -391,7 +415,9 @@ static const struct {
 #endif
 #if VA_CHECK_VERSION(1, 2, 0) && CONFIG_HEVC_VAAPI_HWACCEL
     MAP(HEVC,        HEVC_REXT,       None,
-                 ff_vaapi_parse_hevc_rext_profile ),
+                 ff_vaapi_parse_hevc_rext_scc_profile ),
+    MAP(HEVC,        HEVC_SCC,        None,
+                 ff_vaapi_parse_hevc_rext_scc_profile ),
 #endif
     MAP(MJPEG,       MJPEG_HUFFMAN_BASELINE_DCT,
                                       JPEGBaseline),
@@ -408,7 +434,9 @@ static const struct {
     MAP(VP9,         VP9_0,           VP9Profile0 ),
 #endif
 #if VA_CHECK_VERSION(0, 39, 0)
+    MAP(VP9,         VP9_1,           VP9Profile1 ),
     MAP(VP9,         VP9_2,           VP9Profile2 ),
+    MAP(VP9,         VP9_3,           VP9Profile3 ),
 #endif
 #if VA_CHECK_VERSION(1, 8, 0)
     MAP(AV1,         AV1_MAIN,        AV1Profile0),

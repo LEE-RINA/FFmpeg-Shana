@@ -44,11 +44,13 @@ pd_yuv2gbrp_y_start:       times 8 dd  (1 << 9)
 pd_yuv2gbrp_uv_start:      times 8 dd  ((1 << 9) - (128 << 19))
 pd_yuv2gbrp_a_start:       times 8 dd  (1 << 18)
 pd_yuv2gbrp16_offset:      times 8 dd  0x10000  ;(1 << 16)
-pd_yuv2gbrp16_round13:     times 8 dd  0x02000  ;(1 << 13)
+pd_yuv2gbrp16_round13:     times 8 dd  0xE0002000  ;(1 << 13) - (1 << 29)
 pd_yuv2gbrp16_a_offset:    times 8 dd  0x20002000
 pd_yuv2gbrp16_upper30:     times 8 dd  0x3FFFFFFF ;(1<<30) - 1
 pd_yuv2gbrp16_upper27:     times 8 dd  0x07FFFFFF ;(1<<27) - 1
+pd_yuv2gbrp16_upper16:     times 8 dd  0x0000FFFF ;(1<<16) - 1
 pd_yuv2gbrp16_upperC:      times 8 dd  0xC0000000
+pd_yuv2gbrp_debias:        times 8 dd  0x00008000 ;(1 << 29 - 14)
 pb_pack_shuffle8:       db  0,  4,  8, 12, \
                            -1, -1, -1, -1, \
                            -1, -1, -1, -1, \
@@ -295,7 +297,7 @@ cglobal yuv2planeX_%1, %3, 8, %2, filter, fltsize, src, dst, w, dither, offset
     test          dstq, 15
     jnz .unaligned
     yuv2planeX_mainloop %1, a
-    REP_RET
+    RET
 .unaligned:
     yuv2planeX_mainloop %1, u
 %endif ; mmsize == 8/16
@@ -305,18 +307,16 @@ cglobal yuv2planeX_%1, %3, 8, %2, filter, fltsize, src, dst, w, dither, offset
     ADD             rsp, pad
     RET
 %else ; x86-64
-    REP_RET
+    RET
 %endif ; x86-32/64
 %else ; %1 == 9/10/16
-    REP_RET
+    RET
 %endif ; %1 == 8/9/10/16
 %endmacro
 
-%if ARCH_X86_32
+%if ARCH_X86_32 && HAVE_ALIGNED_STACK == 0
 INIT_MMX mmxext
 yuv2planeX_fn  8,  0, 7
-yuv2planeX_fn  9,  0, 5
-yuv2planeX_fn 10,  0, 5
 %endif
 
 INIT_XMM sse2
@@ -407,19 +407,11 @@ cglobal yuv2plane1_%1, %3, %3, %2, src, dst, w, dither, offset
     movq            m3, [ditherq]        ; dither
     test       offsetd, offsetd
     jz              .no_rot
-%if mmsize == 16
     punpcklqdq      m3, m3
-%endif ; mmsize == 16
     PALIGNR         m3, m3, 3, m2
 .no_rot:
-%if mmsize == 8
-    mova            m2, m3
-    punpckhbw       m3, m4               ; byte->word
-    punpcklbw       m2, m4               ; byte->word
-%else
     punpcklbw       m3, m4
     mova            m2, m3
-%endif
 %elif %1 == 9
     pxor            m4, m4
     mova            m3, [pw_512]
@@ -431,35 +423,21 @@ cglobal yuv2plane1_%1, %3, %3, %2, src, dst, w, dither, offset
 %else ; %1 == 16
 %if cpuflag(sse4) ; sse4/avx
     mova            m4, [pd_4]
-%else ; mmx/sse2
+%else ; sse2
     mova            m4, [pd_4min0x40000]
     mova            m5, [minshort]
-%endif ; mmx/sse2/sse4/avx
+%endif ; sse2/sse4/avx
 %endif ; %1 == ..
 
     ; actual pixel scaling
-%if mmsize == 8
-    yuv2plane1_mainloop %1, a
-%else ; mmsize == 16
     test          dstq, 15
     jnz .unaligned
     yuv2plane1_mainloop %1, a
-    REP_RET
+    RET
 .unaligned:
     yuv2plane1_mainloop %1, u
-%endif ; mmsize == 8/16
-    REP_RET
+    RET
 %endmacro
-
-%if ARCH_X86_32
-INIT_MMX mmx
-yuv2plane1_fn  8, 0, 5
-yuv2plane1_fn 16, 0, 3
-
-INIT_MMX mmxext
-yuv2plane1_fn  9, 0, 3
-yuv2plane1_fn 10, 0, 3
-%endif
 
 INIT_XMM sse2
 yuv2plane1_fn  8, 5, 5
@@ -907,13 +885,25 @@ cglobal yuv2%1_full_X, 12, 14, 16, ptr, lumFilter, lumSrcx, lumFilterSize, chrFi
         paddd G, Y
         paddd B, Y
 
+%if  DEPTH < 16
         CLIPP2 R, 30
         CLIPP2 G, 30
         CLIPP2 B, 30
+%endif
 
         psrad R, RGB_SHIFT
         psrad G, RGB_SHIFT
         psrad B, RGB_SHIFT
+
+%if  DEPTH >= 16
+        paddd R, [pd_yuv2gbrp_debias]
+        paddd G, [pd_yuv2gbrp_debias]
+        paddd B, [pd_yuv2gbrp_debias]
+
+        CLIPP2 R, 16
+        CLIPP2 G, 16
+        CLIPP2 B, 16
+%endif
 
 %if FLOAT
         cvtdq2ps R, R

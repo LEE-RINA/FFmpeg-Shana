@@ -20,14 +20,12 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "config_components.h"
+
 #include "avformat.h"
 #include "internal.h"
-#include "avio_internal.h"
 #include "rawdec.h"
 #include "libavutil/opt.h"
-#include "libavutil/parseutils.h"
-#include "libavutil/pixdesc.h"
-#include "libavutil/intreadwrite.h"
 
 #define RAW_PACKET_SIZE 1024
 
@@ -86,7 +84,7 @@ int ff_raw_video_read_header(AVFormatContext *s)
     st->codecpar->codec_id = s->iformat->raw_codec_id;
     sti->need_parsing = AVSTREAM_PARSE_FULL_RAW;
 
-    sti->avctx->framerate = s1->framerate;
+    st->avg_frame_rate = s1->framerate;
     avpriv_set_pts_info(st, 64, 1, 1200000);
 
 fail:

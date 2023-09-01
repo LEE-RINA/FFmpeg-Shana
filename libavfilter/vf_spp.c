@@ -38,6 +38,7 @@
 #include "internal.h"
 #include "qp_table.h"
 #include "vf_spp.h"
+#include "video.h"
 
 enum mode {
     MODE_HARD,
@@ -343,8 +344,9 @@ static int config_input(AVFilterLink *inlink)
     av_opt_set_int(s->dct, "bits_per_sample", bps, 0);
     avcodec_dct_init(s->dct);
 
-    if (ARCH_X86)
-        ff_spp_init_x86(s);
+#if ARCH_X86
+    ff_spp_init_x86(s);
+#endif
 
     s->hsub = desc->log2_chroma_w;
     s->vsub = desc->log2_chroma_h;
@@ -483,13 +485,6 @@ static const AVFilterPad spp_inputs[] = {
     },
 };
 
-static const AVFilterPad spp_outputs[] = {
-    {
-        .name = "default",
-        .type = AVMEDIA_TYPE_VIDEO,
-    },
-};
-
 const AVFilter ff_vf_spp = {
     .name            = "spp",
     .description     = NULL_IF_CONFIG_SMALL("Apply a simple post processing filter."),
@@ -497,7 +492,7 @@ const AVFilter ff_vf_spp = {
     .preinit         = preinit,
     .uninit          = uninit,
     FILTER_INPUTS(spp_inputs),
-    FILTER_OUTPUTS(spp_outputs),
+    FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
     .process_command = process_command,
     .priv_class      = &spp_class,

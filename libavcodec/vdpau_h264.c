@@ -24,10 +24,9 @@
 #include <vdpau/vdpau.h>
 
 #include "avcodec.h"
-#include "internal.h"
 #include "h264dec.h"
 #include "h264_ps.h"
-#include "hwconfig.h"
+#include "hwaccel_internal.h"
 #include "mpegutils.h"
 #include "vdpau.h"
 #include "vdpau_internal.h"
@@ -262,11 +261,11 @@ static int vdpau_h264_init(AVCodecContext *avctx)
     return ff_vdpau_common_init(avctx, profile, level);
 }
 
-const AVHWAccel ff_h264_vdpau_hwaccel = {
-    .name           = "h264_vdpau",
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_H264,
-    .pix_fmt        = AV_PIX_FMT_VDPAU,
+const FFHWAccel ff_h264_vdpau_hwaccel = {
+    .p.name         = "h264_vdpau",
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_H264,
+    .p.pix_fmt      = AV_PIX_FMT_VDPAU,
     .start_frame    = vdpau_h264_start_frame,
     .end_frame      = vdpau_h264_end_frame,
     .decode_slice   = vdpau_h264_decode_slice,

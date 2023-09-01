@@ -30,6 +30,7 @@
 #include <ass/ass.h>
 
 #include "config.h"
+#include "config_components.h"
 #if CONFIG_SUBTITLES_FILTER
 # include "libavcodec/avcodec.h"
 # include "libavformat/avformat.h"
@@ -44,6 +45,8 @@
 #include "formats.h"
 #include "video.h"
 #include <windows.h>
+
+#define FF_ASS_FEATURE_WRAP_UNICODE     (LIBASS_VERSION >= 0x01600010)
 
 typedef struct AssContext {
     const AVClass *class;
@@ -63,6 +66,7 @@ typedef struct AssContext {
     double subdelay;
     int shaping;
     FFDrawContext draw;
+    int wrap_unicode;
 } AssContext;
 
 #define OFFSET(x) offsetof(AssContext, x)
@@ -151,9 +155,13 @@ static int config_input(AVFilterLink *inlink)
     ff_draw_init(&ass->draw, inlink->format, ass->alpha ? FF_DRAW_PROCESS_ALPHA : 0);
 
     ass_set_frame_size  (ass->renderer, inlink->w, inlink->h);
-    if (ass->original_w && ass->original_h)
+    if (ass->original_w && ass->original_h) {
         ass_set_pixel_aspect(ass->renderer, (double)inlink->w / inlink->h /
                              ((double)ass->original_w / ass->original_h));
+        ass_set_storage_size(ass->renderer, ass->original_w, ass->original_h);
+    } else
+        ass_set_storage_size(ass->renderer, inlink->w, inlink->h);
+
     if (ass->shaping != -1)
         ass_set_shaper(ass->renderer, ass->shaping);
 
@@ -209,13 +217,6 @@ static const AVFilterPad ass_inputs[] = {
     },
 };
 
-static const AVFilterPad ass_outputs[] = {
-    {
-        .name = "default",
-        .type = AVMEDIA_TYPE_VIDEO,
-    },
-};
-
 #if CONFIG_ASS_FILTER
 
 static const AVOption ass_options[] = {
@@ -265,7 +266,7 @@ const AVFilter ff_vf_ass = {
     .init          = init_ass,
     .uninit        = uninit,
     FILTER_INPUTS(ass_inputs),
-    FILTER_OUTPUTS(ass_outputs),
+    FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_QUERY_FUNC(query_formats),
     .priv_class    = &ass_class,
 };
@@ -279,10 +280,20 @@ static const AVOption subtitles_options[] = {
     {"stream_index", "set stream index",             OFFSET(stream_index), AV_OPT_TYPE_INT,    { .i64 = -1 }, -1,       INT_MAX,  FLAGS},
     {"si",           "set stream index",             OFFSET(stream_index), AV_OPT_TYPE_INT,    { .i64 = -1 }, -1,       INT_MAX,  FLAGS},
     {"force_style",  "force subtitle style",         OFFSET(force_style),  AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, FLAGS},
+#if FF_ASS_FEATURE_WRAP_UNICODE
+    {"wrap_unicode", "break lines according to the Unicode Line Breaking Algorithm", OFFSET(wrap_unicode), AV_OPT_TYPE_BOOL, { .i64 = -1 }, -1, 1, FLAGS },
+#endif
     {NULL},
 };
 
 static const char * const font_mimetypes[] = {
+    "font/ttf",
+    "font/otf",
+    "font/sfnt",
+    "font/woff",
+    "font/woff2",
+    "application/font-sfnt",
+    "application/font-woff",
     "application/x-truetype-font",
     "application/vnd.ms-opentype",
     "application/x-font-ttf",
@@ -441,6 +452,18 @@ static av_cold int init_subtitles(AVFilterContext *ctx)
     if (ret < 0)
         goto end;
 
+#if FF_ASS_FEATURE_WRAP_UNICODE
+    /* Don't overwrite wrap automatically for native ASS */
+    if (ass->wrap_unicode == -1)
+        ass->wrap_unicode = st->codecpar->codec_id != AV_CODEC_ID_ASS;
+    if (ass->wrap_unicode) {
+        ret = ass_track_set_feature(ass->track, ASS_FEATURE_WRAP_UNICODE, 1);
+        if (ret < 0)
+            av_log(ctx, AV_LOG_WARNING,
+                   "libass wasn't built with ASS_FEATURE_WRAP_UNICODE support\n");
+    }
+#endif
+
     if (ass->force_style) {
         char **list = NULL;
         char *temp = NULL;
@@ -506,7 +529,7 @@ const AVFilter ff_vf_subtitles = {
     .init          = init_subtitles,
     .uninit        = uninit,
     FILTER_INPUTS(ass_inputs),
-    FILTER_OUTPUTS(ass_outputs),
+    FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_QUERY_FUNC(query_formats),
     .priv_class    = &subtitles_class,
 };

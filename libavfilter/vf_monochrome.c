@@ -21,9 +21,8 @@
 #include <float.h>
 
 #include "libavutil/opt.h"
-#include "libavutil/imgutils.h"
+#include "libavutil/pixdesc.h"
 #include "avfilter.h"
-#include "formats.h"
 #include "internal.h"
 #include "video.h"
 
@@ -107,7 +106,7 @@ static int monochrome_slice8(AVFilterContext *ctx, void *arg, int jobnr, int nb_
         for (int x = 0; x < width; x++) {
             PROCESS()
 
-            yptr[x] = av_clip_uint8(ny * max);
+            yptr[x] = av_clip_uint8(lrintf(ny * max));
         }
 
         yptr += ylinesize;
@@ -146,7 +145,7 @@ static int monochrome_slice16(AVFilterContext *ctx, void *arg, int jobnr, int nb
         for (int x = 0; x < width; x++) {
             PROCESS()
 
-            yptr[x] = av_clip_uintp2_c(ny * max, depth);
+            yptr[x] = av_clip_uintp2_c(lrintf(ny * max), depth);
         }
 
         yptr += ylinesize;
@@ -268,13 +267,6 @@ static const AVFilterPad monochrome_inputs[] = {
     },
 };
 
-static const AVFilterPad monochrome_outputs[] = {
-    {
-        .name = "default",
-        .type = AVMEDIA_TYPE_VIDEO,
-    },
-};
-
 #define OFFSET(x) offsetof(MonochromeContext, x)
 #define VF AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_RUNTIME_PARAM
 
@@ -294,7 +286,7 @@ const AVFilter ff_vf_monochrome = {
     .priv_size     = sizeof(MonochromeContext),
     .priv_class    = &monochrome_class,
     FILTER_INPUTS(monochrome_inputs),
-    FILTER_OUTPUTS(monochrome_outputs),
+    FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pixel_fmts),
     .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .process_command = ff_filter_process_command,

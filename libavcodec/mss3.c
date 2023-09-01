@@ -26,7 +26,8 @@
 
 #include "avcodec.h"
 #include "bytestream.h"
-#include "internal.h"
+#include "codec_internal.h"
+#include "decode.h"
 #include "mathops.h"
 #include "mss34dsp.h"
 
@@ -681,8 +682,8 @@ static av_cold void init_coders(MSS3Context *ctx)
     }
 }
 
-static int mss3_decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
-                             AVPacket *avpkt)
+static int mss3_decode_frame(AVCodecContext *avctx, AVFrame *rframe,
+                             int *got_frame, AVPacket *avpkt)
 {
     const uint8_t *buf = avpkt->data;
     int buf_size = avpkt->size;
@@ -739,10 +740,13 @@ static int mss3_decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
 
     if ((ret = ff_reget_buffer(avctx, c->pic, 0)) < 0)
         return ret;
-    c->pic->key_frame = keyframe;
+    if (keyframe)
+        c->pic->flags |= AV_FRAME_FLAG_KEY;
+    else
+        c->pic->flags &= ~AV_FRAME_FLAG_KEY;
     c->pic->pict_type = keyframe ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_P;
     if (!bytestream2_get_bytes_left(&gb)) {
-        if ((ret = av_frame_ref(data, c->pic)) < 0)
+        if ((ret = av_frame_ref(rframe, c->pic)) < 0)
             return ret;
         *got_frame      = 1;
 
@@ -801,7 +805,7 @@ static int mss3_decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
         dst[2] += c->pic->linesize[2] * 8;
     }
 
-    if ((ret = av_frame_ref(data, c->pic)) < 0)
+    if ((ret = av_frame_ref(rframe, c->pic)) < 0)
         return ret;
 
     *got_frame      = 1;
@@ -859,15 +863,15 @@ static av_cold int mss3_decode_init(AVCodecContext *avctx)
     return 0;
 }
 
-const AVCodec ff_msa1_decoder = {
-    .name           = "msa1",
-    .long_name      = NULL_IF_CONFIG_SMALL("MS ATC Screen"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_MSA1,
+const FFCodec ff_msa1_decoder = {
+    .p.name         = "msa1",
+    CODEC_LONG_NAME("MS ATC Screen"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_MSA1,
     .priv_data_size = sizeof(MSS3Context),
     .init           = mss3_decode_init,
     .close          = mss3_decode_end,
-    .decode         = mss3_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
-    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
+    FF_CODEC_DECODE_CB(mss3_decode_frame),
+    .p.capabilities = AV_CODEC_CAP_DR1,
+    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
 };

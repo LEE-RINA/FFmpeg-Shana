@@ -20,11 +20,14 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "config_components.h"
+
 #include "libavutil/avassert.h"
 #include "libavutil/pixdesc.h"
 
 #include "dxva2_internal.h"
 #include "av1dec.h"
+#include "hwaccel_internal.h"
 
 #define MAX_TILES 256
 
@@ -72,7 +75,7 @@ static int fill_picture_parameters(const AVCodecContext *avctx, AVDXVAContext *c
     pp->max_width  = seq->max_frame_width_minus_1 + 1;
     pp->max_height = seq->max_frame_height_minus_1 + 1;
 
-    pp->CurrPicTextureIndex = ff_dxva2_get_surface_index(avctx, ctx, h->cur_frame.tf.f);
+    pp->CurrPicTextureIndex = ff_dxva2_get_surface_index(avctx, ctx, h->cur_frame.f);
     pp->superres_denom      = frame_header->use_superres ? frame_header->coded_denom + AV1_SUPERRES_DENOM_MIN : AV1_SUPERRES_NUM;
     pp->bitdepth            = get_bit_depth_from_seq(seq);
     pp->seq_profile         = seq->seq_profile;
@@ -132,7 +135,7 @@ static int fill_picture_parameters(const AVCodecContext *avctx, AVDXVAContext *c
     memset(pp->RefFrameMapTextureIndex, 0xFF, sizeof(pp->RefFrameMapTextureIndex));
     for (i = 0; i < AV1_REFS_PER_FRAME; i++) {
         int8_t ref_idx = frame_header->ref_frame_idx[i];
-        AVFrame *ref_frame = h->ref[ref_idx].tf.f;
+        AVFrame *ref_frame = h->ref[ref_idx].f;
 
         pp->frame_refs[i].width  = ref_frame->width;
         pp->frame_refs[i].height = ref_frame->height;
@@ -146,7 +149,7 @@ static int fill_picture_parameters(const AVCodecContext *avctx, AVDXVAContext *c
         }
     }
     for (i = 0; i < AV1_NUM_REF_FRAMES; i++) {
-        AVFrame *ref_frame = h->ref[i].tf.f;
+        AVFrame *ref_frame = h->ref[i].f;
         if (ref_frame->buf[0])
             pp->RefFrameMapTextureIndex[i] = ff_dxva2_get_surface_index(avctx, ctx, ref_frame);
     }
@@ -436,7 +439,7 @@ static int dxva2_av1_end_frame(AVCodecContext *avctx)
     if (ctx_pic->bitstream_size <= 0)
         return -1;
 
-    ret = ff_dxva2_common_end_frame(avctx, h->cur_frame.tf.f,
+    ret = ff_dxva2_common_end_frame(avctx, h->cur_frame.f,
                                     &ctx_pic->pp, sizeof(ctx_pic->pp),
                                     NULL, 0,
                                     commit_bitstream_and_slice_buffer);
@@ -455,11 +458,11 @@ static int dxva2_av1_uninit(AVCodecContext *avctx)
 }
 
 #if CONFIG_AV1_DXVA2_HWACCEL
-const AVHWAccel ff_av1_dxva2_hwaccel = {
-    .name           = "av1_dxva2",
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_AV1,
-    .pix_fmt        = AV_PIX_FMT_DXVA2_VLD,
+const FFHWAccel ff_av1_dxva2_hwaccel = {
+    .p.name         = "av1_dxva2",
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_AV1,
+    .p.pix_fmt      = AV_PIX_FMT_DXVA2_VLD,
     .init           = ff_dxva2_decode_init,
     .uninit         = dxva2_av1_uninit,
     .start_frame    = dxva2_av1_start_frame,
@@ -472,11 +475,11 @@ const AVHWAccel ff_av1_dxva2_hwaccel = {
 #endif
 
 #if CONFIG_AV1_D3D11VA_HWACCEL
-const AVHWAccel ff_av1_d3d11va_hwaccel = {
-    .name           = "av1_d3d11va",
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_AV1,
-    .pix_fmt        = AV_PIX_FMT_D3D11VA_VLD,
+const FFHWAccel ff_av1_d3d11va_hwaccel = {
+    .p.name         = "av1_d3d11va",
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_AV1,
+    .p.pix_fmt      = AV_PIX_FMT_D3D11VA_VLD,
     .init           = ff_dxva2_decode_init,
     .uninit         = dxva2_av1_uninit,
     .start_frame    = dxva2_av1_start_frame,
@@ -489,11 +492,11 @@ const AVHWAccel ff_av1_d3d11va_hwaccel = {
 #endif
 
 #if CONFIG_AV1_D3D11VA2_HWACCEL
-const AVHWAccel ff_av1_d3d11va2_hwaccel = {
-    .name           = "av1_d3d11va2",
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_AV1,
-    .pix_fmt        = AV_PIX_FMT_D3D11,
+const FFHWAccel ff_av1_d3d11va2_hwaccel = {
+    .p.name         = "av1_d3d11va2",
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_AV1,
+    .p.pix_fmt      = AV_PIX_FMT_D3D11,
     .init           = ff_dxva2_decode_init,
     .uninit         = dxva2_av1_uninit,
     .start_frame    = dxva2_av1_start_frame,

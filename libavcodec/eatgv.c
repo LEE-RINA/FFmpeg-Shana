@@ -28,13 +28,13 @@
  * http://wiki.multimedia.cx/index.php?title=Electronic_Arts_TGV
  */
 
-#include "libavutil/imgutils.h"
 #include "libavutil/mem.h"
 
 #define BITSTREAM_READER_LE
 #include "avcodec.h"
 #include "get_bits.h"
-#include "internal.h"
+#include "codec_internal.h"
+#include "decode.h"
 
 #define EA_PREAMBLE_SIZE    8
 #define kVGT_TAG MKTAG('k', 'V', 'G', 'T')
@@ -261,15 +261,13 @@ static int tgv_decode_inter(TgvContext *s, AVFrame *frame,
     return 0;
 }
 
-static int tgv_decode_frame(AVCodecContext *avctx,
-                            void *data, int *got_frame,
-                            AVPacket *avpkt)
+static int tgv_decode_frame(AVCodecContext *avctx, AVFrame *frame,
+                            int *got_frame, AVPacket *avpkt)
 {
     const uint8_t *buf     = avpkt->data;
     int buf_size           = avpkt->size;
     TgvContext *s          = avctx->priv_data;
     const uint8_t *buf_end = buf + buf_size;
-    AVFrame *frame         = data;
     int chunk_type, ret;
 
     if (buf_end - buf < EA_PREAMBLE_SIZE)
@@ -312,7 +310,7 @@ static int tgv_decode_frame(AVCodecContext *avctx,
 
     if (chunk_type == kVGT_TAG) {
         int y;
-        frame->key_frame = 1;
+        frame->flags |= AV_FRAME_FLAG_KEY;
         frame->pict_type = AV_PICTURE_TYPE_I;
 
         if (!s->frame_buffer &&
@@ -332,7 +330,7 @@ static int tgv_decode_frame(AVCodecContext *avctx,
             av_log(avctx, AV_LOG_WARNING, "inter frame without corresponding intra frame\n");
             return buf_size;
         }
-        frame->key_frame = 0;
+        frame->flags &= ~AV_FRAME_FLAG_KEY;
         frame->pict_type = AV_PICTURE_TYPE_P;
         if (tgv_decode_inter(s, frame, buf, buf_end) < 0) {
             av_log(avctx, AV_LOG_WARNING, "truncated inter frame\n");
@@ -359,15 +357,14 @@ static av_cold int tgv_decode_end(AVCodecContext *avctx)
     return 0;
 }
 
-const AVCodec ff_eatgv_decoder = {
-    .name           = "eatgv",
-    .long_name      = NULL_IF_CONFIG_SMALL("Electronic Arts TGV video"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_TGV,
+const FFCodec ff_eatgv_decoder = {
+    .p.name         = "eatgv",
+    CODEC_LONG_NAME("Electronic Arts TGV video"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_TGV,
     .priv_data_size = sizeof(TgvContext),
     .init           = tgv_decode_init,
     .close          = tgv_decode_end,
-    .decode         = tgv_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
-    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE,
+    FF_CODEC_DECODE_CB(tgv_decode_frame),
+    .p.capabilities = AV_CODEC_CAP_DR1,
 };

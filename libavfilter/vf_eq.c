@@ -27,12 +27,13 @@
  * very simple video equalizer
  */
 
-#include "libavfilter/internal.h"
 #include "libavutil/common.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
+#include "internal.h"
 #include "vf_eq.h"
+#include "video.h"
 
 static void create_lut(EQParameters *param)
 {
@@ -70,26 +71,6 @@ static void apply_lut(EQParameters *param, uint8_t *dst, int dst_stride,
     for (y = 0; y < h; y++) {
         for (x = 0; x < w; x++) {
             dst[y * dst_stride + x] = param->lut[src[y * src_stride + x]];
-        }
-    }
-}
-
-static void process_c(EQParameters *param, uint8_t *dst, int dst_stride,
-                      const uint8_t *src, int src_stride, int w, int h)
-{
-    int x, y, pel;
-
-    int contrast = (int) (param->contrast * 256 * 16);
-    int brightness = ((int) (100.0 * param->brightness + 100.0) * 511) / 200 - 128 - contrast / 32;
-
-    for (y = 0; y < h; y++) {
-        for (x = 0; x < w; x++) {
-            pel = ((src[y * src_stride + x] * contrast) >> 12) + brightness;
-
-            if (pel & ~255)
-                pel = (-pel) >> 31;
-
-            dst[y * dst_stride + x] = pel;
         }
     }
 }
@@ -174,13 +155,6 @@ static int set_expr(AVExpr **pexpr, const char *expr, const char *option, void *
     return 0;
 }
 
-void ff_eq_init(EQContext *eq)
-{
-    eq->process = process_c;
-    if (ARCH_X86)
-        ff_eq_init_x86(eq);
-}
-
 static int initialize(AVFilterContext *ctx)
 {
     EQContext *eq = ctx->priv;
@@ -248,7 +222,6 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     AVFilterLink *outlink = inlink->dst->outputs[0];
     EQContext *eq = ctx->priv;
     AVFrame *out;
-    int64_t pos = in->pkt_pos;
     const AVPixFmtDescriptor *desc;
     int i;
 
@@ -262,7 +235,14 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     desc = av_pix_fmt_desc_get(inlink->format);
 
     eq->var_values[VAR_N]   = inlink->frame_count_out;
-    eq->var_values[VAR_POS] = pos == -1 ? NAN : pos;
+#if FF_API_FRAME_PKT
+FF_DISABLE_DEPRECATION_WARNINGS
+    {
+        int64_t pos = in->pkt_pos;
+        eq->var_values[VAR_POS] = pos == -1 ? NAN : pos;
+    }
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
     eq->var_values[VAR_T]   = TS2T(in->pts, inlink->time_base);
 
     if (eq->eval_mode == EVAL_MODE_FRAME) {
@@ -334,13 +314,6 @@ static const AVFilterPad eq_inputs[] = {
     },
 };
 
-static const AVFilterPad eq_outputs[] = {
-    {
-        .name = "default",
-        .type = AVMEDIA_TYPE_VIDEO,
-    },
-};
-
 #define OFFSET(x) offsetof(EQContext, x)
 #define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM
 #define TFLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_RUNTIME_PARAM
@@ -375,7 +348,7 @@ const AVFilter ff_vf_eq = {
     .priv_size       = sizeof(EQContext),
     .priv_class      = &eq_class,
     FILTER_INPUTS(eq_inputs),
-    FILTER_OUTPUTS(eq_outputs),
+    FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pixel_fmts_eq),
     .process_command = process_command,
     .init            = initialize,

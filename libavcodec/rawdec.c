@@ -26,6 +26,7 @@
 
 #include "avcodec.h"
 #include "bswapdsp.h"
+#include "codec_internal.h"
 #include "decode.h"
 #include "get_bits.h"
 #include "internal.h"
@@ -162,8 +163,8 @@ static void name(AVCodecContext *avctx, uint8_t * dst, const uint8_t *buf, int b
 MKSCALE16(scale16be, AV_RB16, AV_WB16)
 MKSCALE16(scale16le, AV_RL16, AV_WL16)
 
-static int raw_decode(AVCodecContext *avctx, void *data, int *got_frame,
-                      AVPacket *avpkt)
+static int raw_decode(AVCodecContext *avctx, AVFrame *frame,
+                      int *got_frame, AVPacket *avpkt)
 {
     const AVPixFmtDescriptor *desc;
     RawVideoContext *context       = avctx->priv_data;
@@ -173,8 +174,6 @@ static int raw_decode(AVCodecContext *avctx, void *data, int *got_frame,
     int stride;
     int res, len;
     int need_copy;
-
-    AVFrame   *frame   = data;
 
     if (avctx->width <= 0) {
         av_log(avctx, AV_LOG_ERROR, "width is not set\n");
@@ -228,18 +227,16 @@ static int raw_decode(AVCodecContext *avctx, void *data, int *got_frame,
     need_copy = !avpkt->buf || context->is_1_2_4_8_bpp || context->is_yuv2 || context->is_lt_16bpp;
 
     frame->pict_type        = AV_PICTURE_TYPE_I;
-    frame->key_frame        = 1;
+    frame->flags |= AV_FRAME_FLAG_KEY;
 
     res = ff_decode_frame_props(avctx, frame);
     if (res < 0)
         return res;
 
-    frame->pkt_pos      = avctx->internal->last_pkt_props->pos;
-    frame->pkt_duration = avctx->internal->last_pkt_props->duration;
-
     if (context->tff >= 0) {
-        frame->interlaced_frame = 1;
-        frame->top_field_first  = context->tff;
+        frame->flags |= AV_FRAME_FLAG_INTERLACED;
+        if (context->tff == 1)
+            frame->flags |= AV_FRAME_FLAG_TOP_FIELD_FIRST;
     }
 
     if ((res = av_image_check_size(avctx->width, avctx->height, 0, avctx)) < 0)
@@ -376,7 +373,11 @@ static int raw_decode(AVCodecContext *avctx, void *data, int *got_frame,
         }
 
         if (ff_copy_palette(context->palette->data, avpkt, avctx)) {
+#if FF_API_PALETTE_HAS_CHANGED
+FF_DISABLE_DEPRECATION_WARNINGS
             frame->palette_has_changed = 1;
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
         } else if (context->is_nut_pal8) {
             int vid_size = avctx->width * avctx->height;
             int pal_size = avpkt->size - vid_size;
@@ -384,7 +385,11 @@ static int raw_decode(AVCodecContext *avctx, void *data, int *got_frame,
             if (avpkt->size > vid_size && pal_size <= AVPALETTE_SIZE) {
                 const uint8_t *pal = avpkt->data + vid_size;
                 memcpy(context->palette->data, pal, pal_size);
+#if FF_API_PALETTE_HAS_CHANGED
+FF_DISABLE_DEPRECATION_WARNINGS
                 frame->palette_has_changed = 1;
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
             }
         }
     }
@@ -463,9 +468,9 @@ static int raw_decode(AVCodecContext *avctx, void *data, int *got_frame,
     }
 
     if (avctx->field_order > AV_FIELD_PROGRESSIVE) { /* we have interlaced material flagged in container */
-        frame->interlaced_frame = 1;
+        frame->flags |= AV_FRAME_FLAG_INTERLACED;
         if (avctx->field_order == AV_FIELD_TT || avctx->field_order == AV_FIELD_TB)
-            frame->top_field_first = 1;
+            frame->flags |= AV_FRAME_FLAG_TOP_FIELD_FIRST;
     }
 
     *got_frame = 1;
@@ -481,16 +486,15 @@ static av_cold int raw_close_decoder(AVCodecContext *avctx)
     return 0;
 }
 
-const AVCodec ff_rawvideo_decoder = {
-    .name           = "rawvideo",
-    .long_name      = NULL_IF_CONFIG_SMALL("raw video"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_RAWVIDEO,
+const FFCodec ff_rawvideo_decoder = {
+    .p.name         = "rawvideo",
+    CODEC_LONG_NAME("raw video"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_RAWVIDEO,
     .priv_data_size = sizeof(RawVideoContext),
     .init           = raw_init_decoder,
     .close          = raw_close_decoder,
-    .decode         = raw_decode,
-    .priv_class     = &rawdec_class,
-    .capabilities   = AV_CODEC_CAP_PARAM_CHANGE,
-    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE,
+    FF_CODEC_DECODE_CB(raw_decode),
+    .p.priv_class   = &rawdec_class,
+    .p.capabilities = AV_CODEC_CAP_PARAM_CHANGE,
 };

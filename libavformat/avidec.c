@@ -19,6 +19,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "config_components.h"
+
 #include <inttypes.h>
 
 #include "libavutil/avassert.h"
@@ -30,13 +32,14 @@
 #include "libavutil/mathematics.h"
 #include "avformat.h"
 #include "avi.h"
+#include "demux.h"
 #include "dv.h"
 #include "internal.h"
 #include "isom.h"
 #include "riff.h"
 #include "libavcodec/bytestream.h"
 #include "libavcodec/exif.h"
-#include "libavcodec/internal.h"
+#include "libavcodec/startcode.h"
 
 typedef struct AVIStream {
     int64_t frame_offset;   /* current frame (video) or byte (audio) counter
@@ -79,6 +82,8 @@ typedef struct AVIContext {
     int stream_index;
     DVDemuxContext *dv_demux;
     int odml_depth;
+    int64_t odml_read;
+    int64_t odml_max_pos;
     int use_odml;
 #define MAX_ODML_DEPTH 1000
     int64_t dts_max;
@@ -197,7 +202,7 @@ static int read_odml_index(AVFormatContext *s, int64_t frame_num)
     st  = s->streams[stream_id];
     ast = st->priv_data;
 
-    if (index_sub_type)
+    if (index_sub_type || entries_in_use < 0)
         return AVERROR_INVALIDDATA;
 
     avio_rl32(pb);
@@ -218,11 +223,18 @@ static int read_odml_index(AVFormatContext *s, int64_t frame_num)
     }
 
     for (i = 0; i < entries_in_use; i++) {
+        avi->odml_max_pos = FFMAX(avi->odml_max_pos, avio_tell(pb));
+
+        // If we read more than there are bytes then we must have been reading something twice
+        if (avi->odml_read > avi->odml_max_pos)
+            return AVERROR_INVALIDDATA;
+
         if (index_type) {
             int64_t pos = avio_rl32(pb) + base - 8;
             int len     = avio_rl32(pb);
             int key     = len >= 0;
             len &= 0x7FFFFFFF;
+            avi->odml_read += 8;
 
             av_log(s, AV_LOG_TRACE, "pos:%"PRId64", len:%X\n", pos, len);
 
@@ -241,6 +253,7 @@ static int read_odml_index(AVFormatContext *s, int64_t frame_num)
             int64_t offset, pos;
             int duration;
             int ret;
+            avi->odml_read += 16;
 
             offset = avio_rl64(pb);
             avio_rl32(pb);       /* size */
@@ -619,7 +632,7 @@ static int avi_read_header(AVFormatContext *s)
 
                 ast = s->streams[0]->priv_data;
                 st->priv_data = NULL;
-                ff_free_stream(s, st);
+                ff_remove_stream(s, st);
 
                 avi->dv_demux = avpriv_dv_init_demux(s);
                 if (!avi->dv_demux) {
@@ -862,6 +875,8 @@ static int avi_read_header(AVFormatContext *s)
                             memcpy(st->codecpar->extradata + st->codecpar->extradata_size - 9,
                                    "BottomUp", 9);
                     }
+                    if (st->codecpar->height == INT_MIN)
+                        return AVERROR_INVALIDDATA;
                     st->codecpar->height = FFABS(st->codecpar->height);
 
 //                    avio_skip(pb, size - 5 * 4);
@@ -909,6 +924,7 @@ static int avi_read_header(AVFormatContext *s)
                         ast->dshow_block_align = 0;
                     }
                     if ((st->codecpar->codec_id == AV_CODEC_ID_AAC  ||
+                         st->codecpar->codec_id == AV_CODEC_ID_FTR  ||
                          st->codecpar->codec_id == AV_CODEC_ID_FLAC ||
                          st->codecpar->codec_id == AV_CODEC_ID_MP2 ) && ast->dshow_block_align <= 4 && ast->dshow_block_align) {
                         av_log(s, AV_LOG_DEBUG, "overriding invalid dshow_block_align of %d\n", ast->dshow_block_align);
@@ -1854,13 +1870,20 @@ static int avi_read_seek(AVFormatContext *s, int stream_index,
     st    = s->streams[stream_index];
     sti   = ffstream(st);
     ast   = st->priv_data;
-    index = av_index_search_timestamp(st,
-                                      timestamp * FFMAX(ast->sample_size, 1),
-                                      flags);
+
+    if (avi->dv_demux) {
+        // index entries are in the AVI scale/rate timebase, which does
+        // not match DV demuxer's stream timebase
+        timestamp = av_rescale_q(timestamp, st->time_base,
+                                 (AVRational){ ast->scale, ast->rate });
+    } else
+        timestamp *= FFMAX(ast->sample_size, 1);
+
+    index = av_index_search_timestamp(st, timestamp, flags);
     if (index < 0) {
         if (sti->nb_index_entries > 0)
             av_log(s, AV_LOG_DEBUG, "Failed to find timestamp %"PRId64 " in index %"PRId64 " .. %"PRId64 "\n",
-                   timestamp * FFMAX(ast->sample_size, 1),
+                   timestamp,
                    sti->index_entries[0].timestamp,
                    sti->index_entries[sti->nb_index_entries - 1].timestamp);
         return AVERROR_INVALIDDATA;
@@ -1868,7 +1891,7 @@ static int avi_read_seek(AVFormatContext *s, int stream_index,
 
     /* find the position */
     pos       = sti->index_entries[index].pos;
-    timestamp = sti->index_entries[index].timestamp / FFMAX(ast->sample_size, 1);
+    timestamp = sti->index_entries[index].timestamp;
 
     av_log(s, AV_LOG_TRACE, "XX %"PRId64" %d %"PRId64"\n",
             timestamp, index, sti->index_entries[index].timestamp);
@@ -1883,11 +1906,14 @@ static int avi_read_seek(AVFormatContext *s, int stream_index,
 
         /* Feed the DV video stream version of the timestamp to the */
         /* DV demux so it can synthesize correct timestamps.        */
-        ff_dv_offset_reset(avi->dv_demux, timestamp);
+        ff_dv_ts_reset(avi->dv_demux,
+                           av_rescale_q(timestamp, (AVRational){ ast->scale, ast->rate },
+                                        st->time_base));
 
         avi->stream_index = -1;
         return 0;
     }
+    timestamp /= FFMAX(ast->sample_size, 1);
 
     pos_min = pos;
     for (i = 0; i < s->nb_streams; i++) {

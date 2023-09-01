@@ -552,8 +552,8 @@ dshow_cycle_devices(AVFormatContext *avctx, ICreateDevEnum *devenum,
                 if (!device)
                     goto fail;
 
-                device->device_name = av_strdup(friendly_name);
-                device->device_description = av_strdup(unique_name);
+                device->device_name = av_strdup(unique_name);
+                device->device_description = av_strdup(friendly_name);
                 if (!device->device_name || !device->device_description)
                     goto fail;
 
@@ -1002,23 +1002,12 @@ dshow_cycle_formats(AVFormatContext *avctx, enum dshowDeviceType devtype,
                 );
                 continue;
             }
-            if (requested_sample_rate) {
-                if (requested_sample_rate > acaps->MaximumSampleFrequency ||
-                    requested_sample_rate < acaps->MinimumSampleFrequency)
-                    goto next;
-                fx->nSamplesPerSec = requested_sample_rate;
-            }
-            if (requested_sample_size) {
-                if (requested_sample_size > acaps->MaximumBitsPerSample ||
-                    requested_sample_size < acaps->MinimumBitsPerSample)
-                    goto next;
-                fx->wBitsPerSample = requested_sample_size;
-            }
-            if (requested_channels) {
-                if (requested_channels > acaps->MaximumChannels ||
-                    requested_channels < acaps->MinimumChannels)
-                    goto next;
-                fx->nChannels = requested_channels;
+            if (
+                (requested_sample_rate && requested_sample_rate != fx->nSamplesPerSec) ||
+                (requested_sample_size && requested_sample_size != fx->wBitsPerSample) ||
+                (requested_channels    && requested_channels    != fx->nChannels     )
+            ) {
+                goto next;
             }
         }
 
@@ -1632,7 +1621,7 @@ dshow_add_device(AVFormatContext *avctx,
         par->format      = sample_fmt_bits_per_sample(fmt_info->sample_size);
         par->codec_id    = waveform_codec_id(par->format);
         par->sample_rate = fmt_info->sample_rate;
-        par->channels    = fmt_info->channels;
+        par->ch_layout.nb_channels = fmt_info->channels;
     }
 
     avpriv_set_pts_info(st, 64, 1, 10000000);

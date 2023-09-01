@@ -236,7 +236,7 @@ static int config_output(AVFilterLink *outlink)
     av_freep(&s->delayptrs);
 
     return av_samples_alloc_array_and_samples(&s->delayptrs, NULL,
-                                              outlink->channels,
+                                              outlink->ch_layout.nb_channels,
                                               s->max_samples,
                                               outlink->format, 0);
 }
@@ -259,7 +259,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
     }
 
     s->echo_samples(s, s->delayptrs, frame->extended_data, out_frame->extended_data,
-                    frame->nb_samples, inlink->channels);
+                    frame->nb_samples, inlink->ch_layout.nb_channels);
 
     s->next_pts = frame->pts + av_rescale_q(frame->nb_samples, (AVRational){1, inlink->sample_rate}, inlink->time_base);
 
@@ -282,11 +282,11 @@ static int request_frame(AVFilterLink *outlink)
 
     av_samples_set_silence(frame->extended_data, 0,
                            frame->nb_samples,
-                           outlink->channels,
+                           outlink->ch_layout.nb_channels,
                            frame->format);
 
     s->echo_samples(s, s->delayptrs, frame->extended_data, frame->extended_data,
-                    frame->nb_samples, outlink->channels);
+                    frame->nb_samples, outlink->ch_layout.nb_channels);
 
     frame->pts = s->next_pts;
     if (s->next_pts != AV_NOPTS_VALUE)
@@ -328,13 +328,6 @@ static int activate(AVFilterContext *ctx)
     return request_frame(outlink);
 }
 
-static const AVFilterPad aecho_inputs[] = {
-    {
-        .name         = "default",
-        .type         = AVMEDIA_TYPE_AUDIO,
-    },
-};
-
 static const AVFilterPad aecho_outputs[] = {
     {
         .name          = "default",
@@ -351,7 +344,7 @@ const AVFilter ff_af_aecho = {
     .init          = init,
     .activate      = activate,
     .uninit        = uninit,
-    FILTER_INPUTS(aecho_inputs),
+    FILTER_INPUTS(ff_audio_default_filterpad),
     FILTER_OUTPUTS(aecho_outputs),
     FILTER_SAMPLEFMTS(AV_SAMPLE_FMT_S16P, AV_SAMPLE_FMT_S32P,
                       AV_SAMPLE_FMT_FLTP, AV_SAMPLE_FMT_DBLP),

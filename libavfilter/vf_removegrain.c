@@ -26,7 +26,6 @@
 #include "libavutil/pixdesc.h"
 #include "libavutil/qsort.h"
 #include "avfilter.h"
-#include "formats.h"
 #include "internal.h"
 #include "removegrain.h"
 #include "video.h"
@@ -501,8 +500,9 @@ static int config_input(AVFilterLink *inlink)
         }
     }
 
-    if (ARCH_X86)
-        ff_removegrain_init_x86(s);
+#if ARCH_X86
+    ff_removegrain_init_x86(s);
+#endif
 
     return 0;
 }
@@ -631,19 +631,12 @@ static const AVFilterPad removegrain_inputs[] = {
     },
 };
 
-static const AVFilterPad removegrain_outputs[] = {
-    {
-        .name = "default",
-        .type = AVMEDIA_TYPE_VIDEO,
-    },
-};
-
 const AVFilter ff_vf_removegrain = {
     .name          = "removegrain",
     .description   = NULL_IF_CONFIG_SMALL("Remove grain."),
     .priv_size     = sizeof(RemoveGrainContext),
     FILTER_INPUTS(removegrain_inputs),
-    FILTER_OUTPUTS(removegrain_outputs),
+    FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
     .priv_class    = &removegrain_class,
     .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,

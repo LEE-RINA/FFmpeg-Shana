@@ -20,8 +20,12 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "config_components.h"
+
 #include "dxva2_internal.h"
+#include "hwaccel_internal.h"
 #include "mpegutils.h"
+#include "mpegvideodec.h"
 #include "vc1.h"
 #include "vc1data.h"
 
@@ -369,17 +373,15 @@ static int dxva2_vc1_end_frame(AVCodecContext *avctx)
                                     &ctx_pic->pp, sizeof(ctx_pic->pp),
                                     NULL, 0,
                                     commit_bitstream_and_slice_buffer);
-    if (!ret)
-        ff_mpeg_draw_horiz_band(&v->s, 0, avctx->height);
     return ret;
 }
 
 #if CONFIG_WMV3_DXVA2_HWACCEL
-const AVHWAccel ff_wmv3_dxva2_hwaccel = {
-    .name           = "wmv3_dxva2",
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_WMV3,
-    .pix_fmt        = AV_PIX_FMT_DXVA2_VLD,
+const FFHWAccel ff_wmv3_dxva2_hwaccel = {
+    .p.name         = "wmv3_dxva2",
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_WMV3,
+    .p.pix_fmt      = AV_PIX_FMT_DXVA2_VLD,
     .init           = ff_dxva2_decode_init,
     .uninit         = ff_dxva2_decode_uninit,
     .start_frame    = dxva2_vc1_start_frame,
@@ -392,11 +394,11 @@ const AVHWAccel ff_wmv3_dxva2_hwaccel = {
 #endif
 
 #if CONFIG_VC1_DXVA2_HWACCEL
-const AVHWAccel ff_vc1_dxva2_hwaccel = {
-    .name           = "vc1_dxva2",
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_VC1,
-    .pix_fmt        = AV_PIX_FMT_DXVA2_VLD,
+const FFHWAccel ff_vc1_dxva2_hwaccel = {
+    .p.name         = "vc1_dxva2",
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_VC1,
+    .p.pix_fmt      = AV_PIX_FMT_DXVA2_VLD,
     .init           = ff_dxva2_decode_init,
     .uninit         = ff_dxva2_decode_uninit,
     .start_frame    = dxva2_vc1_start_frame,
@@ -409,11 +411,11 @@ const AVHWAccel ff_vc1_dxva2_hwaccel = {
 #endif
 
 #if CONFIG_WMV3_D3D11VA_HWACCEL
-const AVHWAccel ff_wmv3_d3d11va_hwaccel = {
-    .name           = "wmv3_d3d11va",
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_WMV3,
-    .pix_fmt        = AV_PIX_FMT_D3D11VA_VLD,
+const FFHWAccel ff_wmv3_d3d11va_hwaccel = {
+    .p.name         = "wmv3_d3d11va",
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_WMV3,
+    .p.pix_fmt      = AV_PIX_FMT_D3D11VA_VLD,
     .init           = ff_dxva2_decode_init,
     .uninit         = ff_dxva2_decode_uninit,
     .start_frame    = dxva2_vc1_start_frame,
@@ -426,11 +428,11 @@ const AVHWAccel ff_wmv3_d3d11va_hwaccel = {
 #endif
 
 #if CONFIG_WMV3_D3D11VA2_HWACCEL
-const AVHWAccel ff_wmv3_d3d11va2_hwaccel = {
-    .name           = "wmv3_d3d11va2",
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_WMV3,
-    .pix_fmt        = AV_PIX_FMT_D3D11,
+const FFHWAccel ff_wmv3_d3d11va2_hwaccel = {
+    .p.name         = "wmv3_d3d11va2",
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_WMV3,
+    .p.pix_fmt      = AV_PIX_FMT_D3D11,
     .init           = ff_dxva2_decode_init,
     .uninit         = ff_dxva2_decode_uninit,
     .start_frame    = dxva2_vc1_start_frame,
@@ -443,11 +445,11 @@ const AVHWAccel ff_wmv3_d3d11va2_hwaccel = {
 #endif
 
 #if CONFIG_VC1_D3D11VA_HWACCEL
-const AVHWAccel ff_vc1_d3d11va_hwaccel = {
-    .name           = "vc1_d3d11va",
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_VC1,
-    .pix_fmt        = AV_PIX_FMT_D3D11VA_VLD,
+const FFHWAccel ff_vc1_d3d11va_hwaccel = {
+    .p.name         = "vc1_d3d11va",
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_VC1,
+    .p.pix_fmt      = AV_PIX_FMT_D3D11VA_VLD,
     .init           = ff_dxva2_decode_init,
     .uninit         = ff_dxva2_decode_uninit,
     .start_frame    = dxva2_vc1_start_frame,
@@ -460,11 +462,11 @@ const AVHWAccel ff_vc1_d3d11va_hwaccel = {
 #endif
 
 #if CONFIG_VC1_D3D11VA2_HWACCEL
-const AVHWAccel ff_vc1_d3d11va2_hwaccel = {
-    .name           = "vc1_d3d11va2",
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_VC1,
-    .pix_fmt        = AV_PIX_FMT_D3D11,
+const FFHWAccel ff_vc1_d3d11va2_hwaccel = {
+    .p.name         = "vc1_d3d11va2",
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_VC1,
+    .p.pix_fmt      = AV_PIX_FMT_D3D11,
     .init           = ff_dxva2_decode_init,
     .uninit         = ff_dxva2_decode_uninit,
     .start_frame    = dxva2_vc1_start_frame,

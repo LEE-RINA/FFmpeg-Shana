@@ -21,11 +21,9 @@
 #ifndef AVCODEC_DCA_XLL_H
 #define AVCODEC_DCA_XLL_H
 
-#include "libavutil/common.h"
 #include "libavutil/mem_internal.h"
 
 #include "avcodec.h"
-#include "internal.h"
 #include "get_bits.h"
 #include "dca.h"
 #include "dcadsp.h"
@@ -137,11 +135,14 @@ typedef struct DCAXllDecoder {
 
     DCADSPContext   *dcadsp;
 
+    int    x_syncword_present;        ///< Syncword for extension data at end of frame (DTS:X) is present
+    int    x_imax_syncword_present;   ///< Syncword for extension data at end of frame (DTS:X IMAX) is present
+
     int     output_mask;
     int32_t *output_samples[DCA_SPEAKER_COUNT];
 } DCAXllDecoder;
 
-int ff_dca_xll_parse(DCAXllDecoder *s, uint8_t *data, DCAExssAsset *asset);
+int ff_dca_xll_parse(DCAXllDecoder *s, const uint8_t *data, DCAExssAsset *asset);
 int ff_dca_xll_filter_frame(DCAXllDecoder *s, AVFrame *frame);
 av_cold void ff_dca_xll_flush(DCAXllDecoder *s);
 av_cold void ff_dca_xll_close(DCAXllDecoder *s);

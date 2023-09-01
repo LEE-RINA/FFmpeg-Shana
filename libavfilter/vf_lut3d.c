@@ -24,16 +24,16 @@
  * 3D Lookup table filter
  */
 
+#include "config_components.h"
+
 #include "float.h"
 
 #include "libavutil/opt.h"
-#include "libavutil/file.h"
-#include "libavutil/intreadwrite.h"
+#include "libavutil/file_open.h"
 #include "libavutil/intfloat.h"
 #include "libavutil/avassert.h"
 #include "libavutil/avstring.h"
 #include "drawutils.h"
-#include "formats.h"
 #include "internal.h"
 #include "video.h"
 #include "lut3d.h"
@@ -1148,9 +1148,9 @@ static int config_input(AVFilterLink *inlink)
         av_assert0(0);
     }
 
-    if (ARCH_X86) {
-        ff_lut3d_init_x86(lut3d, desc);
-    }
+#if ARCH_X86
+    ff_lut3d_init_x86(lut3d, desc);
+#endif
 
     return 0;
 }
@@ -1216,6 +1216,11 @@ static const AVOption lut3d_haldclut_options[] = {
 #if CONFIG_LUT3D_FILTER
     { "file", "set 3D LUT file name", OFFSET(file), AV_OPT_TYPE_STRING, {.str=NULL}, .flags = FLAGS },
 #endif
+#if CONFIG_HALDCLUT_FILTER
+    { "clut", "when to process CLUT", OFFSET(clut), AV_OPT_TYPE_INT, {.i64=1}, 0, 1, .flags = TFLAGS, "clut" },
+    {   "first", "process only first CLUT, ignore rest", 0, AV_OPT_TYPE_CONST, {.i64=0}, .flags = TFLAGS, "clut" },
+    {   "all",   "process all CLUTs",                    0, AV_OPT_TYPE_CONST, {.i64=1}, .flags = TFLAGS, "clut" },
+#endif
     COMMON_OPTIONS
 };
 
@@ -1236,7 +1241,7 @@ static av_cold int lut3d_init(AVFilterContext *ctx)
         return set_identity_matrix(ctx, 32);
     }
 
-    f = av_fopen_utf8(lut3d->file, "r");
+    f = avpriv_fopen_utf8(lut3d->file, "r");
     if (!f) {
         ret = AVERROR(errno);
         av_log(ctx, AV_LOG_ERROR, "%s: %s\n", lut3d->file, av_err2str(ret));
@@ -1296,13 +1301,6 @@ static const AVFilterPad lut3d_inputs[] = {
     },
 };
 
-static const AVFilterPad lut3d_outputs[] = {
-    {
-        .name = "default",
-        .type = AVMEDIA_TYPE_VIDEO,
-    },
-};
-
 const AVFilter ff_vf_lut3d = {
     .name          = "lut3d",
     .description   = NULL_IF_CONFIG_SMALL("Adjust colors using a 3D LUT."),
@@ -1310,7 +1308,7 @@ const AVFilter ff_vf_lut3d = {
     .init          = lut3d_init,
     .uninit        = lut3d_uninit,
     FILTER_INPUTS(lut3d_inputs),
-    FILTER_OUTPUTS(lut3d_outputs),
+    FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
     .priv_class    = &lut3d_class,
     .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
@@ -1517,12 +1515,15 @@ static int update_apply_clut(FFFrameSync *fs)
         return ret;
     if (!second)
         return ff_filter_frame(ctx->outputs[0], master);
-    if (lut3d->clut_float)
-        update_clut_float(ctx->priv, second);
-    else if (lut3d->clut_planar)
-        update_clut_planar(ctx->priv, second);
-    else
-        update_clut_packed(ctx->priv, second);
+    if (lut3d->clut || !lut3d->got_clut) {
+        if (lut3d->clut_float)
+            update_clut_float(ctx->priv, second);
+        else if (lut3d->clut_planar)
+            update_clut_planar(ctx->priv, second);
+        else
+            update_clut_packed(ctx->priv, second);
+        lut3d->got_clut = 1;
+    }
     out = apply_lut(inlink, master);
     return ff_filter_frame(ctx->outputs[0], out);
 }
@@ -2124,7 +2125,7 @@ static av_cold int lut1d_init(AVFilterContext *ctx)
         return 0;
     }
 
-    f = av_fopen_utf8(lut1d->file, "r");
+    f = avpriv_fopen_utf8(lut1d->file, "r");
     if (!f) {
         ret = AVERROR(errno);
         av_log(ctx, AV_LOG_ERROR, "%s: %s\n", lut1d->file, av_err2str(ret));
@@ -2224,20 +2225,13 @@ static const AVFilterPad lut1d_inputs[] = {
     },
 };
 
-static const AVFilterPad lut1d_outputs[] = {
-    {
-        .name = "default",
-        .type = AVMEDIA_TYPE_VIDEO,
-    },
-};
-
 const AVFilter ff_vf_lut1d = {
     .name          = "lut1d",
     .description   = NULL_IF_CONFIG_SMALL("Adjust colors using a 1D LUT."),
     .priv_size     = sizeof(LUT1DContext),
     .init          = lut1d_init,
     FILTER_INPUTS(lut1d_inputs),
-    FILTER_OUTPUTS(lut1d_outputs),
+    FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
     .priv_class    = &lut1d_class,
     .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,

@@ -21,11 +21,11 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "libavutil/imgutils.h"
 #include "libavutil/opt.h"
 #include "avcodec.h"
 #include "bytestream.h"
-#include "internal.h"
+#include "codec_internal.h"
+#include "decode.h"
 #include "lzw.h"
 #include "gif.h"
 
@@ -464,16 +464,13 @@ static av_cold int gif_decode_init(AVCodecContext *avctx)
     return 0;
 }
 
-static int gif_decode_frame(AVCodecContext *avctx, void *data, int *got_frame, AVPacket *avpkt)
+static int gif_decode_frame(AVCodecContext *avctx, AVFrame *rframe,
+                            int *got_frame, AVPacket *avpkt)
 {
     GifState *s = avctx->priv_data;
     int ret;
 
     bytestream2_init(&s->gb, avpkt->data, avpkt->size);
-
-    s->frame->pts     = avpkt->pts;
-    s->frame->pkt_dts = avpkt->dts;
-    s->frame->pkt_duration = avpkt->duration;
 
     if (avpkt->size >= 6) {
         s->keyframe = memcmp(avpkt->data, gif87a_sig, 6) == 0 ||
@@ -492,35 +489,29 @@ static int gif_decode_frame(AVCodecContext *avctx, void *data, int *got_frame, A
             return ret;
 
         av_frame_unref(s->frame);
-        if ((ret = ff_get_buffer(avctx, s->frame, 0)) < 0)
-            return ret;
-
         av_fast_malloc(&s->idx_line, &s->idx_line_size, s->screen_width);
         if (!s->idx_line)
             return AVERROR(ENOMEM);
-
-        s->frame->pict_type = AV_PICTURE_TYPE_I;
-        s->frame->key_frame = 1;
-        s->keyframe_ok = 1;
-    } else {
-        if (!s->keyframe_ok) {
-            av_log(avctx, AV_LOG_ERROR, "cannot decode frame without keyframe\n");
-            return AVERROR_INVALIDDATA;
-        }
-
-        if ((ret = ff_reget_buffer(avctx, s->frame, 0)) < 0)
-            return ret;
-
-        s->frame->pict_type = AV_PICTURE_TYPE_P;
-        s->frame->key_frame = 0;
+    } else if (!s->keyframe_ok) {
+        av_log(avctx, AV_LOG_ERROR, "cannot decode frame without keyframe\n");
+        return AVERROR_INVALIDDATA;
     }
+
+    ret = ff_reget_buffer(avctx, s->frame, 0);
+    if (ret < 0)
+        return ret;
 
     ret = gif_parse_next_image(s, s->frame);
     if (ret < 0)
         return ret;
 
-    if ((ret = av_frame_ref(data, s->frame)) < 0)
+    if ((ret = av_frame_ref(rframe, s->frame)) < 0)
         return ret;
+
+    rframe->pict_type = s->keyframe ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_P;
+    rframe->flags     = AV_FRAME_FLAG_KEY * s->keyframe;
+    s->keyframe_ok   |= !!s->keyframe;
+
     *got_frame = 1;
 
     return bytestream2_tell(&s->gb);
@@ -554,17 +545,16 @@ static const AVClass decoder_class = {
     .category   = AV_CLASS_CATEGORY_DECODER,
 };
 
-const AVCodec ff_gif_decoder = {
-    .name           = "gif",
-    .long_name      = NULL_IF_CONFIG_SMALL("GIF (Graphics Interchange Format)"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_GIF,
+const FFCodec ff_gif_decoder = {
+    .p.name         = "gif",
+    CODEC_LONG_NAME("GIF (Graphics Interchange Format)"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_GIF,
     .priv_data_size = sizeof(GifState),
     .init           = gif_decode_init,
     .close          = gif_decode_close,
-    .decode         = gif_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
-    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE |
-                      FF_CODEC_CAP_INIT_CLEANUP,
-    .priv_class     = &decoder_class,
+    FF_CODEC_DECODE_CB(gif_decode_frame),
+    .p.capabilities = AV_CODEC_CAP_DR1,
+    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
+    .p.priv_class   = &decoder_class,
 };

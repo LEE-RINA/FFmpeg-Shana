@@ -244,11 +244,11 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
             s->round = round(s->samples);
         }
 
-        for (c = 0; c < inlink->channels; c++) {
+        for (c = 0; c < inlink->ch_layout.nb_channels; c++) {
             double sample = src[c] * level_in;
 
             sample = mix * samplereduction(s, &s->sr[c], sample) + src[c] * (1. - mix) * level_in;
-            dst[c] = bitreduction(s, sample) * level_out;
+            dst[c] = ctx->is_disabled ? src[c] : bitreduction(s, sample) * level_out;
         }
         src += c;
         dst += c;
@@ -296,7 +296,7 @@ static int config_input(AVFilterLink *inlink)
     s->lfo.amount = .5;
 
     if (!s->sr)
-        s->sr = av_calloc(inlink->channels, sizeof(*s->sr));
+        s->sr = av_calloc(inlink->ch_layout.nb_channels, sizeof(*s->sr));
     if (!s->sr)
         return AVERROR(ENOMEM);
 
@@ -325,13 +325,6 @@ static const AVFilterPad avfilter_af_acrusher_inputs[] = {
     },
 };
 
-static const AVFilterPad avfilter_af_acrusher_outputs[] = {
-    {
-        .name = "default",
-        .type = AVMEDIA_TYPE_AUDIO,
-    },
-};
-
 const AVFilter ff_af_acrusher = {
     .name          = "acrusher",
     .description   = NULL_IF_CONFIG_SMALL("Reduce audio bit resolution."),
@@ -339,7 +332,8 @@ const AVFilter ff_af_acrusher = {
     .priv_class    = &acrusher_class,
     .uninit        = uninit,
     FILTER_INPUTS(avfilter_af_acrusher_inputs),
-    FILTER_OUTPUTS(avfilter_af_acrusher_outputs),
+    FILTER_OUTPUTS(ff_audio_default_filterpad),
     FILTER_SINGLE_SAMPLEFMT(AV_SAMPLE_FMT_DBL),
     .process_command = process_command,
+    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL,
 };

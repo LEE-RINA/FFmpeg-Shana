@@ -305,8 +305,9 @@ static av_cold int init(AVFilterContext *ctx)
     n->line_noise     = ff_line_noise_c;
     n->line_noise_avg = ff_line_noise_avg_c;
 
-    if (ARCH_X86)
-        ff_noise_init_x86(n);
+#if ARCH_X86
+    ff_noise_init_x86(n);
+#endif
 
     return 0;
 }
@@ -329,13 +330,6 @@ static const AVFilterPad noise_inputs[] = {
     },
 };
 
-static const AVFilterPad noise_outputs[] = {
-    {
-        .name = "default",
-        .type = AVMEDIA_TYPE_VIDEO,
-    },
-};
-
 const AVFilter ff_vf_noise = {
     .name          = "noise",
     .description   = NULL_IF_CONFIG_SMALL("Add noise."),
@@ -343,7 +337,7 @@ const AVFilter ff_vf_noise = {
     .init          = init,
     .uninit        = uninit,
     FILTER_INPUTS(noise_inputs),
-    FILTER_OUTPUTS(noise_outputs),
+    FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_QUERY_FUNC(query_formats),
     .priv_class    = &noise_class,
     .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,

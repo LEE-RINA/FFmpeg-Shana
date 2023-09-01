@@ -19,9 +19,12 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "config_components.h"
+
 #include "libavutil/channel_layout.h"
 #include "avformat.h"
 #include "avio_internal.h"
+#include "demux.h"
 #include "internal.h"
 #include "mpeg.h"
 
@@ -546,6 +549,9 @@ redo:
     } else if (es_type == STREAM_TYPE_AUDIO_AC3) {
         codec_id = AV_CODEC_ID_AC3;
         type     = AVMEDIA_TYPE_AUDIO;
+    } else if (es_type == 0x90) {
+        codec_id = AV_CODEC_ID_PCM_ALAW;
+        type     = AVMEDIA_TYPE_AUDIO;
     } else if (m->imkh_cctv && es_type == 0x91) {
         codec_id = AV_CODEC_ID_PCM_MULAW;
         type     = AVMEDIA_TYPE_AUDIO;
@@ -621,8 +627,7 @@ skip:
     st->codecpar->codec_id   = codec_id;
     if (   st->codecpar->codec_id == AV_CODEC_ID_PCM_MULAW
         || st->codecpar->codec_id == AV_CODEC_ID_PCM_ALAW) {
-        st->codecpar->channels = 1;
-        st->codecpar->channel_layout = AV_CH_LAYOUT_MONO;
+        st->codecpar->ch_layout = (AVChannelLayout)AV_CHANNEL_LAYOUT_MONO;
         st->codecpar->sample_rate = 8000;
     }
     sti->request_probe = request_probe;

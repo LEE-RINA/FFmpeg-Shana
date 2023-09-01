@@ -36,6 +36,7 @@
 #include "avfilter.h"
 #include "qp_table.h"
 #include "internal.h"
+#include "video.h"
 
 #define MV_P_FOR  (1<<0)
 #define MV_B_FOR  (1<<1)
@@ -227,7 +228,8 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
     AVFilterLink *outlink = ctx->outputs[0];
 
     if (s->qp) {
-        int qstride, qp_type, ret;
+        enum AVVideoEncParamsType qp_type;
+        int qstride, ret;
         int8_t *qp_table;
 
         ret = ff_qp_table_extract(frame, &qp_table, &qstride, NULL, &qp_type);
@@ -333,19 +335,12 @@ static const AVFilterPad codecview_inputs[] = {
     },
 };
 
-static const AVFilterPad codecview_outputs[] = {
-    {
-        .name = "default",
-        .type = AVMEDIA_TYPE_VIDEO,
-    },
-};
-
 const AVFilter ff_vf_codecview = {
     .name          = "codecview",
     .description   = NULL_IF_CONFIG_SMALL("Visualize information about some codecs."),
     .priv_size     = sizeof(CodecViewContext),
     FILTER_INPUTS(codecview_inputs),
-    FILTER_OUTPUTS(codecview_outputs),
+    FILTER_OUTPUTS(ff_video_default_filterpad),
     // TODO: we can probably add way more pixel formats without any other
     // changes; anything with 8-bit luma in first plane should be working
     FILTER_SINGLE_PIXFMT(AV_PIX_FMT_YUV420P),

@@ -24,13 +24,11 @@
  */
 
 #include "avfilter.h"
-#include "formats.h"
 #include "video.h"
 #include "internal.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/opt.h"
-#include "libavutil/parseutils.h"
 #include "libavutil/lfg.h"
 #include "libavutil/random_seed.h"
 #include <float.h>
@@ -137,18 +135,19 @@ static int draw_carpet_slice(AVFilterContext *ctx, void *arg, int job, int nb_jo
     return 0;
 }
 
-static int config_output(AVFilterLink *inlink)
+static int config_output(AVFilterLink *outlink)
 {
-    AVFilterContext *ctx = inlink->src;
+    AVFilterContext *ctx = outlink->src;
     SierpinskiContext *s = ctx->priv;
 
     if (av_image_check_size(s->w, s->h, 0, ctx) < 0)
         return AVERROR(EINVAL);
 
-    inlink->w = s->w;
-    inlink->h = s->h;
-    inlink->time_base = av_inv_q(s->frame_rate);
-    inlink->sample_aspect_ratio = (AVRational) {1, 1};
+    outlink->w = s->w;
+    outlink->h = s->h;
+    outlink->time_base = av_inv_q(s->frame_rate);
+    outlink->sample_aspect_ratio = (AVRational) {1, 1};
+    outlink->frame_rate = s->frame_rate;
     if (s->seed == -1)
         s->seed = av_get_random_seed();
     av_lfg_init(&s->lfg, s->seed);
@@ -195,6 +194,7 @@ static int sierpinski_request_frame(AVFilterLink *link)
 
     frame->sample_aspect_ratio = (AVRational) {1, 1};
     frame->pts = s->pts++;
+    frame->duration = 1;
 
     draw_sierpinski(link->src, frame);
 

@@ -21,6 +21,7 @@
  */
 
 #include "config.h"
+#include "config_components.h"
 
 #if CONFIG_LINUX_PERF
 # ifndef _GNU_SOURCE
@@ -95,7 +96,7 @@ static const struct {
     #if CONFIG_EXR_DECODER
         { "exrdsp", checkasm_check_exrdsp },
     #endif
-    #if CONFIG_FLACDSP
+    #if CONFIG_FLAC_DECODER
         { "flacdsp", checkasm_check_flacdsp },
     #endif
     #if CONFIG_FMTCONVERT
@@ -103,6 +104,9 @@ static const struct {
     #endif
     #if CONFIG_G722DSP
         { "g722dsp", checkasm_check_g722dsp },
+    #endif
+    #if CONFIG_H264CHROMA
+        { "h264chroma", checkasm_check_h264chroma },
     #endif
     #if CONFIG_H264DSP
         { "h264dsp", checkasm_check_h264dsp },
@@ -115,12 +119,16 @@ static const struct {
     #endif
     #if CONFIG_HEVC_DECODER
         { "hevc_add_res", checkasm_check_hevc_add_res },
+        { "hevc_deblock", checkasm_check_hevc_deblock },
         { "hevc_idct", checkasm_check_hevc_idct },
         { "hevc_pel", checkasm_check_hevc_pel },
         { "hevc_sao", checkasm_check_hevc_sao },
     #endif
     #if CONFIG_HUFFYUV_DECODER
         { "huffyuvdsp", checkasm_check_huffyuvdsp },
+    #endif
+    #if CONFIG_IDCTDSP
+        { "idctdsp", checkasm_check_idctdsp },
     #endif
     #if CONFIG_JPEG2000_DECODER
         { "jpeg2000dsp", checkasm_check_jpeg2000dsp },
@@ -130,6 +138,12 @@ static const struct {
     #endif
     #if CONFIG_LLVIDENCDSP
         { "llviddspenc", checkasm_check_llviddspenc },
+    #endif
+    #if CONFIG_LPC
+        { "lpc", checkasm_check_lpc },
+    #endif
+    #if CONFIG_ME_CMP
+        { "motion", checkasm_check_motion },
     #endif
     #if CONFIG_OPUS_DECODER
         { "opusdsp", checkasm_check_opusdsp },
@@ -146,6 +160,9 @@ static const struct {
     #if CONFIG_V210_ENCODER
         { "v210enc", checkasm_check_v210enc },
     #endif
+    #if CONFIG_VC1DSP
+        { "vc1dsp", checkasm_check_vc1dsp },
+    #endif
     #if CONFIG_VP8DSP
         { "vp8dsp", checkasm_check_vp8dsp },
     #endif
@@ -155,6 +172,9 @@ static const struct {
     #if CONFIG_VIDEODSP
         { "videodsp", checkasm_check_videodsp },
     #endif
+    #if CONFIG_VORBIS_DECODER
+        { "vorbisdsp", checkasm_check_vorbisdsp },
+    #endif
 #endif
 #if CONFIG_AVFILTER
     #if CONFIG_AFIR_FILTER
@@ -162,6 +182,9 @@ static const struct {
     #endif
     #if CONFIG_BLEND_FILTER
         { "vf_blend", checkasm_check_blend },
+    #endif
+    #if CONFIG_BWDIF_FILTER
+        { "vf_bwdif", checkasm_check_vf_bwdif },
     #endif
     #if CONFIG_COLORSPACE_FILTER
         { "vf_colorspace", checkasm_check_colorspace },
@@ -180,6 +203,9 @@ static const struct {
     #endif
     #if CONFIG_THRESHOLD_FILTER
         { "vf_threshold", checkasm_check_vf_threshold },
+    #endif
+    #if CONFIG_SOBEL_FILTER
+        { "vf_sobel", checkasm_check_vf_sobel },
     #endif
 #endif
 #if CONFIG_SWSCALE
@@ -204,6 +230,8 @@ static const struct {
 #if   ARCH_AARCH64
     { "ARMV8",    "armv8",    AV_CPU_FLAG_ARMV8 },
     { "NEON",     "neon",     AV_CPU_FLAG_NEON },
+    { "DOTPROD",  "dotprod",  AV_CPU_FLAG_DOTPROD },
+    { "I8MM",     "i8mm",     AV_CPU_FLAG_I8MM },
 #elif ARCH_ARM
     { "ARMV5TE",  "armv5te",  AV_CPU_FLAG_ARMV5TE },
     { "ARMV6",    "armv6",    AV_CPU_FLAG_ARMV6 },
@@ -216,27 +244,38 @@ static const struct {
     { "ALTIVEC",  "altivec",  AV_CPU_FLAG_ALTIVEC },
     { "VSX",      "vsx",      AV_CPU_FLAG_VSX },
     { "POWER8",   "power8",   AV_CPU_FLAG_POWER8 },
+#elif ARCH_RISCV
+    { "RVI",      "rvi",      AV_CPU_FLAG_RVI },
+    { "RVF",      "rvf",      AV_CPU_FLAG_RVF },
+    { "RVD",      "rvd",      AV_CPU_FLAG_RVD },
+    { "RVBaddr",  "rvb_a",    AV_CPU_FLAG_RVB_ADDR },
+    { "RVBbasic", "rvb_b",    AV_CPU_FLAG_RVB_BASIC },
+    { "RVVi32",   "rvv_i32",  AV_CPU_FLAG_RVV_I32 },
+    { "RVVf32",   "rvv_f32",  AV_CPU_FLAG_RVV_F32 },
+    { "RVVi64",   "rvv_i64",  AV_CPU_FLAG_RVV_I64 },
+    { "RVVf64",   "rvv_f64",  AV_CPU_FLAG_RVV_F64 },
 #elif ARCH_MIPS
     { "MMI",      "mmi",      AV_CPU_FLAG_MMI },
     { "MSA",      "msa",      AV_CPU_FLAG_MSA },
 #elif ARCH_X86
-    { "MMX",      "mmx",      AV_CPU_FLAG_MMX|AV_CPU_FLAG_CMOV },
-    { "MMXEXT",   "mmxext",   AV_CPU_FLAG_MMXEXT },
-    { "3DNOW",    "3dnow",    AV_CPU_FLAG_3DNOW },
-    { "3DNOWEXT", "3dnowext", AV_CPU_FLAG_3DNOWEXT },
-    { "SSE",      "sse",      AV_CPU_FLAG_SSE },
-    { "SSE2",     "sse2",     AV_CPU_FLAG_SSE2|AV_CPU_FLAG_SSE2SLOW },
-    { "SSE3",     "sse3",     AV_CPU_FLAG_SSE3|AV_CPU_FLAG_SSE3SLOW },
-    { "SSSE3",    "ssse3",    AV_CPU_FLAG_SSSE3|AV_CPU_FLAG_ATOM },
-    { "SSE4.1",   "sse4",     AV_CPU_FLAG_SSE4 },
-    { "SSE4.2",   "sse42",    AV_CPU_FLAG_SSE42 },
-    { "AES-NI",   "aesni",    AV_CPU_FLAG_AESNI },
-    { "AVX",      "avx",      AV_CPU_FLAG_AVX },
-    { "XOP",      "xop",      AV_CPU_FLAG_XOP },
-    { "FMA3",     "fma3",     AV_CPU_FLAG_FMA3 },
-    { "FMA4",     "fma4",     AV_CPU_FLAG_FMA4 },
-    { "AVX2",     "avx2",     AV_CPU_FLAG_AVX2 },
-    { "AVX-512",  "avx512",   AV_CPU_FLAG_AVX512 },
+    { "MMX",        "mmx",       AV_CPU_FLAG_MMX|AV_CPU_FLAG_CMOV },
+    { "MMXEXT",     "mmxext",    AV_CPU_FLAG_MMXEXT },
+    { "3DNOW",      "3dnow",     AV_CPU_FLAG_3DNOW },
+    { "3DNOWEXT",   "3dnowext",  AV_CPU_FLAG_3DNOWEXT },
+    { "SSE",        "sse",       AV_CPU_FLAG_SSE },
+    { "SSE2",       "sse2",      AV_CPU_FLAG_SSE2|AV_CPU_FLAG_SSE2SLOW },
+    { "SSE3",       "sse3",      AV_CPU_FLAG_SSE3|AV_CPU_FLAG_SSE3SLOW },
+    { "SSSE3",      "ssse3",     AV_CPU_FLAG_SSSE3|AV_CPU_FLAG_ATOM },
+    { "SSE4.1",     "sse4",      AV_CPU_FLAG_SSE4 },
+    { "SSE4.2",     "sse42",     AV_CPU_FLAG_SSE42 },
+    { "AES-NI",     "aesni",     AV_CPU_FLAG_AESNI },
+    { "AVX",        "avx",       AV_CPU_FLAG_AVX },
+    { "XOP",        "xop",       AV_CPU_FLAG_XOP },
+    { "FMA3",       "fma3",      AV_CPU_FLAG_FMA3 },
+    { "FMA4",       "fma4",      AV_CPU_FLAG_FMA4 },
+    { "AVX2",       "avx2",      AV_CPU_FLAG_AVX2 },
+    { "AVX-512",    "avx512",    AV_CPU_FLAG_AVX512 },
+    { "AVX-512ICL", "avx512icl", AV_CPU_FLAG_AVX512ICL },
 #elif ARCH_LOONGARCH
     { "LSX",      "lsx",      AV_CPU_FLAG_LSX },
     { "LASX",     "lasx",     AV_CPU_FLAG_LASX },
@@ -628,7 +667,7 @@ static int bench_init_linux(void)
 
     state.sysfd = syscall(__NR_perf_event_open, &attr, 0, -1, -1, 0);
     if (state.sysfd == -1) {
-        perror("syscall");
+        perror("perf_event_open");
         return -1;
     }
     return 0;
@@ -677,6 +716,14 @@ static void bench_uninit(void)
 #endif
 }
 
+static int usage(const char *path)
+{
+    fprintf(stderr,
+            "Usage: %s [--bench] [--test=<pattern>] [--verbose] [seed]\n",
+            path);
+    return 1;
+}
+
 int main(int argc, char *argv[])
 {
     unsigned int seed = av_get_random_seed();
@@ -692,25 +739,29 @@ int main(int argc, char *argv[])
         return 0;
     }
 
-    while (argc > 1) {
-        if (!strncmp(argv[1], "--bench", 7)) {
+    for (i = 1; i < argc; i++) {
+        const char *arg = argv[i];
+        unsigned long l;
+        char *end;
+
+        if (!strncmp(arg, "--bench", 7)) {
             if (bench_init() < 0)
                 return 1;
-            if (argv[1][7] == '=') {
-                state.bench_pattern = argv[1] + 8;
+            if (arg[7] == '=') {
+                state.bench_pattern = arg + 8;
                 state.bench_pattern_len = strlen(state.bench_pattern);
             } else
                 state.bench_pattern = "";
-        } else if (!strncmp(argv[1], "--test=", 7)) {
-            state.test_name = argv[1] + 7;
-        } else if (!strcmp(argv[1], "--verbose") || !strcmp(argv[1], "-v")) {
+        } else if (!strncmp(arg, "--test=", 7)) {
+            state.test_name = arg + 7;
+        } else if (!strcmp(arg, "--verbose") || !strcmp(arg, "-v")) {
             state.verbose = 1;
+        } else if ((l = strtoul(arg, &end, 10)) <= UINT_MAX &&
+                   *end == '\0') {
+            seed = l;
         } else {
-            seed = strtoul(argv[1], NULL, 10);
+            return usage(argv[0]);
         }
-
-        argc--;
-        argv++;
     }
 
     fprintf(stderr, "checkasm: using random seed %u\n", seed);
@@ -892,5 +943,6 @@ int checkasm_check_##type(const char *const file, const int line, \
 
 DEF_CHECKASM_CHECK_FUNC(uint8_t,  "%02x")
 DEF_CHECKASM_CHECK_FUNC(uint16_t, "%04x")
+DEF_CHECKASM_CHECK_FUNC(uint32_t, "%08x")
 DEF_CHECKASM_CHECK_FUNC(int16_t,  "%6d")
 DEF_CHECKASM_CHECK_FUNC(int32_t,  "%9d")

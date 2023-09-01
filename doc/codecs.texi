@@ -644,6 +644,8 @@ for codecs that support it. See also @file{doc/examples/export_mvs.c}.
 Do not skip samples and export skip information as frame side data.
 @item ass_ro_flush_noop
 Do not reset ASS ReadOrder field on flush.
+@item icc_profiles
+Generate/parse embedded ICC profiles from/to colorimetry tags.
 @end table
 
 @item export_side_data @var{flags} (@emph{decoding/encoding,audio,video,subtitles})
@@ -773,7 +775,6 @@ Possible values:
 @end table
 @item rc_max_vbv_use @var{float} (@emph{encoding,video})
 @item rc_min_vbv_use @var{float} (@emph{encoding,video})
-@item ticks_per_frame @var{integer} (@emph{decoding/encoding,audio,video})
 
 @item color_primaries @var{integer} (@emph{decoding/encoding,video})
 Possible values:

@@ -20,10 +20,12 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "libavutil/avassert.h"
+#include "decode.h"
 #include "parser.h"
 #include "mpeg12.h"
 #include "mpeg12data.h"
-#include "internal.h"
+#include "startcode.h"
 
 struct MpvParseContext {
     ParseContext pc;
@@ -32,7 +34,6 @@ struct MpvParseContext {
     int width, height;
 };
 
-#if !FF_API_FLAG_TRUNCATED
 /**
  * Find the end of the current frame in the bitstream.
  * @return the position of the first byte of the next frame, or -1
@@ -97,7 +98,6 @@ static int mpeg1_find_frame_end(ParseContext *pc, const uint8_t *buf,
     pc->state = state;
     return END_NOT_FOUND;
 }
-#endif
 
 static void mpegvideo_extract_headers(AVCodecParserContext *s,
                                       AVCodecContext *avctx,
@@ -129,6 +129,7 @@ static void mpegvideo_extract_headers(AVCodecParserContext *s,
                 s->pict_type = (buf[1] >> 3) & 7;
                 if (bytes_left >= 4)
                     vbv_delay = ((buf[1] & 0x07) << 13) | (buf[2] << 5) | (buf[3] >> 3);
+                s->repeat_pict = 1;
             }
             break;
         case SEQ_START_CODE:
@@ -144,7 +145,11 @@ static void mpegvideo_extract_headers(AVCodecParserContext *s,
                 pc->frame_rate = avctx->framerate = ff_mpeg12_frame_rate_tab[frame_rate_index];
                 bit_rate = (buf[4]<<10) | (buf[5]<<2) | (buf[6]>>6);
                 avctx->codec_id = AV_CODEC_ID_MPEG1VIDEO;
+#if FF_API_TICKS_PER_FRAME
+FF_DISABLE_DEPRECATION_WARNINGS
                 avctx->ticks_per_frame = 1;
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
             }
             break;
         case EXT_START_CODE:
@@ -176,7 +181,11 @@ static void mpegvideo_extract_headers(AVCodecParserContext *s,
                         avctx->framerate.num = pc->frame_rate.num * (frame_rate_ext_n + 1);
                         avctx->framerate.den = pc->frame_rate.den * (frame_rate_ext_d + 1);
                         avctx->codec_id = AV_CODEC_ID_MPEG2VIDEO;
+#if FF_API_TICKS_PER_FRAME
+FF_DISABLE_DEPRECATION_WARNINGS
                         avctx->ticks_per_frame = 2;
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
                     }
                     break;
                 case 0x8: /* picture coding extension */
@@ -186,7 +195,6 @@ static void mpegvideo_extract_headers(AVCodecParserContext *s,
                         progressive_frame = buf[4] & (1 << 7);
 
                         /* check if we must repeat the frame */
-                        s->repeat_pict = 1;
                         if (repeat_first_field) {
                             if (pc->progressive_sequence) {
                                 if (top_field_first)
@@ -240,11 +248,6 @@ static void mpegvideo_extract_headers(AVCodecParserContext *s,
         s->coded_width  = FFALIGN(pc->width,  16);
         s->coded_height = FFALIGN(pc->height, 16);
     }
-
-#if FF_API_AVCTX_TIMEBASE
-    if (avctx->framerate.num)
-        avctx->time_base = av_inv_q(av_mul_q(avctx->framerate, (AVRational){avctx->ticks_per_frame, 1}));
-#endif
 }
 
 static int mpegvideo_parse(AVCodecParserContext *s,
@@ -259,11 +262,7 @@ static int mpegvideo_parse(AVCodecParserContext *s,
     if(s->flags & PARSER_FLAG_COMPLETE_FRAMES){
         next= buf_size;
     }else{
-#if FF_API_FLAG_TRUNCATED
-        next= ff_mpeg1_find_frame_end(pc, buf, buf_size, s);
-#else
         next = mpeg1_find_frame_end(pc, buf, buf_size, s);
-#endif
 
         if (ff_combine_frame(pc, next, &buf, &buf_size) < 0) {
             *poutbuf = NULL;

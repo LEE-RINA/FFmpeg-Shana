@@ -26,8 +26,9 @@
 
 #define BITSTREAM_READER_LE
 #include "avcodec.h"
+#include "codec_internal.h"
+#include "decode.h"
 #include "get_bits.h"
-#include "internal.h"
 
 
 typedef struct SeqVideoContext {
@@ -181,7 +182,11 @@ static int seqvideo_decode(SeqVideoContext *seq, const unsigned char *data, int 
                 c[j] = (*data << 2) | (*data >> 4);
             palette[i] = 0xFFU << 24 | AV_RB24(c);
         }
+#if FF_API_PALETTE_HAS_CHANGED
+FF_DISABLE_DEPRECATION_WARNINGS
         seq->frame->palette_has_changed = 1;
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
     }
 
     if (flags & 2) {
@@ -229,9 +234,8 @@ static av_cold int seqvideo_decode_init(AVCodecContext *avctx)
     return 0;
 }
 
-static int seqvideo_decode_frame(AVCodecContext *avctx,
-                                 void *data, int *got_frame,
-                                 AVPacket *avpkt)
+static int seqvideo_decode_frame(AVCodecContext *avctx, AVFrame *rframe,
+                                 int *got_frame, AVPacket *avpkt)
 {
     const uint8_t *buf = avpkt->data;
     int buf_size = avpkt->size;
@@ -245,7 +249,7 @@ static int seqvideo_decode_frame(AVCodecContext *avctx,
     if (seqvideo_decode(seq, buf, buf_size))
         return AVERROR_INVALIDDATA;
 
-    if ((ret = av_frame_ref(data, seq->frame)) < 0)
+    if ((ret = av_frame_ref(rframe, seq->frame)) < 0)
         return ret;
     *got_frame       = 1;
 
@@ -261,15 +265,14 @@ static av_cold int seqvideo_decode_end(AVCodecContext *avctx)
     return 0;
 }
 
-const AVCodec ff_tiertexseqvideo_decoder = {
-    .name           = "tiertexseqvideo",
-    .long_name      = NULL_IF_CONFIG_SMALL("Tiertex Limited SEQ video"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_TIERTEXSEQVIDEO,
+const FFCodec ff_tiertexseqvideo_decoder = {
+    .p.name         = "tiertexseqvideo",
+    CODEC_LONG_NAME("Tiertex Limited SEQ video"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_TIERTEXSEQVIDEO,
     .priv_data_size = sizeof(SeqVideoContext),
     .init           = seqvideo_decode_init,
     .close          = seqvideo_decode_end,
-    .decode         = seqvideo_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
-    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE,
+    FF_CODEC_DECODE_CB(seqvideo_decode_frame),
+    .p.capabilities = AV_CODEC_CAP_DR1,
 };

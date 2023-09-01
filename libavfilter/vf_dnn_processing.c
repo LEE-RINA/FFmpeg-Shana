@@ -23,15 +23,14 @@
  * implementing a generic image processing filter using deep learning networks.
  */
 
-#include "libavformat/avio.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/avassert.h"
 #include "libavutil/imgutils.h"
 #include "filters.h"
 #include "dnn_filter_common.h"
-#include "formats.h"
 #include "internal.h"
+#include "video.h"
 #include "libswscale/swscale.h"
 #include "libavutil/time.h"
 
@@ -45,13 +44,12 @@ typedef struct DnnProcessingContext {
 #define OFFSET(x) offsetof(DnnProcessingContext, dnnctx.x)
 #define FLAGS AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM
 static const AVOption dnn_processing_options[] = {
-    { "dnn_backend", "DNN backend",                OFFSET(backend_type),     AV_OPT_TYPE_INT,       { .i64 = 0 },    INT_MIN, INT_MAX, FLAGS, "backend" },
-    { "native",      "native backend flag",        0,                        AV_OPT_TYPE_CONST,     { .i64 = 0 },    0, 0, FLAGS, "backend" },
+    { "dnn_backend", "DNN backend",                OFFSET(backend_type),     AV_OPT_TYPE_INT,       { .i64 = DNN_TF },    INT_MIN, INT_MAX, FLAGS, "backend" },
 #if (CONFIG_LIBTENSORFLOW == 1)
-    { "tensorflow",  "tensorflow backend flag",    0,                        AV_OPT_TYPE_CONST,     { .i64 = 1 },    0, 0, FLAGS, "backend" },
+    { "tensorflow",  "tensorflow backend flag",    0,                        AV_OPT_TYPE_CONST,     { .i64 = DNN_TF },    0, 0, FLAGS, "backend" },
 #endif
 #if (CONFIG_LIBOPENVINO == 1)
-    { "openvino",    "openvino backend flag",      0,                        AV_OPT_TYPE_CONST,     { .i64 = 2 },    0, 0, FLAGS, "backend" },
+    { "openvino",    "openvino backend flag",      0,                        AV_OPT_TYPE_CONST,     { .i64 = DNN_OV },    0, 0, FLAGS, "backend" },
 #endif
     DNN_COMMON_OPTIONS
     { NULL }
@@ -110,6 +108,7 @@ static int check_modelinput_inlink(const DNNData *model_input, const AVFilterLin
             return AVERROR(EIO);
         }
         return 0;
+    case AV_PIX_FMT_GRAY8:
     case AV_PIX_FMT_GRAYF32:
     case AV_PIX_FMT_YUV420P:
     case AV_PIX_FMT_YUV422P:
@@ -134,14 +133,14 @@ static int config_input(AVFilterLink *inlink)
 {
     AVFilterContext *context     = inlink->dst;
     DnnProcessingContext *ctx = context->priv;
-    DNNReturnType result;
+    int result;
     DNNData model_input;
     int check;
 
     result = ff_dnn_get_input(&ctx->dnnctx, &model_input);
-    if (result != DNN_SUCCESS) {
+    if (result != 0) {
         av_log(ctx, AV_LOG_ERROR, "could not get input from the model\n");
-        return AVERROR(EIO);
+        return result;
     }
 
     check = check_modelinput_inlink(&model_input, inlink);
@@ -194,14 +193,14 @@ static int config_output(AVFilterLink *outlink)
 {
     AVFilterContext *context = outlink->src;
     DnnProcessingContext *ctx = context->priv;
-    DNNReturnType result;
+    int result;
     AVFilterLink *inlink = context->inputs[0];
 
     // have a try run in case that the dnn model resize the frame
     result = ff_dnn_get_output(&ctx->dnnctx, inlink->w, inlink->h, &outlink->w, &outlink->h);
-    if (result != DNN_SUCCESS) {
+    if (result != 0) {
         av_log(ctx, AV_LOG_ERROR, "could not get output from the model\n");
-        return AVERROR(EIO);
+        return result;
     }
 
     prepare_uv_scale(outlink);
@@ -247,7 +246,7 @@ static int flush_frame(AVFilterLink *outlink, int64_t pts, int64_t *out_pts)
     DNNAsyncStatusType async_state;
 
     ret = ff_dnn_flush(&ctx->dnnctx);
-    if (ret != DNN_SUCCESS) {
+    if (ret != 0) {
         return -1;
     }
 
@@ -296,7 +295,7 @@ static int activate(AVFilterContext *filter_ctx)
                 return AVERROR(ENOMEM);
             }
             av_frame_copy_props(out, in);
-            if (ff_dnn_execute_model(&ctx->dnnctx, in, out) != DNN_SUCCESS) {
+            if (ff_dnn_execute_model(&ctx->dnnctx, in, out) != 0) {
                 return AVERROR(EIO);
             }
         }

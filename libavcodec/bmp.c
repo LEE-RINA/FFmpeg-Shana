@@ -24,16 +24,15 @@
 #include "avcodec.h"
 #include "bytestream.h"
 #include "bmp.h"
-#include "internal.h"
+#include "codec_internal.h"
+#include "decode.h"
 #include "msrledec.h"
 
-static int bmp_decode_frame(AVCodecContext *avctx,
-                            void *data, int *got_frame,
-                            AVPacket *avpkt)
+static int bmp_decode_frame(AVCodecContext *avctx, AVFrame *p,
+                            int *got_frame, AVPacket *avpkt)
 {
     const uint8_t *buf = avpkt->data;
     int buf_size       = avpkt->size;
-    AVFrame *p         = data;
     unsigned int fsize, hsize;
     int width, height;
     unsigned int depth;
@@ -211,7 +210,7 @@ static int bmp_decode_frame(AVCodecContext *avctx,
     if ((ret = ff_get_buffer(avctx, p, 0)) < 0)
         return ret;
     p->pict_type = AV_PICTURE_TYPE_I;
-    p->key_frame = 1;
+    p->flags |= AV_FRAME_FLAG_KEY;
 
     buf   = buf0 + hsize;
     dsize = buf_size - hsize;
@@ -365,11 +364,11 @@ static int bmp_decode_frame(AVCodecContext *avctx,
     return buf_size;
 }
 
-const AVCodec ff_bmp_decoder = {
-    .name           = "bmp",
-    .long_name      = NULL_IF_CONFIG_SMALL("BMP (Windows and OS/2 bitmap)"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_BMP,
-    .decode         = bmp_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
+const FFCodec ff_bmp_decoder = {
+    .p.name         = "bmp",
+    CODEC_LONG_NAME("BMP (Windows and OS/2 bitmap)"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_BMP,
+    .p.capabilities = AV_CODEC_CAP_DR1,
+    FF_CODEC_DECODE_CB(bmp_decode_frame),
 };

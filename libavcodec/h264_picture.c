@@ -29,19 +29,21 @@
 #include "error_resilience.h"
 #include "avcodec.h"
 #include "h264dec.h"
+#include "hwaccel_internal.h"
 #include "mpegutils.h"
 #include "thread.h"
+#include "threadframe.h"
 
 void ff_h264_unref_picture(H264Context *h, H264Picture *pic)
 {
-    int off = offsetof(H264Picture, tf_grain) + sizeof(pic->tf_grain);
+    int off = offsetof(H264Picture, f_grain) + sizeof(pic->f_grain);
     int i;
 
     if (!pic->f || !pic->f->buf[0])
         return;
 
-    ff_thread_release_buffer(h->avctx, &pic->tf);
-    ff_thread_release_buffer(h->avctx, &pic->tf_grain);
+    ff_thread_release_ext_buffer(h->avctx, &pic->tf);
+    ff_thread_release_buffer(h->avctx, pic->f_grain);
     av_buffer_unref(&pic->hwaccel_priv_buf);
 
     av_buffer_unref(&pic->qscale_table_buf);
@@ -102,9 +104,7 @@ int ff_h264_ref_picture(H264Context *h, H264Picture *dst, H264Picture *src)
         goto fail;
 
     if (src->needs_fg) {
-        av_assert0(src->tf_grain.f == src->f_grain);
-        dst->tf_grain.f = dst->f_grain;
-        ret = ff_thread_ref_frame(&dst->tf_grain, &src->tf_grain);
+        ret = av_frame_ref(dst->f_grain, src->f_grain);
         if (ret < 0)
             goto fail;
     }
@@ -155,16 +155,13 @@ int ff_h264_replace_picture(H264Context *h, H264Picture *dst, const H264Picture 
     av_assert0(src->tf.f == src->f);
 
     dst->tf.f = dst->f;
-    ff_thread_release_buffer(h->avctx, &dst->tf);
-    ret = ff_thread_ref_frame(&dst->tf, &src->tf);
+    ret = ff_thread_replace_frame(h->avctx, &dst->tf, &src->tf);
     if (ret < 0)
         goto fail;
 
     if (src->needs_fg) {
-        av_assert0(src->tf_grain.f == src->f_grain);
-        dst->tf_grain.f = dst->f_grain;
-        ff_thread_release_buffer(h->avctx, &dst->tf_grain);
-        ret = ff_thread_ref_frame(&dst->tf_grain, &src->tf_grain);
+        ff_thread_release_buffer(h->avctx, dst->f_grain);
+        ret = av_frame_ref(dst->f_grain, src->f_grain);
         if (ret < 0)
             goto fail;
     }
@@ -237,7 +234,7 @@ int ff_h264_field_end(H264Context *h, H264SliceContext *sl, int in_setup)
     }
 
     if (avctx->hwaccel) {
-        err = avctx->hwaccel->end_frame(avctx);
+        err = FF_HW_SIMPLE_CALL(avctx, end_frame);
         if (err < 0)
             av_log(avctx, AV_LOG_ERROR,
                    "hardware accelerator failed to decode picture\n");

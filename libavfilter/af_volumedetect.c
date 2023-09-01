@@ -38,7 +38,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *samples)
     AVFilterContext *ctx = inlink->dst;
     VolDetectContext *vd = ctx->priv;
     int nb_samples  = samples->nb_samples;
-    int nb_channels = samples->channels;
+    int nb_channels = samples->ch_layout.nb_channels;
     int nb_planes   = nb_channels;
     int plane, i;
     int16_t *pcm;
@@ -122,13 +122,6 @@ static const AVFilterPad volumedetect_inputs[] = {
     },
 };
 
-static const AVFilterPad volumedetect_outputs[] = {
-    {
-        .name = "default",
-        .type = AVMEDIA_TYPE_AUDIO,
-    },
-};
-
 const AVFilter ff_af_volumedetect = {
     .name          = "volumedetect",
     .description   = NULL_IF_CONFIG_SMALL("Detect audio volume."),
@@ -136,6 +129,6 @@ const AVFilter ff_af_volumedetect = {
     .uninit        = uninit,
     .flags         = AVFILTER_FLAG_METADATA_ONLY,
     FILTER_INPUTS(volumedetect_inputs),
-    FILTER_OUTPUTS(volumedetect_outputs),
+    FILTER_OUTPUTS(ff_audio_default_filterpad),
     FILTER_SAMPLEFMTS(AV_SAMPLE_FMT_S16, AV_SAMPLE_FMT_S16P),
 };

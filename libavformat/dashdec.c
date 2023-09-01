@@ -21,13 +21,13 @@
  */
 #include <libxml/parser.h>
 #include "libavutil/bprint.h"
-#include "libavutil/intreadwrite.h"
 #include "libavutil/opt.h"
 #include "libavutil/time.h"
 #include "libavutil/parseutils.h"
 #include "internal.h"
 #include "avio_internal.h"
 #include "dash.h"
+#include "demux.h"
 
 #define INITIAL_BUFFER_SIZE 32768
 
@@ -150,6 +150,7 @@ typedef struct DASHContext {
     char *allowed_extensions;
     AVDictionary *avio_opts;
     int max_url_size;
+    char *cenc_decryption_key;
 
     /* Flags for init section*/
     int is_init_section_common_video;
@@ -955,13 +956,18 @@ static int parse_manifest_representation(AVFormatContext *s, const char *url,
             xmlFree(val);
         }
         if (adaptionset_supplementalproperty_node) {
-            if (!av_strcasecmp(xmlGetProp(adaptionset_supplementalproperty_node,"schemeIdUri"), "http://dashif.org/guidelines/last-segment-number")) {
-                val = xmlGetProp(adaptionset_supplementalproperty_node,"value");
-                if (!val) {
-                    av_log(s, AV_LOG_ERROR, "Missing value attribute in adaptionset_supplementalproperty_node\n");
-                } else {
-                    rep->last_seq_no =(int64_t) strtoll(val, NULL, 10) - 1;
-                    xmlFree(val);
+            char *scheme_id_uri = xmlGetProp(adaptionset_supplementalproperty_node, "schemeIdUri");
+            if (scheme_id_uri) {
+                int is_last_segment_number = !av_strcasecmp(scheme_id_uri, "http://dashif.org/guidelines/last-segment-number");
+                xmlFree(scheme_id_uri);
+                if (is_last_segment_number) {
+                    val = xmlGetProp(adaptionset_supplementalproperty_node, "value");
+                    if (!val) {
+                        av_log(s, AV_LOG_ERROR, "Missing value attribute in adaptionset_supplementalproperty_node\n");
+                    } else {
+                        rep->last_seq_no = (int64_t)strtoll(val, NULL, 10) - 1;
+                        xmlFree(val);
+                    }
                 }
             }
         }
@@ -1893,6 +1899,9 @@ static int reopen_demux_for_component(AVFormatContext *s, struct representation 
     pls->ctx->pb = &pls->pb.pub;
     pls->ctx->io_open  = nested_io_open;
 
+    if (c->cenc_decryption_key)
+        av_dict_set(&in_fmt_opts, "decryption_key", c->cenc_decryption_key, 0);
+
     // provide additional information from mpd if available
     ret = avformat_open_input(&pls->ctx, "", in_fmt, &in_fmt_opts); //pls->init_section->url
     av_dict_free(&in_fmt_opts);
@@ -2344,6 +2353,7 @@ static const AVOption dash_options[] = {
         OFFSET(allowed_extensions), AV_OPT_TYPE_STRING,
         {.str = "aac,m4a,m4s,m4v,mov,mp4,webm,ts"},
         INT_MIN, INT_MAX, FLAGS},
+    { "cenc_decryption_key", "Media decryption key (hex)", OFFSET(cenc_decryption_key), AV_OPT_TYPE_STRING, {.str = NULL}, INT_MIN, INT_MAX, .flags = FLAGS },
     {NULL}
 };
 

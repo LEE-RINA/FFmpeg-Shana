@@ -30,7 +30,6 @@
 #include "audio.h"
 #include "filters.h"
 #include "internal.h"
-#include "formats.h"
 
 typedef struct ASNSContext {
     const AVClass *class;
@@ -39,7 +38,7 @@ typedef struct ASNSContext {
 } ASNSContext;
 
 #define OFFSET(x) offsetof(ASNSContext, x)
-#define FLAGS AV_OPT_FLAG_AUDIO_PARAM|AV_OPT_FLAG_FILTERING_PARAM
+#define FLAGS AV_OPT_FLAG_AUDIO_PARAM|AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_RUNTIME_PARAM
 
 static const AVOption asetnsamples_options[] = {
     { "nb_out_samples", "set the number of per-frame output samples", OFFSET(nb_out_samples), AV_OPT_TYPE_INT, {.i64=1024}, 1, INT_MAX, FLAGS },
@@ -61,17 +60,16 @@ static int activate(AVFilterContext *ctx)
 
     FF_FILTER_FORWARD_STATUS_BACK(outlink, inlink);
 
-    ret = ff_inlink_consume_samples(inlink, s->nb_out_samples, s->nb_out_samples, &frame);
+    if (ctx->is_disabled)
+        ret = ff_inlink_consume_frame(inlink, &frame);
+    else
+        ret = ff_inlink_consume_samples(inlink, s->nb_out_samples, s->nb_out_samples, &frame);
     if (ret < 0)
         return ret;
 
     if (ret > 0) {
-        if (!s->pad || frame->nb_samples == s->nb_out_samples) {
-            ret = ff_filter_frame(outlink, frame);
-            if (ff_inlink_queued_samples(inlink) >= s->nb_out_samples)
-                ff_filter_set_ready(ctx, 100);
-            return ret;
-        }
+        if (!s->pad || ctx->is_disabled || frame->nb_samples == s->nb_out_samples)
+            return ff_filter_frame(outlink, frame);
 
         pad_frame = ff_get_audio_buffer(outlink, s->nb_out_samples);
         if (!pad_frame) {
@@ -87,40 +85,32 @@ static int activate(AVFilterContext *ctx)
         }
 
         av_samples_copy(pad_frame->extended_data, frame->extended_data,
-                        0, 0, frame->nb_samples, frame->channels, frame->format);
+                        0, 0, frame->nb_samples, frame->ch_layout.nb_channels, frame->format);
         av_samples_set_silence(pad_frame->extended_data, frame->nb_samples,
-                               s->nb_out_samples - frame->nb_samples, frame->channels,
+                               s->nb_out_samples - frame->nb_samples, frame->ch_layout.nb_channels,
                                frame->format);
         av_frame_free(&frame);
         return ff_filter_frame(outlink, pad_frame);
     }
 
     FF_FILTER_FORWARD_STATUS(inlink, outlink);
+    if (ff_inlink_queued_samples(inlink) >= s->nb_out_samples) {
+        ff_filter_set_ready(ctx, 100);
+        return 0;
+    }
     FF_FILTER_FORWARD_WANTED(outlink, inlink);
 
     return FFERROR_NOT_READY;
 }
-
-static const AVFilterPad asetnsamples_inputs[] = {
-    {
-        .name = "default",
-        .type = AVMEDIA_TYPE_AUDIO,
-    },
-};
-
-static const AVFilterPad asetnsamples_outputs[] = {
-    {
-        .name = "default",
-        .type = AVMEDIA_TYPE_AUDIO,
-    },
-};
 
 const AVFilter ff_af_asetnsamples = {
     .name        = "asetnsamples",
     .description = NULL_IF_CONFIG_SMALL("Set the number of samples for each output audio frames."),
     .priv_size   = sizeof(ASNSContext),
     .priv_class  = &asetnsamples_class,
-    FILTER_INPUTS(asetnsamples_inputs),
-    FILTER_OUTPUTS(asetnsamples_outputs),
+    FILTER_INPUTS(ff_audio_default_filterpad),
+    FILTER_OUTPUTS(ff_audio_default_filterpad),
     .activate    = activate,
+    .flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL,
+    .process_command = ff_filter_process_command,
 };

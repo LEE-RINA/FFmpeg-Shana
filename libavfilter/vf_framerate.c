@@ -264,8 +264,9 @@ void ff_framerate_init(FrameRateContext *s)
         s->blend_factor_max = 1 << BLEND_FACTOR_DEPTH(16);
         s->blend = blend_frames16_c;
     }
-    if (ARCH_X86)
-        ff_framerate_init_x86(s);
+#if ARCH_X86
+    ff_framerate_init_x86(s);
+#endif
 }
 
 static int config_input(AVFilterLink *inlink)
@@ -317,7 +318,7 @@ retry:
         return ret;
 
     if (inpicref) {
-        if (inpicref->interlaced_frame)
+        if (inpicref->flags & AV_FRAME_FLAG_INTERLACED)
             av_log(ctx, AV_LOG_WARNING, "Interlaced frame found - the output will not be correct.\n");
 
         if (inpicref->pts == AV_NOPTS_VALUE) {

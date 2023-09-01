@@ -3,10 +3,12 @@ DESC    = FFmpeg device handling library
 
 HEADERS = avdevice.h                                                    \
           version.h                                                     \
+          version_major.h                                               \
 
 OBJS    = alldevices.o                                                  \
           avdevice.o                                                    \
           utils.o                                                       \
+          version.o                                                     \
 
 OBJS-$(HAVE_LIBC_MSVCRT)                 += file_open.o
 
@@ -55,9 +57,10 @@ OBJS-$(CONFIG_LIBDC1394_INDEV)           += libdc1394.o
 
 # Objects duplicated from other libraries for shared builds
 SHLIBOBJS-$(CONFIG_DECKLINK_INDEV)       += reverse.o
+SHLIBOBJS-$(CONFIG_DECKLINK_OUTDEV)      += ccfifo.o
 
 # Windows resource file
-SLIBOBJS-$(HAVE_GNU_WINDRES)             += avdeviceres.o
+SHLIBOBJS-$(HAVE_GNU_WINDRES)            += avdeviceres.o
 
 SKIPHEADERS                              += decklink_common.h
 SKIPHEADERS-$(CONFIG_DECKLINK)           += decklink_enc.h decklink_dec.h \

@@ -34,6 +34,7 @@
 #include "internal.h"
 #include "qp_table.h"
 #include "vf_pp7.h"
+#include "video.h"
 
 enum mode {
     MODE_HARD,
@@ -301,8 +302,9 @@ static int config_input(AVFilterLink *inlink)
 
     pp7->dctB = dctB_c;
 
-    if (ARCH_X86)
-        ff_pp7_init_x86(pp7);
+#if ARCH_X86
+    ff_pp7_init_x86(pp7);
+#endif
 
     return 0;
 }
@@ -384,20 +386,13 @@ static const AVFilterPad pp7_inputs[] = {
     },
 };
 
-static const AVFilterPad pp7_outputs[] = {
-    {
-        .name = "default",
-        .type = AVMEDIA_TYPE_VIDEO,
-    },
-};
-
 const AVFilter ff_vf_pp7 = {
     .name            = "pp7",
     .description     = NULL_IF_CONFIG_SMALL("Apply Postprocessing 7 filter."),
     .priv_size       = sizeof(PP7Context),
     .uninit          = uninit,
     FILTER_INPUTS(pp7_inputs),
-    FILTER_OUTPUTS(pp7_outputs),
+    FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
     .priv_class      = &pp7_class,
     .flags           = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL,

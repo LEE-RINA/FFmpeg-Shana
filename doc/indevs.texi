@@ -991,9 +991,8 @@ This input device reads data from the open output pads of a libavfilter
 filtergraph.
 
 For each filtergraph open output, the input device will create a
-corresponding stream which is mapped to the generated output. Currently
-only video data is supported. The filtergraph is specified through the
-option @option{graph}.
+corresponding stream which is mapped to the generated output.
+The filtergraph is specified through the option @option{graph}.
 
 @subsection Options
 
@@ -1289,11 +1288,11 @@ Specify the samplerate in Hz, by default 48kHz is used.
 Specify the channels in use, by default 2 (stereo) is set.
 
 @item frame_size
-Specify the number of bytes per frame, by default it is set to 1024.
+This option does nothing and is deprecated.
 
 @item fragment_size
-Specify the minimal buffering fragment in PulseAudio, it will affect the
-audio latency. By default it is unset.
+Specify the size in bytes of the minimal buffering fragment in PulseAudio, it
+will affect the audio latency. By default it is set to 50 ms amount of data.
 
 @item wallclock
 Set the initial PTS using the current time. Default is 1.

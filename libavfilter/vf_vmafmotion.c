@@ -24,11 +24,13 @@
  * Calculate VMAF Motion score.
  */
 
+#include "libavutil/file_open.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
 #include "formats.h"
 #include "internal.h"
+#include "video.h"
 #include "vmaf_motion.h"
 
 #define BIT_SHIFT 15
@@ -312,7 +314,7 @@ static av_cold int init(AVFilterContext *ctx)
         if (!strcmp(s->stats_file_str, "-")) {
             s->stats_file = stdout;
         } else {
-            s->stats_file = fopen(s->stats_file_str, "w");
+            s->stats_file = avpriv_fopen_utf8(s->stats_file_str, "w");
             if (!s->stats_file) {
                 int err = AVERROR(errno);
                 char buf[128];
@@ -349,13 +351,6 @@ static const AVFilterPad vmafmotion_inputs[] = {
     },
 };
 
-static const AVFilterPad vmafmotion_outputs[] = {
-    {
-        .name          = "default",
-        .type          = AVMEDIA_TYPE_VIDEO,
-    },
-};
-
 const AVFilter ff_vf_vmafmotion = {
     .name          = "vmafmotion",
     .description   = NULL_IF_CONFIG_SMALL("Calculate the VMAF Motion score."),
@@ -365,6 +360,6 @@ const AVFilter ff_vf_vmafmotion = {
     .priv_class    = &vmafmotion_class,
     .flags         = AVFILTER_FLAG_METADATA_ONLY,
     FILTER_INPUTS(vmafmotion_inputs),
-    FILTER_OUTPUTS(vmafmotion_outputs),
+    FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_QUERY_FUNC(query_formats),
 };

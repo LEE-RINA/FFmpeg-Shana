@@ -9,10 +9,24 @@ AVBASENAMES  = ffmpeg ffplay ffprobe
 ALLAVPROGS   = $(AVBASENAMES:%=%$(PROGSSUF)$(EXESUF))
 ALLAVPROGS_G = $(AVBASENAMES:%=%$(PROGSSUF)_g$(EXESUF))
 
-OBJS-ffmpeg                        += fftools/ffmpeg_opt.o fftools/ffmpeg_filter.o fftools/ffmpeg_hw.o
+OBJS-ffmpeg +=                  \
+    fftools/ffmpeg_dec.o        \
+    fftools/ffmpeg_demux.o      \
+    fftools/ffmpeg_enc.o        \
+    fftools/ffmpeg_filter.o     \
+    fftools/ffmpeg_hw.o         \
+    fftools/ffmpeg_mux.o        \
+    fftools/ffmpeg_mux_init.o   \
+    fftools/ffmpeg_opt.o        \
+    fftools/objpool.o           \
+    fftools/sync_queue.o        \
+    fftools/thread_queue.o      \
 
 define DOFFTOOL
-OBJS-$(1) += fftools/cmdutils.o fftools/$(1).o $(OBJS-$(1)-yes)
+OBJS-$(1) += fftools/cmdutils.o fftools/opt_common.o fftools/$(1).o $(OBJS-$(1)-yes)
+ifdef HAVE_GNU_WINDRES
+OBJS-$(1) += fftools/fftoolsres.o
+endif
 $(if $(and $(findstring .exe,$(EXESUF)),$(wildcard fftools/$(1).rc)),OBJS-$(1) += fftools/$(1)$(PROGSSUF)_rc.o)
 $(1)$(PROGSSUF)_g$(EXESUF): $$(OBJS-$(1))
 $$(OBJS-$(1)): | fftools
