@@ -30,6 +30,7 @@
 #include "libavutil/channel_layout.h"
 #include "libavutil/intreadwrite.h"
 #include "avformat.h"
+#include "demux.h"
 #include "riff.h"
 
 typedef struct QCPContext {
@@ -104,7 +105,8 @@ static int qcp_read_header(AVFormatContext *s)
 
     st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
     st->codecpar->ch_layout  = (AVChannelLayout)AV_CHANNEL_LAYOUT_MONO;
-    avio_read(pb, buf, 16);
+    if (avio_read(pb, buf, 16) != 16)
+        return AVERROR_INVALIDDATA;
     if (is_qcelp_13k_guid(buf)) {
         st->codecpar->codec_id = AV_CODEC_ID_QCELP;
     } else if (!memcmp(buf, guid_evrc, 16)) {
@@ -195,9 +197,9 @@ static int qcp_read_packet(AVFormatContext *s, AVPacket *pkt)
     return AVERROR_EOF;
 }
 
-const AVInputFormat ff_qcp_demuxer = {
-    .name           = "qcp",
-    .long_name      = NULL_IF_CONFIG_SMALL("QCP"),
+const FFInputFormat ff_qcp_demuxer = {
+    .p.name         = "qcp",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("QCP"),
     .priv_data_size = sizeof(QCPContext),
     .read_probe     = qcp_probe,
     .read_header    = qcp_read_header,

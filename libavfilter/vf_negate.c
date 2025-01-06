@@ -22,7 +22,7 @@
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
 #include "drawutils.h"
-#include "internal.h"
+#include "filters.h"
 #include "video.h"
 
 #define COMP_R 0x01
@@ -62,14 +62,14 @@ typedef struct NegateContext {
 #define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_RUNTIME_PARAM
 
 static const AVOption negate_options[] = {
-    { "components", "set components to negate",  OFFSET(requested_components), AV_OPT_TYPE_FLAGS, {.i64=0x77}, 1, 0xff, FLAGS, "flags"},
-    {      "y", "set luma component",  0, AV_OPT_TYPE_CONST, {.i64=COMP_Y}, 0, 0, FLAGS, "flags"},
-    {      "u", "set u component",     0, AV_OPT_TYPE_CONST, {.i64=COMP_U}, 0, 0, FLAGS, "flags"},
-    {      "v", "set v component",     0, AV_OPT_TYPE_CONST, {.i64=COMP_V}, 0, 0, FLAGS, "flags"},
-    {      "r", "set red component",   0, AV_OPT_TYPE_CONST, {.i64=COMP_R}, 0, 0, FLAGS, "flags"},
-    {      "g", "set green component", 0, AV_OPT_TYPE_CONST, {.i64=COMP_G}, 0, 0, FLAGS, "flags"},
-    {      "b", "set blue component",  0, AV_OPT_TYPE_CONST, {.i64=COMP_B}, 0, 0, FLAGS, "flags"},
-    {      "a", "set alpha component", 0, AV_OPT_TYPE_CONST, {.i64=COMP_A}, 0, 0, FLAGS, "flags"},
+    { "components", "set components to negate",  OFFSET(requested_components), AV_OPT_TYPE_FLAGS, {.i64=0x77}, 1, 0xff, FLAGS, .unit = "flags"},
+    {      "y", "set luma component",  0, AV_OPT_TYPE_CONST, {.i64=COMP_Y}, 0, 0, FLAGS, .unit = "flags"},
+    {      "u", "set u component",     0, AV_OPT_TYPE_CONST, {.i64=COMP_U}, 0, 0, FLAGS, .unit = "flags"},
+    {      "v", "set v component",     0, AV_OPT_TYPE_CONST, {.i64=COMP_V}, 0, 0, FLAGS, .unit = "flags"},
+    {      "r", "set red component",   0, AV_OPT_TYPE_CONST, {.i64=COMP_R}, 0, 0, FLAGS, .unit = "flags"},
+    {      "g", "set green component", 0, AV_OPT_TYPE_CONST, {.i64=COMP_G}, 0, 0, FLAGS, .unit = "flags"},
+    {      "b", "set blue component",  0, AV_OPT_TYPE_CONST, {.i64=COMP_B}, 0, 0, FLAGS, .unit = "flags"},
+    {      "a", "set alpha component", 0, AV_OPT_TYPE_CONST, {.i64=COMP_A}, 0, 0, FLAGS, .unit = "flags"},
     { "negate_alpha",  NULL,    OFFSET(negate_alpha), AV_OPT_TYPE_BOOL, {.i64=0},    0,    1, FLAGS },
     { NULL }
 };
@@ -87,6 +87,8 @@ static const enum AVPixelFormat pix_fmts[] = {
     AV_PIX_FMT_YUV444P12, AV_PIX_FMT_YUV422P12, AV_PIX_FMT_YUV420P12, AV_PIX_FMT_YUV440P12,
     AV_PIX_FMT_YUV444P14, AV_PIX_FMT_YUV422P14, AV_PIX_FMT_YUV420P14,
     AV_PIX_FMT_YUV444P16, AV_PIX_FMT_YUV422P16, AV_PIX_FMT_YUV420P16,
+    AV_PIX_FMT_YUVA444P10, AV_PIX_FMT_YUVA422P10, AV_PIX_FMT_YUVA420P10,
+    AV_PIX_FMT_YUVA444P12, AV_PIX_FMT_YUVA422P12,
     AV_PIX_FMT_YUVA444P16, AV_PIX_FMT_YUVA422P16, AV_PIX_FMT_YUVA420P16,
     AV_PIX_FMT_ARGB, AV_PIX_FMT_RGBA,
     AV_PIX_FMT_ABGR, AV_PIX_FMT_BGRA,
@@ -95,7 +97,7 @@ static const enum AVPixelFormat pix_fmts[] = {
     AV_PIX_FMT_BGR48, AV_PIX_FMT_BGRA64,
     AV_PIX_FMT_GBRP, AV_PIX_FMT_GBRAP,
     AV_PIX_FMT_GBRP9, AV_PIX_FMT_GBRP10,
-    AV_PIX_FMT_GBRAP10,
+    AV_PIX_FMT_GBRAP10, AV_PIX_FMT_GBRAP14,
     AV_PIX_FMT_GBRP12, AV_PIX_FMT_GBRP14,
     AV_PIX_FMT_GBRP16, AV_PIX_FMT_GBRAP12,
     AV_PIX_FMT_GBRAP16,

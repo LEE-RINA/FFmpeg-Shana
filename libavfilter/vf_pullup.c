@@ -19,11 +19,13 @@
  */
 
 #include "libavutil/avassert.h"
+#include "libavutil/emms.h"
 #include "libavutil/imgutils.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
-#include "internal.h"
+#include "filters.h"
 #include "video.h"
 #include "vf_pullup.h"
 
@@ -42,10 +44,10 @@ static const AVOption pullup_options[] = {
     { "jt", "set top junk size",   OFFSET(junk_top),   AV_OPT_TYPE_INT, {.i64=4}, 1, INT_MAX, FLAGS },
     { "jb", "set bottom junk size", OFFSET(junk_bottom), AV_OPT_TYPE_INT, {.i64=4}, 1, INT_MAX, FLAGS },
     { "sb", "set strict breaks", OFFSET(strict_breaks), AV_OPT_TYPE_BOOL,{.i64=0},-1, 1, FLAGS },
-    { "mp", "set metric plane",  OFFSET(metric_plane),  AV_OPT_TYPE_INT, {.i64=0}, 0, 2, FLAGS, "mp" },
-    { "y", "luma",        0, AV_OPT_TYPE_CONST, {.i64=0}, 0, 0, FLAGS, "mp" },
-    { "u", "chroma blue", 0, AV_OPT_TYPE_CONST, {.i64=1}, 0, 0, FLAGS, "mp" },
-    { "v", "chroma red",  0, AV_OPT_TYPE_CONST, {.i64=2}, 0, 0, FLAGS, "mp" },
+    { "mp", "set metric plane",  OFFSET(metric_plane),  AV_OPT_TYPE_INT, {.i64=0}, 0, 2, FLAGS, .unit = "mp" },
+    { "y", "luma",        0, AV_OPT_TYPE_CONST, {.i64=0}, 0, 0, FLAGS, .unit = "mp" },
+    { "u", "chroma blue", 0, AV_OPT_TYPE_CONST, {.i64=1}, 0, 0, FLAGS, .unit = "mp" },
+    { "v", "chroma red",  0, AV_OPT_TYPE_CONST, {.i64=2}, 0, 0, FLAGS, .unit = "mp" },
     { NULL }
 };
 
@@ -665,9 +667,9 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
         goto end;
     }
 
-    av_image_copy(b->planes, s->planewidth,
-                  (const uint8_t**)in->data, in->linesize,
-                  inlink->format, inlink->w, inlink->h);
+    av_image_copy2(b->planes, s->planewidth,
+                   in->data, in->linesize,
+                   inlink->format, inlink->w, inlink->h);
 
     p = (in->flags & AV_FRAME_FLAG_INTERLACED) ?
         !(in->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST) : 0;
@@ -713,9 +715,9 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     }
     av_frame_copy_props(out, in);
 
-    av_image_copy(out->data, out->linesize,
-                  (const uint8_t**)f->buffer->planes, s->planewidth,
-                  inlink->format, inlink->w, inlink->h);
+    av_image_copy2(out->data, out->linesize,
+                   f->buffer->planes, s->planewidth,
+                   inlink->format, inlink->w, inlink->h);
 
     ret = ff_filter_frame(outlink, out);
     pullup_release_frame(f);

@@ -18,14 +18,15 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "libavutil/avstring.h"
+#include "libavutil/avassert.h"
 #include "libavutil/eval.h"
 #include "libavutil/imgutils.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 
 #include "avfilter.h"
+#include "filters.h"
 #include "formats.h"
-#include "internal.h"
 #include "video.h"
 
 typedef struct SwapRectContext {
@@ -55,13 +56,16 @@ static const AVOption swaprect_options[] = {
 
 AVFILTER_DEFINE_CLASS(swaprect);
 
-static int query_formats(AVFilterContext *ctx)
+static int query_formats(const AVFilterContext *ctx,
+                         AVFilterFormatsConfig **cfg_in,
+                         AVFilterFormatsConfig **cfg_out)
 {
     int reject_flags = AV_PIX_FMT_FLAG_PAL     |
                        AV_PIX_FMT_FLAG_HWACCEL |
                        AV_PIX_FMT_FLAG_BITSTREAM;
 
-    return ff_set_common_formats(ctx, ff_formats_pixdesc_filter(0, reject_flags));
+    return ff_set_common_formats2(ctx, cfg_in, cfg_out,
+                                  ff_formats_pixdesc_filter(0, reject_flags));
 }
 
 static const char *const var_names[] = {   "w",   "h",   "a",   "n",   "t",
@@ -77,6 +81,7 @@ enum                                   { VAR_W, VAR_H, VAR_A, VAR_N, VAR_T,
 
 static int filter_frame(AVFilterLink *inlink, AVFrame *in)
 {
+    FilterLink *inl = ff_filter_link(inlink);
     AVFilterContext *ctx = inlink->dst;
     AVFilterLink *outlink = ctx->outputs[0];
     SwapRectContext *s = ctx->priv;
@@ -96,7 +101,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     var_values[VAR_A]   = (float) inlink->w / inlink->h;
     var_values[VAR_SAR] = inlink->sample_aspect_ratio.num ? av_q2d(inlink->sample_aspect_ratio) : 1;
     var_values[VAR_DAR] = var_values[VAR_A] * var_values[VAR_SAR];
-    var_values[VAR_N]   = inlink->frame_count_out;
+    var_values[VAR_N]   = inl->frame_count_out;
     var_values[VAR_T]   = in->pts == AV_NOPTS_VALUE ? NAN : in->pts * av_q2d(inlink->time_base);
 #if FF_API_FRAME_PKT
 FF_DISABLE_DEPRECATION_WARNINGS
@@ -149,10 +154,10 @@ FF_ENABLE_DEPRECATION_WARNINGS
     w = dw; h = dh; x1[0] = dx1; y1[0] = dy1; x2[0] = dx2; y2[0] = dy2;
 
     x1[0] = av_clip(x1[0], 0, inlink->w - 1);
-    y1[0] = av_clip(y1[0], 0, inlink->w - 1);
+    y1[0] = av_clip(y1[0], 0, inlink->h - 1);
 
     x2[0] = av_clip(x2[0], 0, inlink->w - 1);
-    y2[0] = av_clip(y2[0], 0, inlink->w - 1);
+    y2[0] = av_clip(y2[0], 0, inlink->h - 1);
 
     ah[1] = ah[2] = AV_CEIL_RSHIFT(h, s->desc->log2_chroma_h);
     ah[0] = ah[3] = h;
@@ -172,15 +177,19 @@ FF_ENABLE_DEPRECATION_WARNINGS
     lw[1] = lw[2] = AV_CEIL_RSHIFT(inlink->w, s->desc->log2_chroma_w);
     lw[0] = lw[3] = inlink->w;
 
-    x1[1] = x1[2] = AV_CEIL_RSHIFT(x1[0], s->desc->log2_chroma_w);
+    x1[1] = x1[2] = (x1[0] >> s->desc->log2_chroma_w);
     x1[0] = x1[3] = x1[0];
-    y1[1] = y1[2] = AV_CEIL_RSHIFT(y1[0], s->desc->log2_chroma_h);
+    y1[1] = y1[2] = (y1[0] >> s->desc->log2_chroma_h);
     y1[0] = y1[3] = y1[0];
 
-    x2[1] = x2[2] = AV_CEIL_RSHIFT(x2[0], s->desc->log2_chroma_w);
+    x2[1] = x2[2] = (x2[0] >> s->desc->log2_chroma_w);
     x2[0] = x2[3] = x2[0];
-    y2[1] = y2[2] = AV_CEIL_RSHIFT(y2[0], s->desc->log2_chroma_h);
+    y2[1] = y2[2] = (y2[0] >> s->desc->log2_chroma_h);
     y2[0] = y2[3] = y2[0];
+
+
+    av_assert0(FFMAX(x1[1], x2[1]) + pw[1] <= lw[1]);
+    av_assert0(FFMAX(y1[1], y2[1]) + ph[1] <= lh[1]);
 
     for (p = 0; p < s->nb_planes; p++) {
         if (ph[p] == ah[p] && pw[p] == aw[p]) {
@@ -245,7 +254,7 @@ const AVFilter ff_vf_swaprect = {
     .uninit        = uninit,
     FILTER_INPUTS(inputs),
     FILTER_OUTPUTS(ff_video_default_filterpad),
-    FILTER_QUERY_FUNC(query_formats),
+    FILTER_QUERY_FUNC2(query_formats),
     .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
     .process_command = ff_filter_process_command,
 };

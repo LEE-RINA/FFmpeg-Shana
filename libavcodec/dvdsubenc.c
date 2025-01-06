@@ -25,6 +25,7 @@
 #include "libavutil/avassert.h"
 #include "libavutil/bprint.h"
 #include "libavutil/imgutils.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 
 typedef struct {
@@ -376,7 +377,8 @@ static int encode_dvd_subtitles(AVCodecContext *avctx,
     x2 = vrect.x + vrect.w - 1;
     y2 = vrect.y + vrect.h - 1;
 
-    if (x2 > avctx->width || y2 > avctx->height) {
+    if ((avctx->width  > 0 && x2 > avctx->width) ||
+        (avctx->height > 0 && y2 > avctx->height)) {
         av_log(avctx, AV_LOG_ERROR, "canvas_size(%d:%d) is too small(%d:%d) for render\n",
                avctx->width, avctx->height, x2, y2);
         ret = AVERROR(EINVAL);

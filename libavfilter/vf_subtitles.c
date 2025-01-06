@@ -29,19 +29,19 @@
 
 #include <ass/ass.h>
 
-#include "config.h"
 #include "config_components.h"
 #if CONFIG_SUBTITLES_FILTER
 # include "libavcodec/avcodec.h"
+# include "libavcodec/codec_desc.h"
 # include "libavformat/avformat.h"
 #endif
 #include "libavutil/avstring.h"
-#include "libavutil/imgutils.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
-#include "libavutil/parseutils.h"
+
+#include "filters.h"
 #include "drawutils.h"
 #include "avfilter.h"
-#include "internal.h"
 #include "formats.h"
 #include "video.h"
 #include <windows.h>
@@ -93,6 +93,40 @@ static const int ass_libavfilter_log_level_map[] = {
     [7] = AV_LOG_DEBUG,     /* MSGL_DBG2 */
 };
 
+static enum AVColorSpace ass_get_color_space(ASS_YCbCrMatrix ass_matrix, enum AVColorSpace inlink_space) {
+    switch (ass_matrix) {
+    case YCBCR_NONE:            return inlink_space;
+    case YCBCR_SMPTE240M_TV:
+    case YCBCR_SMPTE240M_PC:    return AVCOL_SPC_SMPTE240M;
+    case YCBCR_FCC_TV:
+    case YCBCR_FCC_PC:          return AVCOL_SPC_FCC;
+    case YCBCR_BT709_TV:
+    case YCBCR_BT709_PC:        return AVCOL_SPC_BT709;
+    case YCBCR_BT601_TV:
+    case YCBCR_BT601_PC:
+    case YCBCR_DEFAULT:
+    case YCBCR_UNKNOWN:
+    default:                    return AVCOL_SPC_SMPTE170M;
+    }
+}
+
+static enum AVColorRange ass_get_color_range(ASS_YCbCrMatrix ass_matrix, enum AVColorRange inlink_range) {
+    switch (ass_matrix) {
+    case YCBCR_NONE:            return inlink_range;
+    case YCBCR_SMPTE240M_PC:
+    case YCBCR_FCC_PC:
+    case YCBCR_BT709_PC:
+    case YCBCR_BT601_PC:        return AVCOL_RANGE_JPEG;
+    case YCBCR_SMPTE240M_TV:
+    case YCBCR_FCC_TV:
+    case YCBCR_BT709_TV:
+    case YCBCR_BT601_TV:
+    case YCBCR_DEFAULT:
+    case YCBCR_UNKNOWN:
+    default:                    return AVCOL_RANGE_MPEG;
+    }
+}
+
 static void ass_log(int ass_level, const char *fmt, va_list args, void *ctx)
 {
     const int ass_level_clip = av_clip(ass_level, 0,
@@ -143,16 +177,22 @@ static av_cold void uninit(AVFilterContext *ctx)
         ass_library_done(ass->library);
 }
 
-static int query_formats(AVFilterContext *ctx)
+static int query_formats(const AVFilterContext *ctx,
+                         AVFilterFormatsConfig **cfg_in,
+                         AVFilterFormatsConfig **cfg_out)
 {
-    return ff_set_common_formats(ctx, ff_draw_supported_pixel_formats(0));
+    return ff_set_common_formats2(ctx, cfg_in, cfg_out,
+                                  ff_draw_supported_pixel_formats(0));
 }
 
 static int config_input(AVFilterLink *inlink)
 {
     AssContext *ass = inlink->dst->priv;
 
-    ff_draw_init(&ass->draw, inlink->format, ass->alpha ? FF_DRAW_PROCESS_ALPHA : 0);
+    ff_draw_init2(&ass->draw, inlink->format,
+                  ass_get_color_space(ass->track->YCbCrMatrix, inlink->colorspace),
+                  ass_get_color_range(ass->track->YCbCrMatrix, inlink->color_range),
+                  ass->alpha ? FF_DRAW_PROCESS_ALPHA : 0);
 
     ass_set_frame_size  (ass->renderer, inlink->w, inlink->h);
     if (ass->original_w && ass->original_h) {
@@ -221,10 +261,10 @@ static const AVFilterPad ass_inputs[] = {
 
 static const AVOption ass_options[] = {
     COMMON_OPTIONS
-    {"shaping", "set shaping engine", OFFSET(shaping), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 1, FLAGS, "shaping_mode"},
-        {"auto", NULL,                 0, AV_OPT_TYPE_CONST, {.i64 = -1},                  INT_MIN, INT_MAX, FLAGS, "shaping_mode"},
-        {"simple",  "simple shaping",  0, AV_OPT_TYPE_CONST, {.i64 = ASS_SHAPING_SIMPLE},  INT_MIN, INT_MAX, FLAGS, "shaping_mode"},
-        {"complex", "complex shaping", 0, AV_OPT_TYPE_CONST, {.i64 = ASS_SHAPING_COMPLEX}, INT_MIN, INT_MAX, FLAGS, "shaping_mode"},
+    {"shaping", "set shaping engine", OFFSET(shaping), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 1, FLAGS, .unit = "shaping_mode"},
+        {"auto", NULL,                 0, AV_OPT_TYPE_CONST, {.i64 = -1},                  INT_MIN, INT_MAX, FLAGS, .unit = "shaping_mode"},
+        {"simple",  "simple shaping",  0, AV_OPT_TYPE_CONST, {.i64 = ASS_SHAPING_SIMPLE},  INT_MIN, INT_MAX, FLAGS, .unit = "shaping_mode"},
+        {"complex", "complex shaping", 0, AV_OPT_TYPE_CONST, {.i64 = ASS_SHAPING_COMPLEX}, INT_MIN, INT_MAX, FLAGS, .unit = "shaping_mode"},
     {NULL},
 };
 
@@ -267,7 +307,7 @@ const AVFilter ff_vf_ass = {
     .uninit        = uninit,
     FILTER_INPUTS(ass_inputs),
     FILTER_OUTPUTS(ff_video_default_filterpad),
-    FILTER_QUERY_FUNC(query_formats),
+    FILTER_QUERY_FUNC2(query_formats),
     .priv_class    = &ass_class,
 };
 #endif
@@ -530,7 +570,7 @@ const AVFilter ff_vf_subtitles = {
     .uninit        = uninit,
     FILTER_INPUTS(ass_inputs),
     FILTER_OUTPUTS(ff_video_default_filterpad),
-    FILTER_QUERY_FUNC(query_formats),
+    FILTER_QUERY_FUNC2(query_formats),
     .priv_class    = &subtitles_class,
 };
 #endif

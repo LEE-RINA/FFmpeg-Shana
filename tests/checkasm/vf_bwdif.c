@@ -18,8 +18,7 @@
 
 #include <string.h>
 #include "checkasm.h"
-#include "libavcodec/internal.h"
-#include "libavfilter/bwdif.h"
+#include "libavfilter/bwdifdsp.h"
 #include "libavutil/mem_internal.h"
 
 #define WIDTH 256
@@ -41,7 +40,7 @@
         const int stride = WIDTH;                                              \
         const int mask = (1<<depth)-1;                                         \
                                                                                \
-        declare_func(void, void *dst, void *prev, void *cur, void *next,       \
+        declare_func(void, void *dst, const void *prev, const void *cur, const void *next, \
                         int w, int prefs, int mrefs, int prefs2, int mrefs2,   \
                         int prefs3, int mrefs3, int prefs4, int mrefs4,        \
                         int parity, int clip_max);                             \
@@ -72,7 +71,7 @@
 
 void checkasm_check_vf_bwdif(void)
 {
-    BWDIFContext ctx_8, ctx_10;
+    BWDIFDSPContext ctx_8, ctx_10;
 
     ff_bwdif_init_filter_line(&ctx_8, 8);
     ff_bwdif_init_filter_line(&ctx_10, 10);
@@ -182,7 +181,7 @@ void checkasm_check_vf_bwdif(void)
             for (parity = 0; parity != 2; ++parity) {
                 if (check_func(ctx_8.filter_edge, "bwdif8.edge.s%d.p%d", spat, parity)) {
 
-                    declare_func(void, void *dst1, void *prev1, void *cur1, void *next1,
+                    declare_func(void, void *dst1, const void *prev1, const void *cur1, const void *next1,
                                             int w, int prefs, int mrefs, int prefs2, int mrefs2,
                                             int parity, int clip_max, int spat);
 
@@ -226,7 +225,7 @@ void checkasm_check_vf_bwdif(void)
         const int stride = WIDTH;
         const int mask = (1<<8)-1;
 
-        declare_func(void, void *dst1, void *cur1, int w, int prefs, int mrefs,
+        declare_func(void, void *dst1, const void *cur1, int w, int prefs, int mrefs,
                      int prefs3, int mrefs3, int parity, int clip_max);
 
         randomize_buffers( cur0,  cur1, mask, 11*WIDTH);

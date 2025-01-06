@@ -32,7 +32,6 @@
 #include "libavutil/mem.h"
 #include "libavutil/thread.h"
 #include "avcodec.h"
-#include "internal.h"
 #include "jpeg2000.h"
 
 #define SHL(a, n) ((n) >= 0 ? (a) << (n) : (a) >> -(n))
@@ -201,6 +200,17 @@ void ff_jpeg2000_set_significance(Jpeg2000T1Context *t1, int x, int y,
 
 // static const uint8_t lut_gain[2][4] = { { 0, 0, 0, 0 }, { 0, 1, 1, 2 } }; (unused)
 
+/**
+ * 2^(x) for integer x in the range -126..128.
+ * @return correctly rounded float
+ */
+static av_always_inline float exp2fi(int x)
+{
+    av_assert2(-126 <= x && x <= 128);
+    /* Normal range */
+    return av_int2float((x+127) << 23);
+}
+
 static void init_band_stepsize(AVCodecContext *avctx,
                                Jpeg2000Band *band,
                                Jpeg2000CodingStyle *codsty,
@@ -230,7 +240,7 @@ static void init_band_stepsize(AVCodecContext *avctx,
          * R_b = R_I + log2 (gain_b )
          * see ISO/IEC 15444-1:2002 E.1.1 eqn. E-3 and E-4 */
         gain            = cbps;
-        band->f_stepsize  = ff_exp2fi(gain - qntsty->expn[gbandno]);
+        band->f_stepsize  = exp2fi(gain - qntsty->expn[gbandno]);
         band->f_stepsize *= qntsty->mant[gbandno] / 2048.0 + 1.0;
         break;
     default:
@@ -250,9 +260,7 @@ static void init_band_stepsize(AVCodecContext *avctx,
                 band->f_stepsize *= F_LFTG_X * F_LFTG_X * 4;
                 break;
         }
-        if (codsty->transform == FF_DWT97) {
-            band->f_stepsize *= pow(F_LFTG_K, 2*(codsty->nreslevels2decode - reslevelno) + lband - 2);
-        }
+        band->f_stepsize *= pow(F_LFTG_K, 2*(codsty->nreslevels2decode - reslevelno) + lband - 2);
     }
 
     if (band->f_stepsize > (INT_MAX >> 15)) {
@@ -260,12 +268,7 @@ static void init_band_stepsize(AVCodecContext *avctx,
         av_log(avctx, AV_LOG_ERROR, "stepsize out of range\n");
     }
 
-    band->i_stepsize = band->f_stepsize * (1 << 15);
-
-    /* FIXME: In OpenJPEG code stepsize = stepsize * 0.5. Why?
-     * If not set output of entropic decoder is not correct. */
-    if (!av_codec_is_encoder(avctx->codec))
-        band->f_stepsize *= 0.5;
+    band->i_stepsize = (int)floorf(band->f_stepsize * (1 << 15));
 }
 
 static int init_prec(AVCodecContext *avctx,
@@ -391,7 +394,7 @@ static int init_band(AVCodecContext *avctx,
                      Jpeg2000CodingStyle *codsty,
                      Jpeg2000QuantStyle *qntsty,
                      int bandno, int gbandno, int reslevelno,
-                     int cbps, int dx, int dy)
+                     const int cbps, int dx, int dy)
 {
     Jpeg2000Band *band = reslevel->band + bandno;
     uint8_t log2_band_prec_width, log2_band_prec_height;
@@ -466,7 +469,7 @@ static int init_band(AVCodecContext *avctx,
 int ff_jpeg2000_init_component(Jpeg2000Component *comp,
                                Jpeg2000CodingStyle *codsty,
                                Jpeg2000QuantStyle *qntsty,
-                               int cbps, int dx, int dy,
+                               const int cbps, int dx, int dy,
                                AVCodecContext *avctx)
 {
     int reslevelno, bandno, gbandno = 0, ret, i, j;

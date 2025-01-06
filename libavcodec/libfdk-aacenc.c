@@ -22,6 +22,7 @@
 #include "libavutil/channel_layout.h"
 #include "libavutil/common.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "avcodec.h"
 #include "audio_frame_queue.h"
@@ -70,11 +71,11 @@ static const AVOption aac_enc_options[] = {
 #if FDKENC_VER_AT_LEAST(4, 0) // 4.0.0
     { "eld_v2", "Enable ELDv2 (LD-MPS extension for ELD stereo signals)", offsetof(AACContext, eld_v2), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM },
 #endif
-    { "signaling", "SBR/PS signaling style", offsetof(AACContext, signaling), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 2, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM, "signaling" },
-    { "default", "Choose signaling implicitly (explicit hierarchical by default, implicit if global header is disabled)", 0, AV_OPT_TYPE_CONST, { .i64 = -1 }, 0, 0, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM, "signaling" },
-    { "implicit", "Implicit backwards compatible signaling", 0, AV_OPT_TYPE_CONST, { .i64 = 0 }, 0, 0, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM, "signaling" },
-    { "explicit_sbr", "Explicit SBR, implicit PS signaling", 0, AV_OPT_TYPE_CONST, { .i64 = 1 }, 0, 0, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM, "signaling" },
-    { "explicit_hierarchical", "Explicit hierarchical signaling", 0, AV_OPT_TYPE_CONST, { .i64 = 2 }, 0, 0, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM, "signaling" },
+    { "signaling", "SBR/PS signaling style", offsetof(AACContext, signaling), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 2, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM, .unit = "signaling" },
+    { "default", "Choose signaling implicitly (explicit hierarchical by default, implicit if global header is disabled)", 0, AV_OPT_TYPE_CONST, { .i64 = -1 }, 0, 0, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM, .unit = "signaling" },
+    { "implicit", "Implicit backwards compatible signaling", 0, AV_OPT_TYPE_CONST, { .i64 = 0 }, 0, 0, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM, .unit = "signaling" },
+    { "explicit_sbr", "Explicit SBR, implicit PS signaling", 0, AV_OPT_TYPE_CONST, { .i64 = 1 }, 0, 0, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM, .unit = "signaling" },
+    { "explicit_hierarchical", "Explicit hierarchical signaling", 0, AV_OPT_TYPE_CONST, { .i64 = 2 }, 0, 0, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM, .unit = "signaling" },
     { "latm", "Output LATM/LOAS encapsulated data", offsetof(AACContext, latm), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM },
     { "header_period", "StreamMuxConfig and PCE repetition period (in frames)", offsetof(AACContext, header_period), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 0xffff, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM },
     { "vbr", "VBR mode (1-5)", offsetof(AACContext, vbr), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 5, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM },
@@ -183,9 +184,10 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
     AACContext *s = avctx->priv_data;
     int ret = AVERROR(EINVAL);
     AACENC_InfoStruct info = { 0 };
+    AVCPBProperties *cpb_props;
     CHANNEL_MODE mode;
     AACENC_ERROR err;
-    int aot = FF_PROFILE_AAC_LOW + 1;
+    int aot = AV_PROFILE_AAC_LOW + 1;
     int sce = 0, cpe = 0;
 
     if (!(s->hLib = dlopen(LIBNAME, RTLD_NOW))) {
@@ -209,7 +211,7 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
         goto error;
     }
 
-    if (avctx->profile != FF_PROFILE_UNKNOWN)
+    if (avctx->profile != AV_PROFILE_UNKNOWN)
         aot = avctx->profile + 1;
 
     if ((err = aacEncoder_SetParam(s->handle, AACENC_AOT, aot)) != AACENC_OK) {
@@ -218,7 +220,7 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
         goto error;
     }
 
-    if (aot == FF_PROFILE_AAC_ELD + 1 && s->eld_sbr) {
+    if (aot == AV_PROFILE_AAC_ELD + 1 && s->eld_sbr) {
         if ((err = aacEncoder_SetParam(s->handle, AACENC_SBR_MODE,
                                        1)) != AACENC_OK) {
             av_log(avctx, AV_LOG_ERROR, "Unable to enable SBR for ELD: %s\n",
@@ -248,7 +250,7 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
     case 2:
 #if FDKENC_VER_AT_LEAST(4, 0) // 4.0.0
       // (profile + 1) to map from profile range to AOT range
-      if (aot == FF_PROFILE_AAC_ELD + 1 && s->eld_v2) {
+      if (aot == AV_PROFILE_AAC_ELD + 1 && s->eld_v2) {
           if ((err = aacEncoder_SetParam(s->handle, AACENC_CHANNELMODE,
                                          128)) != AACENC_OK) {
               av_log(avctx, AV_LOG_ERROR, "Unable to enable ELDv2: %s\n",
@@ -331,14 +333,14 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
         }
     } else {
         if (avctx->bit_rate <= 0) {
-            if (avctx->profile == FF_PROFILE_AAC_HE_V2) {
+            if (avctx->profile == AV_PROFILE_AAC_HE_V2) {
                 sce = 1;
                 cpe = 0;
             }
             avctx->bit_rate = (96*sce + 128*cpe) * avctx->sample_rate / 44;
-            if (avctx->profile == FF_PROFILE_AAC_HE ||
-                avctx->profile == FF_PROFILE_AAC_HE_V2 ||
-                avctx->profile == FF_PROFILE_MPEG2_AAC_HE ||
+            if (avctx->profile == AV_PROFILE_AAC_HE ||
+                avctx->profile == AV_PROFILE_AAC_HE_V2 ||
+                avctx->profile == AV_PROFILE_MPEG2_AAC_HE ||
                 s->eld_sbr)
                 avctx->bit_rate /= 2;
         }
@@ -458,6 +460,14 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
 
         memcpy(avctx->extradata, info.confBuf, info.confSize);
     }
+
+    cpb_props = ff_encode_add_cpb_side_data(avctx);
+    if (!cpb_props)
+        return AVERROR(ENOMEM);
+    cpb_props->max_bitrate =
+    cpb_props->min_bitrate =
+    cpb_props->avg_bitrate = avctx->bit_rate;
+
     return 0;
 error:
     aac_encode_close(avctx);
@@ -560,45 +570,24 @@ static int aac_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
     }
 
     avpkt->size     = out_args.numOutBytes;
+    avpkt->flags   |= AV_PKT_FLAG_KEY;
     *got_packet_ptr = 1;
     return 0;
 }
 
 static const AVProfile profiles[] = {
-    { FF_PROFILE_AAC_LOW,   "LC"       },
-    { FF_PROFILE_AAC_HE,    "HE-AAC"   },
-    { FF_PROFILE_AAC_HE_V2, "HE-AACv2" },
-    { FF_PROFILE_AAC_LD,    "LD"       },
-    { FF_PROFILE_AAC_ELD,   "ELD"      },
-    { FF_PROFILE_UNKNOWN },
+    { AV_PROFILE_AAC_LOW,   "LC"       },
+    { AV_PROFILE_AAC_HE,    "HE-AAC"   },
+    { AV_PROFILE_AAC_HE_V2, "HE-AACv2" },
+    { AV_PROFILE_AAC_LD,    "LD"       },
+    { AV_PROFILE_AAC_ELD,   "ELD"      },
+    { AV_PROFILE_UNKNOWN },
 };
 
 static const FFCodecDefault aac_encode_defaults[] = {
     { "b", "0" },
     { NULL }
 };
-
-#if FF_API_OLD_CHANNEL_LAYOUT
-static const uint64_t aac_channel_layout[] = {
-    AV_CH_LAYOUT_MONO,
-    AV_CH_LAYOUT_STEREO,
-    AV_CH_LAYOUT_SURROUND,
-    AV_CH_LAYOUT_4POINT0,
-    AV_CH_LAYOUT_5POINT0_BACK,
-    AV_CH_LAYOUT_5POINT1_BACK,
-#if FDKENC_VER_AT_LEAST(4, 0) // 4.0.0
-    AV_CH_LAYOUT_6POINT1_BACK,
-#endif
-#if FDKENC_VER_AT_LEAST(3, 4) // 3.4.12
-    AV_CH_LAYOUT_7POINT1_WIDE_BACK,
-    AV_CH_LAYOUT_7POINT1,
-#endif
-#if FDKENC_VER_AT_LEAST(4, 0) // 4.0.0
-    AV_CH_LAYOUT_7POINT1_TOP_BACK,
-#endif
-    0,
-};
-#endif /* FF_API_OLD_CHANNEL_LAYOUT */
 
 static const AVChannelLayout aac_ch_layouts[16] = {
     AV_CHANNEL_LAYOUT_MONO,
@@ -646,6 +635,5 @@ const FFCodec ff_libfdk_aac_encoder = {
     .p.profiles            = profiles,
     .p.supported_samplerates = aac_sample_rates,
     .p.wrapper_name        = "libfdk",
-    CODEC_OLD_CHANNEL_LAYOUTS_ARRAY(aac_channel_layout)
     .p.ch_layouts          = aac_ch_layouts,
 };

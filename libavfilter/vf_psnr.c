@@ -27,12 +27,13 @@
 
 #include "libavutil/avstring.h"
 #include "libavutil/file_open.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
 #include "drawutils.h"
+#include "filters.h"
 #include "framesync.h"
-#include "internal.h"
 #include "psnr.h"
 
 typedef struct PSNRContext {
@@ -79,30 +80,6 @@ static inline unsigned pow_2(unsigned base)
 static inline double get_psnr(double mse, uint64_t nb_frames, int max)
 {
     return 10.0 * log10(pow_2(max) / (mse / nb_frames));
-}
-
-static uint64_t sse_line_8bit(const uint8_t *main_line,  const uint8_t *ref_line, int outw)
-{
-    int j;
-    unsigned m2 = 0;
-
-    for (j = 0; j < outw; j++)
-        m2 += pow_2(main_line[j] - ref_line[j]);
-
-    return m2;
-}
-
-static uint64_t sse_line_16bit(const uint8_t *_main_line, const uint8_t *_ref_line, int outw)
-{
-    int j;
-    uint64_t m2 = 0;
-    const uint16_t *main_line = (const uint16_t *) _main_line;
-    const uint16_t *ref_line = (const uint16_t *) _ref_line;
-
-    for (j = 0; j < outw; j++)
-        m2 += pow_2(main_line[j] - ref_line[j]);
-
-    return m2;
 }
 
 typedef struct ThreadData {
@@ -186,6 +163,13 @@ static int do_psnr(FFFrameSync *fs)
         td.ref_linesize[c] = ref->linesize[c];
         td.planewidth[c] = s->planewidth[c];
         td.planeheight[c] = s->planeheight[c];
+    }
+
+    if (master->color_range != ref->color_range) {
+        av_log(ctx, AV_LOG_WARNING, "master and reference "
+               "frames use different color ranges (%s != %s)\n",
+               av_color_range_name(master->color_range),
+               av_color_range_name(ref->color_range));
     }
 
     ff_filter_execute(ctx, compute_images_mse, &td, NULL,
@@ -282,10 +266,8 @@ static av_cold int init(AVFilterContext *ctx)
             s->stats_file = avpriv_fopen_utf8(s->stats_file_str, "w");
             if (!s->stats_file) {
                 int err = AVERROR(errno);
-                char buf[128];
-                av_strerror(err, buf, sizeof(buf));
                 av_log(ctx, AV_LOG_ERROR, "Could not open stats file %s: %s\n",
-                       s->stats_file_str, buf);
+                       s->stats_file_str, av_err2str(err));
                 return err;
             }
         }
@@ -352,10 +334,7 @@ static int config_input_ref(AVFilterLink *inlink)
     }
     s->average_max = lrint(average_max);
 
-    s->dsp.sse_line = desc->comp[0].depth > 8 ? sse_line_16bit : sse_line_8bit;
-#if ARCH_X86
-    ff_psnr_init_x86(&s->dsp, desc->comp[0].depth);
-#endif
+    ff_psnr_init(&s->dsp, desc->comp[0].depth);
 
     s->score = av_calloc(s->nb_threads, sizeof(*s->score));
     if (!s->score)
@@ -375,6 +354,8 @@ static int config_output(AVFilterLink *outlink)
     AVFilterContext *ctx = outlink->src;
     PSNRContext *s = ctx->priv;
     AVFilterLink *mainlink = ctx->inputs[0];
+    FilterLink *il = ff_filter_link(mainlink);
+    FilterLink *ol = ff_filter_link(outlink);
     int ret;
 
     ret = ff_framesync_init_dualinput(&s->fs, ctx);
@@ -384,7 +365,7 @@ static int config_output(AVFilterLink *outlink)
     outlink->h = mainlink->h;
     outlink->time_base = mainlink->time_base;
     outlink->sample_aspect_ratio = mainlink->sample_aspect_ratio;
-    outlink->frame_rate = mainlink->frame_rate;
+    ol->frame_rate = il->frame_rate;
     if ((ret = ff_framesync_configure(&s->fs)) < 0)
         return ret;
 

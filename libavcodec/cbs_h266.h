@@ -464,9 +464,9 @@ typedef struct H266RawSPS {
     uint8_t  sps_virtual_boundaries_enabled_flag;
     uint8_t  sps_virtual_boundaries_present_flag;
     uint8_t  sps_num_ver_virtual_boundaries;
-    uint16_t sps_virtual_boundary_pos_x_minus1[3];
+    uint16_t sps_virtual_boundary_pos_x_minus1[VVC_MAX_VBS];
     uint8_t  sps_num_hor_virtual_boundaries;
-    uint16_t sps_virtual_boundary_pos_y_minus1[3];
+    uint16_t sps_virtual_boundary_pos_y_minus1[VVC_MAX_VBS];
 
     uint8_t  sps_timing_hrd_params_present_flag;
     uint8_t  sps_sublayer_cpb_params_present_flag;
@@ -588,11 +588,13 @@ typedef struct H266RawPPS {
     uint16_t num_tile_columns;
     uint16_t num_tile_rows;
     uint16_t num_tiles_in_pic;
-    uint16_t slice_height_in_ctus[VVC_MAX_SLICES];
-    uint16_t num_slices_in_subpic[VVC_MAX_SLICES];
-    uint16_t sub_pic_id_val[VVC_MAX_SLICES];
-    uint16_t col_width_val[VVC_MAX_TILE_COLUMNS];
-    uint16_t row_height_val[VVC_MAX_TILE_ROWS];
+    uint16_t slice_height_in_ctus[VVC_MAX_SLICES];          ///< sliceHeightInCtus
+    uint16_t num_slices_in_subpic[VVC_MAX_SLICES];          ///< NumSlicesInSubpic
+    uint16_t sub_pic_id_val[VVC_MAX_SLICES];                ///< SubpicIdVal
+    uint16_t col_width_val[VVC_MAX_TILE_COLUMNS];           ///< ColWidthVal
+    uint16_t row_height_val[VVC_MAX_TILE_ROWS];             ///< RowHeightVal
+    uint16_t slice_top_left_tile_idx[VVC_MAX_SLICES];
+    uint16_t num_slices_in_tile[VVC_MAX_SLICES];
 } H266RawPPS;
 
 typedef struct H266RawAPS {
@@ -666,6 +668,9 @@ typedef struct H266RawPredWeightTable {
     int8_t   luma_offset_l1[15];
     int8_t   delta_chroma_weight_l1[15][2];
     int16_t  delta_chroma_offset_l1[15][2];
+
+    uint8_t num_weights_l0;         ///< NumWeightsL0
+    uint8_t num_weights_l1;         ///< NumWeightsL1
 } H266RawPredWeightTable;
 
 typedef struct  H266RawPictureHeader {
@@ -700,9 +705,9 @@ typedef struct  H266RawPictureHeader {
 
     uint8_t  ph_virtual_boundaries_present_flag;
     uint8_t  ph_num_ver_virtual_boundaries;
-    uint16_t ph_virtual_boundary_pos_x_minus1[3];
+    uint16_t ph_virtual_boundary_pos_x_minus1[VVC_MAX_VBS];
     uint8_t  ph_num_hor_virtual_boundaries;
-    uint16_t ph_virtual_boundary_pos_y_minus1[3];
+    uint16_t ph_virtual_boundary_pos_y_minus1[VVC_MAX_VBS];
 
     uint8_t  ph_pic_output_flag;
     H266RefPicLists ph_ref_pic_lists;
@@ -828,6 +833,11 @@ typedef struct  H266RawSliceHeader {
     uint8_t  sh_entry_offset_len_minus1;
     uint32_t sh_entry_point_offset_minus1[VVC_MAX_ENTRY_POINTS];
 
+    // derived values
+    uint16_t curr_subpic_idx;               ///< CurrSubpicIdx
+    uint32_t num_entry_points;              ///< NumEntryPoints
+    uint8_t  num_ref_idx_active[2];         ///< NumRefIdxActive[]
+
 } H266RawSliceHeader;
 
 typedef struct H266RawSlice {
@@ -835,19 +845,10 @@ typedef struct H266RawSlice {
 
     uint8_t     *data;
     AVBufferRef *data_ref;
+    size_t       header_size;
     size_t       data_size;
     int          data_bit_start;
 } H266RawSlice;
-
-typedef struct H266RawSEIDecodedPictureHash {
-    uint8_t  dph_sei_hash_type;
-    uint8_t  dph_sei_single_component_flag;
-    uint8_t  dph_sei_picture_md5[3][16];
-    uint16_t dph_sei_picture_crc[3];
-    uint32_t dph_sei_picture_checksum[3];
-
-    uint8_t  dph_sei_reserved_zero_7bits;
-} H266RawSEIDecodedPictureHash;
 
 typedef struct H266RawSEI {
     H266RawNALUnitHeader nal_unit_header;
@@ -860,14 +861,11 @@ typedef struct CodedBitstreamH266Context {
 
     // All currently available parameter sets.  These are updated when
     // any parameter set NAL unit is read/written with this context.
-    AVBufferRef *vps_ref[VVC_MAX_VPS_COUNT];
-    AVBufferRef *sps_ref[VVC_MAX_SPS_COUNT];
-    AVBufferRef *pps_ref[VVC_MAX_PPS_COUNT];
-    AVBufferRef *ph_ref;
-    H266RawVPS  *vps[VVC_MAX_VPS_COUNT];
-    H266RawSPS  *sps[VVC_MAX_SPS_COUNT];
-    H266RawPPS  *pps[VVC_MAX_PPS_COUNT];
+    H266RawVPS  *vps[VVC_MAX_VPS_COUNT]; ///< RefStruct references
+    H266RawSPS  *sps[VVC_MAX_SPS_COUNT]; ///< RefStruct references
+    H266RawPPS  *pps[VVC_MAX_PPS_COUNT]; ///< RefStruct references
     H266RawPictureHeader *ph;
+    void *ph_ref; ///< RefStruct reference backing ph above
 } CodedBitstreamH266Context;
 
 #endif /* AVCODEC_CBS_H266_H */

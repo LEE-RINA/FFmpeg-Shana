@@ -31,6 +31,7 @@
 #include "libavcodec/adts_parser.h"
 
 #include "avformat.h"
+#include "demux.h"
 #include "internal.h"
 #include "spdif.h"
 
@@ -235,6 +236,8 @@ int ff_spdif_read_packet(AVFormatContext *s, AVPacket *pkt)
         st->codecpar->codec_id = codec_id;
         if (codec_id == AV_CODEC_ID_EAC3)
             ffstream(st)->need_parsing = AVSTREAM_PARSE_FULL;
+        else
+            ffstream(st)->need_parsing = AVSTREAM_PARSE_HEADERS;
     } else if (codec_id != s->streams[0]->codecpar->codec_id) {
         avpriv_report_missing_feature(s, "Codec change in IEC 61937");
         return AVERROR_PATCHWELCOME;
@@ -248,11 +251,11 @@ int ff_spdif_read_packet(AVFormatContext *s, AVPacket *pkt)
     return 0;
 }
 
-const AVInputFormat ff_spdif_demuxer = {
-    .name           = "spdif",
-    .long_name      = NULL_IF_CONFIG_SMALL("IEC 61937 (compressed data in S/PDIF)"),
+const FFInputFormat ff_spdif_demuxer = {
+    .p.name         = "spdif",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("IEC 61937 (compressed data in S/PDIF)"),
+    .p.flags        = AVFMT_GENERIC_INDEX,
     .read_probe     = spdif_probe,
     .read_header    = spdif_read_header,
     .read_packet    = ff_spdif_read_packet,
-    .flags          = AVFMT_GENERIC_INDEX,
 };

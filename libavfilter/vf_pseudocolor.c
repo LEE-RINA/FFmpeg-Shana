@@ -25,7 +25,7 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
-#include "internal.h"
+#include "filters.h"
 #include "video.h"
 
 static const char *const var_names[] = {
@@ -343,30 +343,30 @@ static const AVOption pseudocolor_options[] = {
     { "c3", "set component #3 expression", OFFSET(comp_expr_str[3]), AV_OPT_TYPE_STRING, {.str="val"},   .flags = FLAGS },
     { "index", "set component as base",    OFFSET(index),            AV_OPT_TYPE_INT,    {.i64=0}, 0, 3, .flags = FLAGS },
     { "i",  "set component as base",       OFFSET(index),            AV_OPT_TYPE_INT,    {.i64=0}, 0, 3, .flags = FLAGS },
-    { "preset", "set preset",              OFFSET(preset),           AV_OPT_TYPE_INT,    {.i64=-1},-1, NB_PRESETS-1, .flags = FLAGS, "preset" },
-    { "p",  "set preset",                  OFFSET(preset),           AV_OPT_TYPE_INT,    {.i64=-1},-1, NB_PRESETS-1, .flags = FLAGS, "preset" },
-    { "none",       NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=-1},             .flags = FLAGS, "preset" },
-    { "magma",      NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_MAGMA},   .flags = FLAGS, "preset" },
-    { "inferno",    NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_INFERNO}, .flags = FLAGS, "preset" },
-    { "plasma",     NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_PLASMA},  .flags = FLAGS, "preset" },
-    { "viridis",    NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_VIRIDIS}, .flags = FLAGS, "preset" },
-    { "turbo",      NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_TURBO},   .flags = FLAGS, "preset" },
-    { "cividis",    NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_CIVIDIS}, .flags = FLAGS, "preset" },
-    { "range1",     NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_RANGE1},  .flags = FLAGS, "preset" },
-    { "range2",     NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_RANGE2},  .flags = FLAGS, "preset" },
-    { "shadows",    NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_SHADOWS}, .flags = FLAGS, "preset" },
-    { "highlights", NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_HIGHLIGHTS},.flags=FLAGS, "preset" },
-    { "solar",      NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_SOLAR},   .flags=FLAGS, "preset" },
-    { "nominal",    NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_NOMINAL}, .flags=FLAGS, "preset" },
-    { "preferred",  NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_PREFERRED},.flags=FLAGS,"preset" },
-    { "total",      NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_TOTAL},   .flags=FLAGS, "preset" },
-    { "spectral",   NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_SPECTRAL},.flags = FLAGS, "preset" },
-    { "cool",       NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_COOL},    .flags = FLAGS, "preset" },
-    { "heat",       NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_HEAT},    .flags = FLAGS, "preset" },
-    { "fiery",      NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_FIERY},   .flags = FLAGS, "preset" },
-    { "blues",      NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_BLUES},   .flags = FLAGS, "preset" },
-    { "green",      NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_GREEN},   .flags = FLAGS, "preset" },
-    { "helix",      NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_HELIX},   .flags = FLAGS, "preset" },
+    { "preset", "set preset",              OFFSET(preset),           AV_OPT_TYPE_INT,    {.i64=-1},-1, NB_PRESETS-1, .flags = FLAGS, .unit = "preset" },
+    { "p",  "set preset",                  OFFSET(preset),           AV_OPT_TYPE_INT,    {.i64=-1},-1, NB_PRESETS-1, .flags = FLAGS, .unit = "preset" },
+    { "none",       NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=-1},             .flags = FLAGS, .unit = "preset" },
+    { "magma",      NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_MAGMA},   .flags = FLAGS, .unit = "preset" },
+    { "inferno",    NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_INFERNO}, .flags = FLAGS, .unit = "preset" },
+    { "plasma",     NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_PLASMA},  .flags = FLAGS, .unit = "preset" },
+    { "viridis",    NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_VIRIDIS}, .flags = FLAGS, .unit = "preset" },
+    { "turbo",      NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_TURBO},   .flags = FLAGS, .unit = "preset" },
+    { "cividis",    NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_CIVIDIS}, .flags = FLAGS, .unit = "preset" },
+    { "range1",     NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_RANGE1},  .flags = FLAGS, .unit = "preset" },
+    { "range2",     NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_RANGE2},  .flags = FLAGS, .unit = "preset" },
+    { "shadows",    NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_SHADOWS}, .flags = FLAGS, .unit = "preset" },
+    { "highlights", NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_HIGHLIGHTS},.flags=FLAGS, .unit = "preset" },
+    { "solar",      NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_SOLAR},   .flags=FLAGS,   .unit = "preset" },
+    { "nominal",    NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_NOMINAL}, .flags=FLAGS,   .unit = "preset" },
+    { "preferred",  NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_PREFERRED},.flags=FLAGS,  .unit = "preset" },
+    { "total",      NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_TOTAL},   .flags=FLAGS,   .unit = "preset" },
+    { "spectral",   NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_SPECTRAL},.flags = FLAGS, .unit = "preset" },
+    { "cool",       NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_COOL},    .flags = FLAGS, .unit = "preset" },
+    { "heat",       NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_HEAT},    .flags = FLAGS, .unit = "preset" },
+    { "fiery",      NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_FIERY},   .flags = FLAGS, .unit = "preset" },
+    { "blues",      NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_BLUES},   .flags = FLAGS, .unit = "preset" },
+    { "green",      NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_GREEN},   .flags = FLAGS, .unit = "preset" },
+    { "helix",      NULL,                  0,                        AV_OPT_TYPE_CONST,  {.i64=PRESET_HELIX},   .flags = FLAGS, .unit = "preset" },
     { "opacity", "set pseudocolor opacity",OFFSET(opacity),          AV_OPT_TYPE_FLOAT,  {.dbl=1}, 0, 1, .flags = FLAGS },
     { NULL }
 };
@@ -384,8 +384,8 @@ static const enum AVPixelFormat pix_fmts[] = {
     AV_PIX_FMT_YUV422P10, AV_PIX_FMT_YUVA422P10,
     AV_PIX_FMT_YUV444P10, AV_PIX_FMT_YUVA444P10,
     AV_PIX_FMT_YUV420P12,
-    AV_PIX_FMT_YUV422P12,
-    AV_PIX_FMT_YUV444P12,
+    AV_PIX_FMT_YUV422P12, AV_PIX_FMT_YUVA422P12,
+    AV_PIX_FMT_YUV444P12, AV_PIX_FMT_YUVA444P12,
     AV_PIX_FMT_YUV420P14,
     AV_PIX_FMT_YUV422P14,
     AV_PIX_FMT_YUV444P14,
@@ -395,7 +395,7 @@ static const enum AVPixelFormat pix_fmts[] = {
     AV_PIX_FMT_GBRP9,
     AV_PIX_FMT_GBRP10, AV_PIX_FMT_GBRAP10,
     AV_PIX_FMT_GBRP12, AV_PIX_FMT_GBRAP12,
-    AV_PIX_FMT_GBRP14,
+    AV_PIX_FMT_GBRP14, AV_PIX_FMT_GBRAP14,
     AV_PIX_FMT_GBRP16, AV_PIX_FMT_GBRAP16,
     AV_PIX_FMT_NONE
 };
@@ -901,6 +901,7 @@ static int config_input(AVFilterLink *inlink)
     case AV_PIX_FMT_YUV444P10:
     case AV_PIX_FMT_YUVA444P10:
     case AV_PIX_FMT_YUV444P12:
+    case AV_PIX_FMT_YUVA444P12:
     case AV_PIX_FMT_YUV444P14:
     case AV_PIX_FMT_YUV444P16:
     case AV_PIX_FMT_YUVA444P16:
@@ -911,6 +912,7 @@ static int config_input(AVFilterLink *inlink)
     case AV_PIX_FMT_GBRP16:
     case AV_PIX_FMT_GBRAP10:
     case AV_PIX_FMT_GBRAP12:
+    case AV_PIX_FMT_GBRAP14:
     case AV_PIX_FMT_GBRAP16:
     case AV_PIX_FMT_GRAY9:
     case AV_PIX_FMT_GRAY10:
@@ -924,6 +926,7 @@ static int config_input(AVFilterLink *inlink)
     case AV_PIX_FMT_YUV422P10:
     case AV_PIX_FMT_YUVA422P10:
     case AV_PIX_FMT_YUV422P12:
+    case AV_PIX_FMT_YUVA422P12:
     case AV_PIX_FMT_YUV422P14:
     case AV_PIX_FMT_YUV422P16:
     case AV_PIX_FMT_YUVA422P16:

@@ -27,6 +27,12 @@
 #include "packet.h"
 
 /**
+ * Used by some encoders as upper bound for the length of headers.
+ * TODO: Use proper codec-specific upper bounds.
+ */
+#define FF_INPUT_BUFFER_MIN_SIZE 16384
+
+/**
  * Called by encoders to get the next frame for encoding.
  *
  * @param frame An empty frame to be filled with data.
@@ -72,6 +78,11 @@ int ff_encode_reordered_opaque(AVCodecContext *avctx,
 
 int ff_encode_encode_cb(AVCodecContext *avctx, AVPacket *avpkt,
                         AVFrame *frame, int *got_packet);
+
+/**
+ * Add a CPB properties side data to an encoding context.
+ */
+AVCPBProperties *ff_encode_add_cpb_side_data(AVCodecContext *avctx);
 
 /**
  * Rescale from sample rate to AVCodecContext.time_base.

@@ -46,6 +46,12 @@ fate-vp60: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/ea-vp6/g36.vp6
 FATE_VP6-$(call FRAMECRC, EA, VP6) += fate-vp61
 fate-vp61: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/ea-vp6/MovieSkirmishGondor.vp6 -t 4
 
+FATE_VP6-$(call FRAMECRC, AVI, VP6) += fate-vp60-interlace1
+fate-vp60-interlace1: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/vp6/interlaced32x32.avi
+
+FATE_VP6-$(call FRAMECRC, AVI, VP6) += fate-vp60-interlace2
+fate-vp60-interlace2: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/vp6/interlaced32x64.avi
+
 FATE_VP6-$(call FRAMECRC, MOV, VP6A) += fate-vp6a
 fate-vp6a: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/flash-vp6/300x180-Scr-f8-056alpha.mov
 
@@ -56,7 +62,7 @@ FATE_VP6-$(call FRAMECRC, FLV, VP6F) += fate-vp6f
 fate-vp6f: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/flash-vp6/clip1024.flv
 
 FATE_VP8-$(call FRAMECRC, MATROSKA, VP8) += fate-vp8-2451
-fate-vp8-2451: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/vp8/RRSF49-short.webm -vsync cfr -an
+fate-vp8-2451: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/vp8/RRSF49-short.webm -fps_mode cfr -an
 
 FATE_SAMPLES_AVCONV += $(FATE_VP6-yes)
 fate-vp6: $(FATE_VP6-yes)

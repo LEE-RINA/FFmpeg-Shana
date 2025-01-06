@@ -32,7 +32,7 @@
 #include "libavutil/pixdesc.h"
 
 #include "avfilter.h"
-#include "internal.h"
+#include "filters.h"
 #include "scale_eval.h"
 #include "video.h"
 
@@ -221,6 +221,8 @@ static av_cold int init_processing_chain(AVFilterContext *ctx, int in_width, int
                                          int out_width, int out_height)
 {
     CUDAScaleContext *s = ctx->priv;
+    FilterLink     *inl = ff_filter_link(ctx->inputs[0]);
+    FilterLink    *outl = ff_filter_link(ctx->outputs[0]);
 
     AVHWFramesContext *in_frames_ctx;
 
@@ -229,11 +231,11 @@ static av_cold int init_processing_chain(AVFilterContext *ctx, int in_width, int
     int ret;
 
     /* check that we have a hw context */
-    if (!ctx->inputs[0]->hw_frames_ctx) {
+    if (!inl->hw_frames_ctx) {
         av_log(ctx, AV_LOG_ERROR, "No hw context provided on input\n");
         return AVERROR(EINVAL);
     }
-    in_frames_ctx = (AVHWFramesContext*)ctx->inputs[0]->hw_frames_ctx->data;
+    in_frames_ctx = (AVHWFramesContext*)inl->hw_frames_ctx->data;
     in_format     = in_frames_ctx->sw_format;
     out_format    = (s->format == AV_PIX_FMT_NONE) ? in_format : s->format;
 
@@ -251,7 +253,7 @@ static av_cold int init_processing_chain(AVFilterContext *ctx, int in_width, int
     set_format_info(ctx, in_format, out_format);
 
     if (s->passthrough && in_width == out_width && in_height == out_height && in_format == out_format) {
-        s->frames_ctx = av_buffer_ref(ctx->inputs[0]->hw_frames_ctx);
+        s->frames_ctx = av_buffer_ref(inl->hw_frames_ctx);
         if (!s->frames_ctx)
             return AVERROR(ENOMEM);
     } else {
@@ -266,8 +268,8 @@ static av_cold int init_processing_chain(AVFilterContext *ctx, int in_width, int
             s->interp_algo = INTERP_ALGO_NEAREST;
     }
 
-    ctx->outputs[0]->hw_frames_ctx = av_buffer_ref(s->frames_ctx);
-    if (!ctx->outputs[0]->hw_frames_ctx)
+    outl->hw_frames_ctx = av_buffer_ref(s->frames_ctx);
+    if (!outl->hw_frames_ctx)
         return AVERROR(ENOMEM);
 
     return 0;
@@ -348,14 +350,12 @@ static av_cold int cudascale_config_props(AVFilterLink *outlink)
 {
     AVFilterContext *ctx = outlink->src;
     AVFilterLink *inlink = outlink->src->inputs[0];
+    FilterLink      *inl = ff_filter_link(inlink);
     CUDAScaleContext *s  = ctx->priv;
-    AVHWFramesContext     *frames_ctx = (AVHWFramesContext*)inlink->hw_frames_ctx->data;
-    AVCUDADeviceContext *device_hwctx = frames_ctx->device_ctx->hwctx;
+    AVHWFramesContext     *frames_ctx;
+    AVCUDADeviceContext *device_hwctx;
     int w, h;
     int ret;
-
-    s->hwctx = device_hwctx;
-    s->cu_stream = s->hwctx->stream;
 
     if ((ret = ff_scale_eval_dimensions(s,
                                         s->w_expr, s->h_expr,
@@ -376,6 +376,12 @@ static av_cold int cudascale_config_props(AVFilterLink *outlink)
     ret = init_processing_chain(ctx, inlink->w, inlink->h, w, h);
     if (ret < 0)
         return ret;
+
+    frames_ctx   = (AVHWFramesContext*)inl->hw_frames_ctx->data;
+    device_hwctx = frames_ctx->device_ctx->hwctx;
+
+    s->hwctx = device_hwctx;
+    s->cu_stream = s->hwctx->stream;
 
     if (inlink->sample_aspect_ratio.num) {
         outlink->sample_aspect_ratio = av_mul_q((AVRational){outlink->h*inlink->w,
@@ -401,7 +407,7 @@ fail:
 }
 
 static int call_resize_kernel(AVFilterContext *ctx, CUfunction func,
-                              CUtexObject src_tex[4], int src_width, int src_height,
+                              CUtexObject src_tex[4], int src_left, int src_top, int src_width, int src_height,
                               AVFrame *out_frame, int dst_width, int dst_height, int dst_pitch)
 {
     CUDAScaleContext *s = ctx->priv;
@@ -416,7 +422,7 @@ static int call_resize_kernel(AVFilterContext *ctx, CUfunction func,
         &src_tex[0], &src_tex[1], &src_tex[2], &src_tex[3],
         &dst_devptr[0], &dst_devptr[1], &dst_devptr[2], &dst_devptr[3],
         &dst_width, &dst_height, &dst_pitch,
-        &src_width, &src_height, &s->param
+        &src_left, &src_top, &src_width, &src_height, &s->param
     };
 
     return CHECK_CU(cu->cuLaunchKernel(func,
@@ -433,6 +439,9 @@ static int scalecuda_resize(AVFilterContext *ctx,
     int i, ret;
 
     CUtexObject tex[4] = { 0, 0, 0, 0 };
+
+    int crop_width = (in->width - in->crop_right) - in->crop_left;
+    int crop_height = (in->height - in->crop_bottom) - in->crop_top;
 
     ret = CHECK_CU(cu->cuCtxPushCurrent(cuda_ctx));
     if (ret < 0)
@@ -471,7 +480,7 @@ static int scalecuda_resize(AVFilterContext *ctx,
 
     // scale primary plane(s). Usually Y (and A), or single plane of RGB frames.
     ret = call_resize_kernel(ctx, s->cu_func,
-                             tex, in->width, in->height,
+                             tex, in->crop_left, in->crop_top, crop_width, crop_height,
                              out, out->width, out->height, out->linesize[0]);
     if (ret < 0)
         goto exit;
@@ -479,8 +488,10 @@ static int scalecuda_resize(AVFilterContext *ctx,
     if (s->out_planes > 1) {
         // scale UV plane. Scale function sets both U and V plane, or singular interleaved plane.
         ret = call_resize_kernel(ctx, s->cu_func_uv, tex,
-                                 AV_CEIL_RSHIFT(in->width, s->in_desc->log2_chroma_w),
-                                 AV_CEIL_RSHIFT(in->height, s->in_desc->log2_chroma_h),
+                                 AV_CEIL_RSHIFT(in->crop_left, s->in_desc->log2_chroma_w),
+                                 AV_CEIL_RSHIFT(in->crop_top, s->in_desc->log2_chroma_h),
+                                 AV_CEIL_RSHIFT(crop_width, s->in_desc->log2_chroma_w),
+                                 AV_CEIL_RSHIFT(crop_height, s->in_desc->log2_chroma_h),
                                  out,
                                  AV_CEIL_RSHIFT(out->width, s->out_desc->log2_chroma_w),
                                  AV_CEIL_RSHIFT(out->height, s->out_desc->log2_chroma_h),
@@ -585,18 +596,18 @@ static AVFrame *cudascale_get_video_buffer(AVFilterLink *inlink, int w, int h)
 static const AVOption options[] = {
     { "w", "Output video width",  OFFSET(w_expr), AV_OPT_TYPE_STRING, { .str = "iw" }, .flags = FLAGS },
     { "h", "Output video height", OFFSET(h_expr), AV_OPT_TYPE_STRING, { .str = "ih" }, .flags = FLAGS },
-    { "interp_algo", "Interpolation algorithm used for resizing", OFFSET(interp_algo), AV_OPT_TYPE_INT, { .i64 = INTERP_ALGO_DEFAULT }, 0, INTERP_ALGO_COUNT - 1, FLAGS, "interp_algo" },
-        { "nearest",  "nearest neighbour", 0, AV_OPT_TYPE_CONST, { .i64 = INTERP_ALGO_NEAREST }, 0, 0, FLAGS, "interp_algo" },
-        { "bilinear", "bilinear", 0, AV_OPT_TYPE_CONST, { .i64 = INTERP_ALGO_BILINEAR }, 0, 0, FLAGS, "interp_algo" },
-        { "bicubic",  "bicubic",  0, AV_OPT_TYPE_CONST, { .i64 = INTERP_ALGO_BICUBIC  }, 0, 0, FLAGS, "interp_algo" },
-        { "lanczos",  "lanczos",  0, AV_OPT_TYPE_CONST, { .i64 = INTERP_ALGO_LANCZOS  }, 0, 0, FLAGS, "interp_algo" },
+    { "interp_algo", "Interpolation algorithm used for resizing", OFFSET(interp_algo), AV_OPT_TYPE_INT, { .i64 = INTERP_ALGO_DEFAULT }, 0, INTERP_ALGO_COUNT - 1, FLAGS, .unit = "interp_algo" },
+        { "nearest",  "nearest neighbour", 0, AV_OPT_TYPE_CONST, { .i64 = INTERP_ALGO_NEAREST }, 0, 0, FLAGS, .unit = "interp_algo" },
+        { "bilinear", "bilinear", 0, AV_OPT_TYPE_CONST, { .i64 = INTERP_ALGO_BILINEAR }, 0, 0, FLAGS, .unit = "interp_algo" },
+        { "bicubic",  "bicubic",  0, AV_OPT_TYPE_CONST, { .i64 = INTERP_ALGO_BICUBIC  }, 0, 0, FLAGS, .unit = "interp_algo" },
+        { "lanczos",  "lanczos",  0, AV_OPT_TYPE_CONST, { .i64 = INTERP_ALGO_LANCZOS  }, 0, 0, FLAGS, .unit = "interp_algo" },
     { "format", "Output video pixel format", OFFSET(format), AV_OPT_TYPE_PIXEL_FMT, { .i64 = AV_PIX_FMT_NONE }, INT_MIN, INT_MAX, .flags=FLAGS },
     { "passthrough", "Do not process frames at all if parameters match", OFFSET(passthrough), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FLAGS },
     { "param", "Algorithm-Specific parameter", OFFSET(param), AV_OPT_TYPE_FLOAT, { .dbl = SCALE_CUDA_PARAM_DEFAULT }, -FLT_MAX, FLT_MAX, FLAGS },
-    { "force_original_aspect_ratio", "decrease or increase w/h if necessary to keep the original AR", OFFSET(force_original_aspect_ratio), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 2, FLAGS, "force_oar" },
-        { "disable",  NULL, 0, AV_OPT_TYPE_CONST, {.i64 = 0 }, 0, 0, FLAGS, "force_oar" },
-        { "decrease", NULL, 0, AV_OPT_TYPE_CONST, {.i64 = 1 }, 0, 0, FLAGS, "force_oar" },
-        { "increase", NULL, 0, AV_OPT_TYPE_CONST, {.i64 = 2 }, 0, 0, FLAGS, "force_oar" },
+    { "force_original_aspect_ratio", "decrease or increase w/h if necessary to keep the original AR", OFFSET(force_original_aspect_ratio), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 2, FLAGS, .unit = "force_oar" },
+        { "disable",  NULL, 0, AV_OPT_TYPE_CONST, {.i64 = 0 }, 0, 0, FLAGS, .unit = "force_oar" },
+        { "decrease", NULL, 0, AV_OPT_TYPE_CONST, {.i64 = 1 }, 0, 0, FLAGS, .unit = "force_oar" },
+        { "increase", NULL, 0, AV_OPT_TYPE_CONST, {.i64 = 2 }, 0, 0, FLAGS, .unit = "force_oar" },
     { "force_divisible_by", "enforce that the output resolution is divisible by a defined integer when force_original_aspect_ratio is used", OFFSET(force_divisible_by), AV_OPT_TYPE_INT, { .i64 = 1 }, 1, 256, FLAGS },
     { NULL },
 };

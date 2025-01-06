@@ -35,6 +35,7 @@
 
 #define CACHED_BITSTREAM_READER HAVE_FAST_64BIT
 #define UNCHECKED_BITSTREAM_READER 1
+#include "libavutil/mem.h"
 #include "avcodec.h"
 #include "get_bits.h"
 #include "huffman.h"
@@ -55,7 +56,6 @@ typedef struct FrapsContext {
     uint8_t *tmpbuf;
     int tmpbuf_size;
 } FrapsContext;
-
 
 /**
  * initializes decoder
@@ -123,13 +123,13 @@ static int fraps2_decode_plane(FrapsContext *s, uint8_t *dst, int stride, int w,
             else if (Uoff)
                 dst[i] += 0x80;
             if (get_bits_left(&gb) < 0) {
-                ff_free_vlc(&vlc);
+                ff_vlc_free(&vlc);
                 return AVERROR_INVALIDDATA;
             }
         }
         dst += stride;
     }
-    ff_free_vlc(&vlc);
+    ff_vlc_free(&vlc);
     return 0;
 }
 
@@ -214,9 +214,6 @@ static int decode_frame(AVCodecContext *avctx, AVFrame *f,
                 return AVERROR(ENOMEM);
         }
     }
-
-    f->pict_type = AV_PICTURE_TYPE_I;
-    f->flags |= AV_FRAME_FLAG_KEY;
 
     avctx->pix_fmt = version & 1 ? is_pal ? AV_PIX_FMT_PAL8 : AV_PIX_FMT_BGR24 : AV_PIX_FMT_YUVJ420P;
     avctx->color_range = version & 1 ? AVCOL_RANGE_UNSPECIFIED
@@ -323,7 +320,6 @@ static int decode_frame(AVCodecContext *avctx, AVFrame *f,
     return buf_size;
 }
 
-
 /**
  * closes decoder
  * @param avctx codec context
@@ -331,12 +327,11 @@ static int decode_frame(AVCodecContext *avctx, AVFrame *f,
  */
 static av_cold int decode_end(AVCodecContext *avctx)
 {
-    FrapsContext *s = (FrapsContext*)avctx->priv_data;
+    FrapsContext *s = avctx->priv_data;
 
     av_freep(&s->tmpbuf);
     return 0;
 }
-
 
 const FFCodec ff_fraps_decoder = {
     .p.name         = "fraps",

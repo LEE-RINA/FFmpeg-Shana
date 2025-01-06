@@ -250,7 +250,7 @@
     " jb      1b                \n\t"
 #define WRITEBGR32(dst, dstw, index, b, g, r, a, q0, q2, q3, t)  REAL_WRITEBGR32(dst, dstw, index, b, g, r, a, q0, q2, q3, t)
 
-static void RENAME(yuv2rgb32_X_ar)(SwsContext *c, const int16_t *lumFilter,
+static void RENAME(yuv2rgb32_X_ar)(SwsInternal *c, const int16_t *lumFilter,
                                    const int16_t **lumSrc, int lumFilterSize,
                                    const int16_t *chrFilter, const int16_t **chrUSrc,
                                    const int16_t **chrVSrc,
@@ -283,7 +283,7 @@ static void RENAME(yuv2rgb32_X_ar)(SwsContext *c, const int16_t *lumFilter,
     }
 }
 
-static void RENAME(yuv2rgb32_X)(SwsContext *c, const int16_t *lumFilter,
+static void RENAME(yuv2rgb32_X)(SwsInternal *c, const int16_t *lumFilter,
                                 const int16_t **lumSrc, int lumFilterSize,
                                 const int16_t *chrFilter, const int16_t **chrUSrc,
                                 const int16_t **chrVSrc,
@@ -312,7 +312,7 @@ static void RENAME(yuv2rgb32_X)(SwsContext *c, const int16_t *lumFilter,
     }
 }
 
-static void RENAME(yuv2bgr32_X)(SwsContext *c, const int16_t *lumFilter,
+static void RENAME(yuv2bgr32_X)(SwsInternal *c, const int16_t *lumFilter,
                                 const int16_t **lumSrc, int lumFilterSize,
                                 const int16_t *chrFilter, const int16_t **chrUSrc,
                                 const int16_t **chrVSrc,
@@ -369,7 +369,7 @@ static void RENAME(yuv2bgr32_X)(SwsContext *c, const int16_t *lumFilter,
     " jb             1b             \n\t"
 #define WRITERGB16(dst, dstw, index)  REAL_WRITERGB16(dst, dstw, index)
 
-static void RENAME(yuv2rgb565_X_ar)(SwsContext *c, const int16_t *lumFilter,
+static void RENAME(yuv2rgb565_X_ar)(SwsInternal *c, const int16_t *lumFilter,
                                     const int16_t **lumSrc, int lumFilterSize,
                                     const int16_t *chrFilter, const int16_t **chrUSrc,
                                     const int16_t **chrVSrc,
@@ -384,16 +384,14 @@ static void RENAME(yuv2rgb565_X_ar)(SwsContext *c, const int16_t *lumFilter,
     YSCALEYUV2RGBX
     "pxor %%mm7, %%mm7 \n\t"
     /* mm2=B, %%mm4=G, %%mm5=R, %%mm7=0 */
-#ifdef DITHER1XBPP
     "paddusb "BLUE_DITHER"(%0), %%mm2\n\t"
     "paddusb "GREEN_DITHER"(%0), %%mm4\n\t"
     "paddusb "RED_DITHER"(%0), %%mm5\n\t"
-#endif
     WRITERGB16(%4, "%5", %%FF_REGa)
     YSCALEYUV2PACKEDX_END
 }
 
-static void RENAME(yuv2rgb565_X)(SwsContext *c, const int16_t *lumFilter,
+static void RENAME(yuv2rgb565_X)(SwsInternal *c, const int16_t *lumFilter,
                                  const int16_t **lumSrc, int lumFilterSize,
                                  const int16_t *chrFilter, const int16_t **chrUSrc,
                                  const int16_t **chrVSrc,
@@ -408,11 +406,9 @@ static void RENAME(yuv2rgb565_X)(SwsContext *c, const int16_t *lumFilter,
     YSCALEYUV2RGBX
     "pxor %%mm7, %%mm7 \n\t"
     /* mm2=B, %%mm4=G, %%mm5=R, %%mm7=0 */
-#ifdef DITHER1XBPP
     "paddusb "BLUE_DITHER"(%0), %%mm2  \n\t"
     "paddusb "GREEN_DITHER"(%0), %%mm4  \n\t"
     "paddusb "RED_DITHER"(%0), %%mm5  \n\t"
-#endif
     WRITERGB16(%4, "%5", %%FF_REGa)
     YSCALEYUV2PACKEDX_END
 }
@@ -446,7 +442,7 @@ static void RENAME(yuv2rgb565_X)(SwsContext *c, const int16_t *lumFilter,
     " jb             1b             \n\t"
 #define WRITERGB15(dst, dstw, index)  REAL_WRITERGB15(dst, dstw, index)
 
-static void RENAME(yuv2rgb555_X_ar)(SwsContext *c, const int16_t *lumFilter,
+static void RENAME(yuv2rgb555_X_ar)(SwsInternal *c, const int16_t *lumFilter,
                                     const int16_t **lumSrc, int lumFilterSize,
                                     const int16_t *chrFilter, const int16_t **chrUSrc,
                                     const int16_t **chrVSrc,
@@ -461,16 +457,14 @@ static void RENAME(yuv2rgb555_X_ar)(SwsContext *c, const int16_t *lumFilter,
     YSCALEYUV2RGBX
     "pxor %%mm7, %%mm7 \n\t"
     /* mm2=B, %%mm4=G, %%mm5=R, %%mm7=0 */
-#ifdef DITHER1XBPP
     "paddusb "BLUE_DITHER"(%0), %%mm2\n\t"
     "paddusb "GREEN_DITHER"(%0), %%mm4\n\t"
     "paddusb "RED_DITHER"(%0), %%mm5\n\t"
-#endif
     WRITERGB15(%4, "%5", %%FF_REGa)
     YSCALEYUV2PACKEDX_END
 }
 
-static void RENAME(yuv2rgb555_X)(SwsContext *c, const int16_t *lumFilter,
+static void RENAME(yuv2rgb555_X)(SwsInternal *c, const int16_t *lumFilter,
                                  const int16_t **lumSrc, int lumFilterSize,
                                  const int16_t *chrFilter, const int16_t **chrUSrc,
                                  const int16_t **chrVSrc,
@@ -485,11 +479,9 @@ static void RENAME(yuv2rgb555_X)(SwsContext *c, const int16_t *lumFilter,
     YSCALEYUV2RGBX
     "pxor %%mm7, %%mm7 \n\t"
     /* mm2=B, %%mm4=G, %%mm5=R, %%mm7=0 */
-#ifdef DITHER1XBPP
     "paddusb "BLUE_DITHER"(%0), %%mm2  \n\t"
     "paddusb "GREEN_DITHER"(%0), %%mm4  \n\t"
     "paddusb "RED_DITHER"(%0), %%mm5  \n\t"
-#endif
     WRITERGB15(%4, "%5", %%FF_REGa)
     YSCALEYUV2PACKEDX_END
 }
@@ -599,7 +591,7 @@ static void RENAME(yuv2rgb555_X)(SwsContext *c, const int16_t *lumFilter,
 #define WRITEBGR24(dst, dstw, index)  WRITEBGR24MMXEXT(dst, dstw, index)
 
 #if HAVE_6REGS
-static void RENAME(yuv2bgr24_X_ar)(SwsContext *c, const int16_t *lumFilter,
+static void RENAME(yuv2bgr24_X_ar)(SwsInternal *c, const int16_t *lumFilter,
                                    const int16_t **lumSrc, int lumFilterSize,
                                    const int16_t *chrFilter, const int16_t **chrUSrc,
                                    const int16_t **chrVSrc,
@@ -624,7 +616,7 @@ static void RENAME(yuv2bgr24_X_ar)(SwsContext *c, const int16_t *lumFilter,
     );
 }
 
-static void RENAME(yuv2bgr24_X)(SwsContext *c, const int16_t *lumFilter,
+static void RENAME(yuv2bgr24_X)(SwsInternal *c, const int16_t *lumFilter,
                                 const int16_t **lumSrc, int lumFilterSize,
                                 const int16_t *chrFilter, const int16_t **chrUSrc,
                                 const int16_t **chrVSrc,
@@ -667,7 +659,7 @@ static void RENAME(yuv2bgr24_X)(SwsContext *c, const int16_t *lumFilter,
     " jb          1b            \n\t"
 #define WRITEYUY2(dst, dstw, index)  REAL_WRITEYUY2(dst, dstw, index)
 
-static void RENAME(yuv2yuyv422_X_ar)(SwsContext *c, const int16_t *lumFilter,
+static void RENAME(yuv2yuyv422_X_ar)(SwsInternal *c, const int16_t *lumFilter,
                                      const int16_t **lumSrc, int lumFilterSize,
                                      const int16_t *chrFilter, const int16_t **chrUSrc,
                                      const int16_t **chrVSrc,
@@ -688,7 +680,7 @@ static void RENAME(yuv2yuyv422_X_ar)(SwsContext *c, const int16_t *lumFilter,
     YSCALEYUV2PACKEDX_END
 }
 
-static void RENAME(yuv2yuyv422_X)(SwsContext *c, const int16_t *lumFilter,
+static void RENAME(yuv2yuyv422_X)(SwsInternal *c, const int16_t *lumFilter,
                                   const int16_t **lumSrc, int lumFilterSize,
                                   const int16_t *chrFilter, const int16_t **chrUSrc,
                                   const int16_t **chrVSrc,
@@ -789,7 +781,7 @@ static void RENAME(yuv2yuyv422_X)(SwsContext *c, const int16_t *lumFilter,
 /**
  * vertical bilinear scale YV12 to RGB
  */
-static void RENAME(yuv2rgb32_2)(SwsContext *c, const int16_t *buf[2],
+static void RENAME(yuv2rgb32_2)(SwsInternal *c, const int16_t *buf[2],
                                 const int16_t *ubuf[2], const int16_t *vbuf[2],
                                 const int16_t *abuf[2], uint8_t *dest,
                                 int dstW, int yalpha, int uvalpha, int y)
@@ -853,7 +845,7 @@ static void RENAME(yuv2rgb32_2)(SwsContext *c, const int16_t *buf[2],
     }
 }
 
-static void RENAME(yuv2bgr24_2)(SwsContext *c, const int16_t *buf[2],
+static void RENAME(yuv2bgr24_2)(SwsInternal *c, const int16_t *buf[2],
                                 const int16_t *ubuf[2], const int16_t *vbuf[2],
                                 const int16_t *abuf[2], uint8_t *dest,
                                 int dstW, int yalpha, int uvalpha, int y)
@@ -876,7 +868,7 @@ static void RENAME(yuv2bgr24_2)(SwsContext *c, const int16_t *buf[2],
     );
 }
 
-static void RENAME(yuv2rgb555_2)(SwsContext *c, const int16_t *buf[2],
+static void RENAME(yuv2rgb555_2)(SwsInternal *c, const int16_t *buf[2],
                                  const int16_t *ubuf[2], const int16_t *vbuf[2],
                                  const int16_t *abuf[2], uint8_t *dest,
                                  int dstW, int yalpha, int uvalpha, int y)
@@ -891,11 +883,9 @@ static void RENAME(yuv2rgb555_2)(SwsContext *c, const int16_t *buf[2],
         YSCALEYUV2RGB(%%FF_REGBP, %5)
         "pxor    %%mm7, %%mm7                   \n\t"
         /* mm2=B, %%mm4=G, %%mm5=R, %%mm7=0 */
-#ifdef DITHER1XBPP
         "paddusb "BLUE_DITHER"(%5), %%mm2       \n\t"
         "paddusb "GREEN_DITHER"(%5), %%mm4      \n\t"
         "paddusb "RED_DITHER"(%5), %%mm5        \n\t"
-#endif
         WRITERGB15(%%FF_REGb, DSTW_OFFSET"(%5)", %%FF_REGBP)
         "pop %%"FF_REG_BP"                      \n\t"
         "mov "ESP_OFFSET"(%5), %%"FF_REG_b"     \n\t"
@@ -905,7 +895,7 @@ static void RENAME(yuv2rgb555_2)(SwsContext *c, const int16_t *buf[2],
     );
 }
 
-static void RENAME(yuv2rgb565_2)(SwsContext *c, const int16_t *buf[2],
+static void RENAME(yuv2rgb565_2)(SwsInternal *c, const int16_t *buf[2],
                                  const int16_t *ubuf[2], const int16_t *vbuf[2],
                                  const int16_t *abuf[2], uint8_t *dest,
                                  int dstW, int yalpha, int uvalpha, int y)
@@ -920,11 +910,9 @@ static void RENAME(yuv2rgb565_2)(SwsContext *c, const int16_t *buf[2],
         YSCALEYUV2RGB(%%FF_REGBP, %5)
         "pxor    %%mm7, %%mm7                   \n\t"
         /* mm2=B, %%mm4=G, %%mm5=R, %%mm7=0 */
-#ifdef DITHER1XBPP
         "paddusb "BLUE_DITHER"(%5), %%mm2       \n\t"
         "paddusb "GREEN_DITHER"(%5), %%mm4      \n\t"
         "paddusb "RED_DITHER"(%5), %%mm5        \n\t"
-#endif
         WRITERGB16(%%FF_REGb, DSTW_OFFSET"(%5)", %%FF_REGBP)
         "pop %%"FF_REG_BP"                      \n\t"
         "mov "ESP_OFFSET"(%5), %%"FF_REG_b"     \n\t"
@@ -974,7 +962,7 @@ static void RENAME(yuv2rgb565_2)(SwsContext *c, const int16_t *buf[2],
 
 #define YSCALEYUV2PACKED(index, c)  REAL_YSCALEYUV2PACKED(index, c)
 
-static void RENAME(yuv2yuyv422_2)(SwsContext *c, const int16_t *buf[2],
+static void RENAME(yuv2yuyv422_2)(SwsInternal *c, const int16_t *buf[2],
                                   const int16_t *ubuf[2], const int16_t *vbuf[2],
                                   const int16_t *abuf[2], uint8_t *dest,
                                   int dstW, int yalpha, int uvalpha, int y)
@@ -1113,7 +1101,7 @@ static void RENAME(yuv2yuyv422_2)(SwsContext *c, const int16_t *buf[2],
 /**
  * YV12 to RGB without scaling or interpolating
  */
-static void RENAME(yuv2rgb32_1)(SwsContext *c, const int16_t *buf0,
+static void RENAME(yuv2rgb32_1)(SwsInternal *c, const int16_t *buf0,
                                 const int16_t *ubuf[2], const int16_t *vbuf[2],
                                 const int16_t *abuf0, uint8_t *dest,
                                 int dstW, int uvalpha, int y)
@@ -1182,7 +1170,7 @@ static void RENAME(yuv2rgb32_1)(SwsContext *c, const int16_t *buf0,
     }
 }
 
-static void RENAME(yuv2bgr24_1)(SwsContext *c, const int16_t *buf0,
+static void RENAME(yuv2bgr24_1)(SwsInternal *c, const int16_t *buf0,
                                 const int16_t *ubuf[2], const int16_t *vbuf[2],
                                 const int16_t *abuf0, uint8_t *dest,
                                 int dstW, int uvalpha, int y)
@@ -1223,7 +1211,7 @@ static void RENAME(yuv2bgr24_1)(SwsContext *c, const int16_t *buf0,
     }
 }
 
-static void RENAME(yuv2rgb555_1)(SwsContext *c, const int16_t *buf0,
+static void RENAME(yuv2rgb555_1)(SwsInternal *c, const int16_t *buf0,
                                  const int16_t *ubuf[2], const int16_t *vbuf[2],
                                  const int16_t *abuf0, uint8_t *dest,
                                  int dstW, int uvalpha, int y)
@@ -1240,11 +1228,9 @@ static void RENAME(yuv2rgb555_1)(SwsContext *c, const int16_t *buf0,
             YSCALEYUV2RGB1(%%FF_REGBP, %5)
             "pxor    %%mm7, %%mm7                   \n\t"
             /* mm2=B, %%mm4=G, %%mm5=R, %%mm7=0 */
-#ifdef DITHER1XBPP
             "paddusb "BLUE_DITHER"(%5), %%mm2       \n\t"
             "paddusb "GREEN_DITHER"(%5), %%mm4      \n\t"
             "paddusb "RED_DITHER"(%5), %%mm5        \n\t"
-#endif
             WRITERGB15(%%FF_REGb, DSTW_OFFSET"(%5)", %%FF_REGBP)
             "pop %%"FF_REG_BP"                      \n\t"
             "mov "ESP_OFFSET"(%5), %%"FF_REG_b"     \n\t"
@@ -1261,11 +1247,9 @@ static void RENAME(yuv2rgb555_1)(SwsContext *c, const int16_t *buf0,
             YSCALEYUV2RGB1b(%%FF_REGBP, %5)
             "pxor    %%mm7, %%mm7                   \n\t"
             /* mm2=B, %%mm4=G, %%mm5=R, %%mm7=0 */
-#ifdef DITHER1XBPP
             "paddusb "BLUE_DITHER"(%5), %%mm2       \n\t"
             "paddusb "GREEN_DITHER"(%5), %%mm4      \n\t"
             "paddusb "RED_DITHER"(%5), %%mm5        \n\t"
-#endif
             WRITERGB15(%%FF_REGb, DSTW_OFFSET"(%5)", %%FF_REGBP)
             "pop %%"FF_REG_BP"                      \n\t"
             "mov "ESP_OFFSET"(%5), %%"FF_REG_b"     \n\t"
@@ -1276,7 +1260,7 @@ static void RENAME(yuv2rgb555_1)(SwsContext *c, const int16_t *buf0,
     }
 }
 
-static void RENAME(yuv2rgb565_1)(SwsContext *c, const int16_t *buf0,
+static void RENAME(yuv2rgb565_1)(SwsInternal *c, const int16_t *buf0,
                                  const int16_t *ubuf[2], const int16_t *vbuf[2],
                                  const int16_t *abuf0, uint8_t *dest,
                                  int dstW, int uvalpha, int y)
@@ -1293,11 +1277,9 @@ static void RENAME(yuv2rgb565_1)(SwsContext *c, const int16_t *buf0,
             YSCALEYUV2RGB1(%%FF_REGBP, %5)
             "pxor    %%mm7, %%mm7                   \n\t"
             /* mm2=B, %%mm4=G, %%mm5=R, %%mm7=0 */
-#ifdef DITHER1XBPP
             "paddusb "BLUE_DITHER"(%5), %%mm2       \n\t"
             "paddusb "GREEN_DITHER"(%5), %%mm4      \n\t"
             "paddusb "RED_DITHER"(%5), %%mm5        \n\t"
-#endif
             WRITERGB16(%%FF_REGb, DSTW_OFFSET"(%5)", %%FF_REGBP)
             "pop %%"FF_REG_BP"                      \n\t"
             "mov "ESP_OFFSET"(%5), %%"FF_REG_b"     \n\t"
@@ -1314,11 +1296,9 @@ static void RENAME(yuv2rgb565_1)(SwsContext *c, const int16_t *buf0,
             YSCALEYUV2RGB1b(%%FF_REGBP, %5)
             "pxor    %%mm7, %%mm7                   \n\t"
             /* mm2=B, %%mm4=G, %%mm5=R, %%mm7=0 */
-#ifdef DITHER1XBPP
             "paddusb "BLUE_DITHER"(%5), %%mm2       \n\t"
             "paddusb "GREEN_DITHER"(%5), %%mm4      \n\t"
             "paddusb "RED_DITHER"(%5), %%mm5        \n\t"
-#endif
             WRITERGB16(%%FF_REGb, DSTW_OFFSET"(%5)", %%FF_REGBP)
             "pop %%"FF_REG_BP"                      \n\t"
             "mov "ESP_OFFSET"(%5), %%"FF_REG_b"     \n\t"
@@ -1366,7 +1346,7 @@ static void RENAME(yuv2rgb565_1)(SwsContext *c, const int16_t *buf0,
     "psraw                $7, %%mm7     \n\t"
 #define YSCALEYUV2PACKED1b(index, c)  REAL_YSCALEYUV2PACKED1b(index, c)
 
-static void RENAME(yuv2yuyv422_1)(SwsContext *c, const int16_t *buf0,
+static void RENAME(yuv2yuyv422_1)(SwsInternal *c, const int16_t *buf0,
                                   const int16_t *ubuf[2], const int16_t *vbuf[2],
                                   const int16_t *abuf0, uint8_t *dest,
                                   int dstW, int uvalpha, int y)
@@ -1402,17 +1382,17 @@ static void RENAME(yuv2yuyv422_1)(SwsContext *c, const int16_t *buf0,
         );
     }
 }
-static av_cold void RENAME(sws_init_swscale)(SwsContext *c)
+static av_cold void RENAME(sws_init_swscale)(SwsInternal *c)
 {
-    enum AVPixelFormat dstFormat = c->dstFormat;
+    enum AVPixelFormat dstFormat = c->opts.dst_format;
 
     c->use_mmx_vfilter= 0;
     if (!is16BPS(dstFormat) && !isNBPS(dstFormat) && !isSemiPlanarYUV(dstFormat)
         && dstFormat != AV_PIX_FMT_GRAYF32BE && dstFormat != AV_PIX_FMT_GRAYF32LE
-        && !(c->flags & SWS_BITEXACT)) {
-            if (c->flags & SWS_ACCURATE_RND) {
-                if (!(c->flags & SWS_FULL_CHR_H_INT)) {
-                    switch (c->dstFormat) {
+        && !(c->opts.flags & SWS_BITEXACT)) {
+            if (c->opts.flags & SWS_ACCURATE_RND) {
+                if (!(c->opts.flags & SWS_FULL_CHR_H_INT)) {
+                    switch (c->opts.dst_format) {
                     case AV_PIX_FMT_RGB32:   c->yuv2packedX = RENAME(yuv2rgb32_X_ar);   break;
 #if HAVE_6REGS
                     case AV_PIX_FMT_BGR24:   c->yuv2packedX = RENAME(yuv2bgr24_X_ar);   break;
@@ -1425,8 +1405,8 @@ static av_cold void RENAME(sws_init_swscale)(SwsContext *c)
                 }
             } else {
                 c->use_mmx_vfilter= 1;
-                if (!(c->flags & SWS_FULL_CHR_H_INT)) {
-                    switch (c->dstFormat) {
+                if (!(c->opts.flags & SWS_FULL_CHR_H_INT)) {
+                    switch (c->opts.dst_format) {
                     case AV_PIX_FMT_RGB32:   c->yuv2packedX = RENAME(yuv2rgb32_X);   break;
                     case AV_PIX_FMT_BGR32:   c->yuv2packedX = RENAME(yuv2bgr32_X);   break;
 #if HAVE_6REGS
@@ -1439,8 +1419,8 @@ static av_cold void RENAME(sws_init_swscale)(SwsContext *c)
                     }
                 }
             }
-        if (!(c->flags & SWS_FULL_CHR_H_INT)) {
-            switch (c->dstFormat) {
+        if (!(c->opts.flags & SWS_FULL_CHR_H_INT)) {
+            switch (c->opts.dst_format) {
             case AV_PIX_FMT_RGB32:
                 c->yuv2packed1 = RENAME(yuv2rgb32_1);
                 c->yuv2packed2 = RENAME(yuv2rgb32_2);
@@ -1469,7 +1449,7 @@ static av_cold void RENAME(sws_init_swscale)(SwsContext *c)
 
     if (c->srcBpc == 8 && c->dstBpc <= 14) {
         // Use the new MMX scaler if the MMXEXT one can't be used (it is faster than the x86 ASM one).
-        if (c->flags & SWS_FAST_BILINEAR && c->canMMXEXTBeUsed) {
+        if (c->opts.flags & SWS_FAST_BILINEAR && c->canMMXEXTBeUsed) {
             c->hyscale_fast = ff_hyscale_fast_mmxext;
             c->hcscale_fast = ff_hcscale_fast_mmxext;
         } else {

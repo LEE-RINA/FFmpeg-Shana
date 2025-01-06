@@ -43,7 +43,9 @@
 #include <inttypes.h>
 
 #include "libavutil/channel_layout.h"
+#include "libavutil/mem.h"
 #include "avformat.h"
+#include "demux.h"
 #include "internal.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/des.h"
@@ -509,6 +511,7 @@ static int oma_read_header(AVFormatContext *s)
         st->codecpar->bit_rate    = samplerate * framesize / (2048 / 8);
         avpriv_set_pts_info(st, 64, 1, samplerate);
         break;
+    case OMA_CODECID_AAC:
     case OMA_CODECID_MP3:
         ffstream(st)->need_parsing = AVSTREAM_PARSE_FULL_RAW;
         framesize = 1024;
@@ -607,17 +610,17 @@ wipe:
     return err;
 }
 
-const AVInputFormat ff_oma_demuxer = {
-    .name           = "oma",
-    .long_name      = NULL_IF_CONFIG_SMALL("Sony OpenMG audio"),
+const FFInputFormat ff_oma_demuxer = {
+    .p.name         = "oma",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Sony OpenMG audio"),
+    .p.flags        = AVFMT_GENERIC_INDEX,
+    .p.extensions   = "oma,omg,aa3",
+    .p.codec_tag    = ff_oma_codec_tags_list,
     .priv_data_size = sizeof(OMAContext),
-    .flags_internal = FF_FMT_INIT_CLEANUP,
+    .flags_internal = FF_INFMT_FLAG_INIT_CLEANUP,
     .read_probe     = oma_read_probe,
     .read_header    = oma_read_header,
     .read_packet    = oma_read_packet,
     .read_seek      = oma_read_seek,
     .read_close     = oma_read_close,
-    .flags          = AVFMT_GENERIC_INDEX,
-    .extensions     = "oma,omg,aa3",
-    .codec_tag      = ff_oma_codec_tags_list,
 };

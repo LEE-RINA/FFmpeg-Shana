@@ -28,11 +28,12 @@
 #include <float.h>
 
 #include "libavutil/imgutils.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
+#include "filters.h"
 #include "gblur.h"
-#include "internal.h"
 #include "vf_gblur_init.h"
 #include "video.h"
 
@@ -73,7 +74,6 @@ static int filter_horizontally(AVFilterContext *ctx, void *arg, int jobnr, int n
 
     s->horiz_slice(buffer + width * slice_start, width, slice_end - slice_start,
                    steps, nu, boundaryscale, localbuf);
-    emms_c();
     return 0;
 }
 

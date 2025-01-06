@@ -18,14 +18,13 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "libavutil/internal.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "avcodec.h"
 #include "codec_internal.h"
 #include "decode.h"
 #define BITSTREAM_READER_LE
 #include "get_bits.h"
-#include "bytestream.h"
 
 typedef struct BitCount {
     uint8_t bit;
@@ -270,14 +269,14 @@ static inline int shift(int a, int b)
 
 static int predictor_calc_error(int *k, int *state, int order, int error)
 {
-    int i, x = error - shift_down(k[order-1] * (unsigned)state[order-1], LATTICE_SHIFT);
+    int i, x = error - (unsigned)shift_down(k[order-1] * (unsigned)state[order-1], LATTICE_SHIFT);
     int *k_ptr = &(k[order-2]),
         *state_ptr = &(state[order-2]);
 
     for (i = order-2; i >= 0; i--, k_ptr--, state_ptr--) {
         unsigned k_value = *k_ptr, state_value = *state_ptr;
 
-        x -= shift_down(k_value * (unsigned)state_value, LATTICE_SHIFT);
+        x -= (unsigned) shift_down(k_value * (unsigned)state_value, LATTICE_SHIFT);
         state_ptr[1] = state_value + shift_down(k_value * x, LATTICE_SHIFT);
     }
 

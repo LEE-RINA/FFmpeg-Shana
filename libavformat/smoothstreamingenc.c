@@ -31,6 +31,7 @@
 #include "avc.h"
 #include "url.h"
 
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/avstring.h"
 #include "libavutil/mathematics.h"
@@ -75,7 +76,7 @@ typedef struct SmoothStreamingContext {
     int nb_fragments;
 } SmoothStreamingContext;
 
-static int ism_write(void *opaque, uint8_t *buf, int buf_size)
+static int ism_write(void *opaque, const uint8_t *buf, int buf_size)
 {
     OutputStream *os = opaque;
     if (os->out)
@@ -330,7 +331,9 @@ static int ism_write_header(AVFormatContext *s)
         if (!(st = avformat_new_stream(ctx, NULL))) {
             return AVERROR(ENOMEM);
         }
-        avcodec_parameters_copy(st->codecpar, s->streams[i]->codecpar);
+        if ((ret = avcodec_parameters_copy(st->codecpar, s->streams[i]->codecpar)) < 0) {
+            return ret;
+        }
         st->sample_aspect_ratio = s->streams[i]->sample_aspect_ratio;
         st->time_base = s->streams[i]->time_base;
 

@@ -23,6 +23,7 @@
  */
 
 #include "libavutil/imgutils.h"
+#include "libavutil/mem.h"
 #include "avcodec.h"
 #include "bytestream.h"
 #include "codec_internal.h"
@@ -385,8 +386,7 @@ static int qtrle_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
     pkt->size = encode_frame(s, pict, pkt->data);
 
     /* save the current frame */
-    av_frame_unref(s->previous_frame);
-    ret = av_frame_ref(s->previous_frame, pict);
+    ret = av_frame_replace(s->previous_frame, pict);
     if (ret < 0) {
         av_log(avctx, AV_LOG_ERROR, "cannot add reference\n");
         return ret;

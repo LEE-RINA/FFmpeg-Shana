@@ -427,6 +427,8 @@ typedef struct AV1ReferenceFrameState {
     int bit_depth;      // RefBitDepth
     int order_hint;     // RefOrderHint
 
+    int saved_order_hints[AV1_TOTAL_REFS_PER_FRAME]; // SavedOrderHints[ref]
+
     int8_t  loop_filter_ref_deltas[AV1_TOTAL_REFS_PER_FRAME];
     int8_t  loop_filter_mode_deltas[2];
     uint8_t feature_enabled[AV1_MAX_SEGMENTS][AV1_SEG_LVL_MAX];
@@ -437,7 +439,8 @@ typedef struct CodedBitstreamAV1Context {
     const AVClass *class;
 
     AV1RawSequenceHeader *sequence_header;
-    AVBufferRef          *sequence_header_ref;
+    /** A RefStruct reference backing sequence_header. */
+    AV1RawOBU            *sequence_header_ref;
 
     int     seen_frame_header;
     AVBufferRef *frame_header_ref;
@@ -463,10 +466,22 @@ typedef struct CodedBitstreamAV1Context {
     int tile_rows;
     int tile_num;
 
+    int order_hints[AV1_TOTAL_REFS_PER_FRAME];         // OrderHints
+    int ref_frame_sign_bias[AV1_TOTAL_REFS_PER_FRAME]; // RefFrameSignBias
+
     AV1ReferenceFrameState ref[AV1_NUM_REF_FRAMES];
 
     // AVOptions
     int operating_point;
+    // When writing, fix the length in bytes of the obu_size field.
+    // Writing will fail with an error if an OBU larger than can be
+    // represented by the fixed size is encountered.
+    int fixed_obu_size_length;
+
+    int8_t  loop_filter_ref_deltas[AV1_TOTAL_REFS_PER_FRAME];
+    int8_t  loop_filter_mode_deltas[2];
+    uint8_t feature_enabled[AV1_MAX_SEGMENTS][AV1_SEG_LVL_MAX];
+    int16_t feature_value[AV1_MAX_SEGMENTS][AV1_SEG_LVL_MAX];
 } CodedBitstreamAV1Context;
 
 

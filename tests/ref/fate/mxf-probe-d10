@@ -9,8 +9,6 @@ width=720
 height=608
 coded_width=0
 coded_height=0
-closed_captions=0
-film_grain=0
 has_b_frames=0
 sample_aspect_ratio=152:135
 display_aspect_ratio=4:3
@@ -50,11 +48,13 @@ DISPOSITION:visual_impaired=0
 DISPOSITION:clean_effects=0
 DISPOSITION:attached_pic=0
 DISPOSITION:timed_thumbnails=0
+DISPOSITION:non_diegetic=0
 DISPOSITION:captions=0
 DISPOSITION:descriptions=0
 DISPOSITION:metadata=0
 DISPOSITION:dependent=0
 DISPOSITION:still_image=0
+DISPOSITION:multilayer=0
 TAG:file_package_umid=0x060A2B340101010501010D1313000000AE86B200913105800000080046A54011
 [SIDE_DATA]
 side_data_type=CPB properties
@@ -104,11 +104,13 @@ DISPOSITION:visual_impaired=0
 DISPOSITION:clean_effects=0
 DISPOSITION:attached_pic=0
 DISPOSITION:timed_thumbnails=0
+DISPOSITION:non_diegetic=0
 DISPOSITION:captions=0
 DISPOSITION:descriptions=0
 DISPOSITION:metadata=0
 DISPOSITION:dependent=0
 DISPOSITION:still_image=0
+DISPOSITION:multilayer=0
 TAG:file_package_umid=0x060A2B340101010501010D1313000000AE86B200913105800000080046A54011
 [/STREAM]
 [FORMAT]

@@ -1,8 +1,8 @@
 #include <winver.h>
 
 1 VERSIONINFO
-FILEVERSION 2023,8,8,190
-PRODUCTVERSION 6,0,1,0
+FILEVERSION 2024,12,18,197
+PRODUCTVERSION 7,0,0,0
 FILEOS VOS__WINDOWS32
 FILETYPE VFT_APP
 {
@@ -11,10 +11,10 @@ FILETYPE VFT_APP
         BLOCK "000004b0" // LANG_NEUTRAL,UNICODE_CP
         {
             VALUE "FileDescription", "ShanaEncoder"
-            VALUE "FileVersion", "2023.08.08.190"
+            VALUE "FileVersion", "2024.12.18.197"
             VALUE "ProductName", "FFplay for ShanaEncoder"
-            VALUE "ProductVersion", "6.0.1.0"
-            VALUE "LegalCopyright", "Copyright (c) 2003-2023 the FFmpeg developers"
+            VALUE "ProductVersion", "7.0.0.0"
+            VALUE "LegalCopyright", "Copyright (c) 2003-2024 the FFmpeg developers"
             VALUE "OriginalFilename", "ShanaFFplay.exe"
         }
     }

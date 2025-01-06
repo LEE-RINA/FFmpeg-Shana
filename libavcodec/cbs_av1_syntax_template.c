@@ -82,7 +82,7 @@ static int FUNC(color_config)(CodedBitstreamContext *ctx, RWContext *rw,
 
     flag(high_bitdepth);
 
-    if (seq_profile == FF_PROFILE_AV1_PROFESSIONAL &&
+    if (seq_profile == AV_PROFILE_AV1_PROFESSIONAL &&
         current->high_bitdepth) {
         flag(twelve_bit);
         priv->bit_depth = current->twelve_bit ? 12 : 10;
@@ -90,7 +90,7 @@ static int FUNC(color_config)(CodedBitstreamContext *ctx, RWContext *rw,
         priv->bit_depth = current->high_bitdepth ? 10 : 8;
     }
 
-    if (seq_profile == FF_PROFILE_AV1_HIGH)
+    if (seq_profile == AV_PROFILE_AV1_HIGH)
         infer(mono_chrome, 0);
     else
         flag(mono_chrome);
@@ -126,10 +126,10 @@ static int FUNC(color_config)(CodedBitstreamContext *ctx, RWContext *rw,
     } else {
         flag(color_range);
 
-        if (seq_profile == FF_PROFILE_AV1_MAIN) {
+        if (seq_profile == AV_PROFILE_AV1_MAIN) {
             infer(subsampling_x, 1);
             infer(subsampling_y, 1);
-        } else if (seq_profile == FF_PROFILE_AV1_HIGH) {
+        } else if (seq_profile == AV_PROFILE_AV1_HIGH) {
             infer(subsampling_x, 0);
             infer(subsampling_y, 0);
         } else {
@@ -190,8 +190,8 @@ static int FUNC(sequence_header_obu)(CodedBitstreamContext *ctx, RWContext *rw,
 
     HEADER("Sequence Header");
 
-    fc(3, seq_profile, FF_PROFILE_AV1_MAIN,
-                       FF_PROFILE_AV1_PROFESSIONAL);
+    fc(3, seq_profile, AV_PROFILE_AV1_MAIN,
+                       AV_PROFILE_AV1_PROFESSIONAL);
     flag(still_picture);
     flag(reduced_still_picture_header);
 
@@ -360,7 +360,7 @@ static int FUNC(set_frame_refs)(CodedBitstreamContext *ctx, RWContext *rw,
     int i, j;
 
     for (i = 0; i < AV1_REFS_PER_FRAME; i++)
-        ref_frame_idx[i] = -1;
+        ref_frame_idx[i] = AV1_REF_FRAME_NONE;
     ref_frame_idx[AV1_REF_FRAME_LAST - AV1_REF_FRAME_LAST] = current->last_frame_idx;
     ref_frame_idx[AV1_REF_FRAME_GOLDEN - AV1_REF_FRAME_LAST] = current->golden_frame_idx;
 
@@ -378,7 +378,7 @@ static int FUNC(set_frame_refs)(CodedBitstreamContext *ctx, RWContext *rw,
     latest_order_hint = shifted_order_hints[current->last_frame_idx];
     earliest_order_hint = shifted_order_hints[current->golden_frame_idx];
 
-    ref = -1;
+    ref = AV1_REF_FRAME_NONE;
     for (i = 0; i < AV1_NUM_REF_FRAMES; i++) {
         int hint = shifted_order_hints[i];
         if (!used_frame[i] && hint >= cur_frame_hint &&
@@ -392,7 +392,7 @@ static int FUNC(set_frame_refs)(CodedBitstreamContext *ctx, RWContext *rw,
         used_frame[ref] = 1;
     }
 
-    ref = -1;
+    ref = AV1_REF_FRAME_NONE;
     for (i = 0; i < AV1_NUM_REF_FRAMES; i++) {
         int hint = shifted_order_hints[i];
         if (!used_frame[i] && hint >= cur_frame_hint &&
@@ -406,7 +406,7 @@ static int FUNC(set_frame_refs)(CodedBitstreamContext *ctx, RWContext *rw,
         used_frame[ref] = 1;
     }
 
-    ref = -1;
+    ref = AV1_REF_FRAME_NONE;
     for (i = 0; i < AV1_NUM_REF_FRAMES; i++) {
         int hint = shifted_order_hints[i];
         if (!used_frame[i] && hint >= cur_frame_hint &&
@@ -423,7 +423,7 @@ static int FUNC(set_frame_refs)(CodedBitstreamContext *ctx, RWContext *rw,
     for (i = 0; i < AV1_REFS_PER_FRAME - 2; i++) {
         int ref_frame = ref_frame_list[i];
         if (ref_frame_idx[ref_frame - AV1_REF_FRAME_LAST] < 0 ) {
-            ref = -1;
+            ref = AV1_REF_FRAME_NONE;
             for (j = 0; j < AV1_NUM_REF_FRAMES; j++) {
                 int hint = shifted_order_hints[j];
                 if (!used_frame[j] && hint < cur_frame_hint &&
@@ -439,7 +439,7 @@ static int FUNC(set_frame_refs)(CodedBitstreamContext *ctx, RWContext *rw,
         }
     }
 
-    ref = -1;
+    ref = AV1_REF_FRAME_NONE;
     for (i = 0; i < AV1_NUM_REF_FRAMES; i++) {
         int hint = shifted_order_hints[i];
         if (ref < 0 || hint < earliest_order_hint) {
@@ -1028,9 +1028,9 @@ static int FUNC(read_tx_mode)(CodedBitstreamContext *ctx, RWContext *rw,
     int err;
 
     if (priv->coded_lossless)
-        infer(tx_mode, 0);
+        infer(tx_mode, AV1_ONLY_4X4);
     else
-        increment(tx_mode, 1, 2);
+        increment(tx_mode, AV1_TX_MODE_LARGEST, AV1_TX_MODE_SELECT);
 
     return 0;
 }
@@ -1374,6 +1374,15 @@ static int FUNC(uncompressed_header)(CodedBitstreamContext *ctx, RWContext *rw,
                 priv->render_height   = ref->render_height;
                 priv->bit_depth       = ref->bit_depth;
                 priv->order_hint      = ref->order_hint;
+
+                memcpy(priv->loop_filter_ref_deltas, ref->loop_filter_ref_deltas,
+                       sizeof(ref->loop_filter_ref_deltas));
+                memcpy(priv->loop_filter_mode_deltas, ref->loop_filter_mode_deltas,
+                       sizeof(ref->loop_filter_mode_deltas));
+                memcpy(priv->feature_enabled, ref->feature_enabled,
+                       sizeof(ref->feature_enabled));
+                memcpy(priv->feature_value, ref->feature_value,
+                       sizeof(ref->feature_value));
             } else
                 infer(refresh_frame_flags, 0);
 
@@ -1414,6 +1423,8 @@ static int FUNC(uncompressed_header)(CodedBitstreamContext *ctx, RWContext *rw,
             priv->ref[i].valid = 0;
             priv->ref[i].order_hint = 0;
         }
+        for (i = 0; i < AV1_REFS_PER_FRAME; i++)
+            priv->order_hints[i + AV1_REF_FRAME_LAST] = 0;
     }
 
     flag(disable_cdf_update);
@@ -1568,11 +1579,20 @@ static int FUNC(uncompressed_header)(CodedBitstreamContext *ctx, RWContext *rw,
         else
             flag(use_ref_frame_mvs);
 
-        infer(allow_intrabc, 0);
-    }
+        for (i = 0; i < AV1_REFS_PER_FRAME; i++) {
+            int ref_frame = AV1_REF_FRAME_LAST + i;
+            int hint = priv->ref[current->ref_frame_idx[i]].order_hint;
+            priv->order_hints[ref_frame] = hint;
+            if (!seq->enable_order_hint) {
+                priv->ref_frame_sign_bias[ref_frame] = 0;
+            } else {
+                priv->ref_frame_sign_bias[ref_frame] =
+                    cbs_av1_get_relative_dist(seq, hint,
+                                              current->order_hint) > 0;
+            }
+        }
 
-    if (!frame_is_intra) {
-        // Derive reference frame sign biases.
+        infer(allow_intrabc, 0);
     }
 
     if (seq->reduced_still_picture_header || current->disable_cdf_update)
@@ -1674,14 +1694,31 @@ update_refs:
                 .bit_depth      = priv->bit_depth,
                 .order_hint     = priv->order_hint,
             };
-            memcpy(priv->ref[i].loop_filter_ref_deltas, current->loop_filter_ref_deltas,
-                   sizeof(current->loop_filter_ref_deltas));
-            memcpy(priv->ref[i].loop_filter_mode_deltas, current->loop_filter_mode_deltas,
-                   sizeof(current->loop_filter_mode_deltas));
-            memcpy(priv->ref[i].feature_enabled, current->feature_enabled,
-                   sizeof(current->feature_enabled));
-            memcpy(priv->ref[i].feature_value, current->feature_value,
-                   sizeof(current->feature_value));
+
+            for (int j = 0; j < AV1_REFS_PER_FRAME; j++) {
+                priv->ref[i].saved_order_hints[j + AV1_REF_FRAME_LAST] =
+                    priv->order_hints[j + AV1_REF_FRAME_LAST];
+            }
+
+            if (current->show_existing_frame) {
+                memcpy(priv->ref[i].loop_filter_ref_deltas, priv->loop_filter_ref_deltas,
+                       sizeof(priv->loop_filter_ref_deltas));
+                memcpy(priv->ref[i].loop_filter_mode_deltas, priv->loop_filter_mode_deltas,
+                       sizeof(priv->loop_filter_mode_deltas));
+                memcpy(priv->ref[i].feature_enabled, priv->feature_enabled,
+                       sizeof(priv->feature_enabled));
+                memcpy(priv->ref[i].feature_value, priv->feature_value,
+                       sizeof(priv->feature_value));
+            } else {
+                memcpy(priv->ref[i].loop_filter_ref_deltas, current->loop_filter_ref_deltas,
+                       sizeof(current->loop_filter_ref_deltas));
+                memcpy(priv->ref[i].loop_filter_mode_deltas, current->loop_filter_mode_deltas,
+                       sizeof(current->loop_filter_mode_deltas));
+                memcpy(priv->ref[i].feature_enabled, current->feature_enabled,
+                       sizeof(current->feature_enabled));
+                memcpy(priv->ref[i].feature_value, current->feature_value,
+                       sizeof(current->feature_value));
+            }
         }
     }
 

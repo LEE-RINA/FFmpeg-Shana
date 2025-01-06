@@ -20,7 +20,9 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 #include <libxml/parser.h>
+#include <time.h>
 #include "libavutil/bprint.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/time.h"
 #include "libavutil/parseutils.h"
@@ -28,6 +30,7 @@
 #include "avio_internal.h"
 #include "dash.h"
 #include "demux.h"
+#include "url.h"
 
 #define INITIAL_BUFFER_SIZE 32768
 
@@ -1929,45 +1932,34 @@ static int open_demux_for_component(AVFormatContext *s, struct representation *p
     int i;
 
     pls->parent = s;
-    pls->cur_seq_no  = calc_cur_seg_no(s, pls);
+    pls->cur_seq_no = calc_cur_seg_no(s, pls);
 
-    if (!pls->last_seq_no) {
+    if (!pls->last_seq_no)
         pls->last_seq_no = calc_max_seg_no(pls, s->priv_data);
-    }
 
     ret = reopen_demux_for_component(s, pls);
-    if (ret < 0) {
-        goto fail;
-    }
+    if (ret < 0)
+        return ret;
+
     for (i = 0; i < pls->ctx->nb_streams; i++) {
         AVStream *st = avformat_new_stream(s, NULL);
         AVStream *ist = pls->ctx->streams[i];
-        if (!st) {
-            ret = AVERROR(ENOMEM);
-            goto fail;
-        }
+        if (!st)
+            return AVERROR(ENOMEM);
+
         st->id = i;
-        avcodec_parameters_copy(st->codecpar, ist->codecpar);
+
+        ret = avcodec_parameters_copy(st->codecpar, ist->codecpar);
+        if (ret < 0)
+            return ret;
+
         avpriv_set_pts_info(st, ist->pts_wrap_bits, ist->time_base.num, ist->time_base.den);
 
         // copy disposition
         st->disposition = ist->disposition;
-
-        // copy side data
-        for (int i = 0; i < ist->nb_side_data; i++) {
-            const AVPacketSideData *sd_src = &ist->side_data[i];
-            uint8_t *dst_data;
-
-            dst_data = av_stream_new_side_data(st, sd_src->type, sd_src->size);
-            if (!dst_data)
-                return AVERROR(ENOMEM);
-            memcpy(dst_data, sd_src->data, sd_src->size);
-        }
     }
 
     return 0;
-fail:
-    return ret;
 }
 
 static int is_common_init_section_exist(struct representation **pls, int n_pls)
@@ -2216,9 +2208,9 @@ static int dash_read_packet(AVFormatContext *s, AVPacket *pkt)
         if (cur->is_restart_needed) {
             cur->cur_seg_offset = 0;
             cur->init_sec_buf_read_offset = 0;
+            cur->is_restart_needed = 0;
             ff_format_io_close(cur->parent, &cur->input);
             ret = reopen_demux_for_component(s, cur);
-            cur->is_restart_needed = 0;
         }
     }
     return AVERROR_EOF;
@@ -2364,16 +2356,16 @@ static const AVClass dash_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-const AVInputFormat ff_dash_demuxer = {
-    .name           = "dash",
-    .long_name      = NULL_IF_CONFIG_SMALL("Dynamic Adaptive Streaming over HTTP"),
-    .priv_class     = &dash_class,
+const FFInputFormat ff_dash_demuxer = {
+    .p.name         = "dash",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Dynamic Adaptive Streaming over HTTP"),
+    .p.priv_class   = &dash_class,
+    .p.flags        = AVFMT_NO_BYTE_SEEK,
     .priv_data_size = sizeof(DASHContext),
-    .flags_internal = FF_FMT_INIT_CLEANUP,
+    .flags_internal = FF_INFMT_FLAG_INIT_CLEANUP,
     .read_probe     = dash_probe,
     .read_header    = dash_read_header,
     .read_packet    = dash_read_packet,
     .read_close     = dash_close,
     .read_seek      = dash_read_seek,
-    .flags          = AVFMT_NO_BYTE_SEEK,
 };

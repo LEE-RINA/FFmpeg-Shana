@@ -20,10 +20,11 @@
 
 #include <float.h>
 
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
-#include "internal.h"
+#include "filters.h"
 #include "video.h"
 
 typedef enum AnalyzeMode {
@@ -69,8 +70,8 @@ static int average_slice8(AVFilterContext *ctx, void *arg, int jobnr, int nb_job
     const int height = s->planeheight[1];
     const int slice_start = (height * jobnr) / nb_jobs;
     const int slice_end = (height * (jobnr + 1)) / nb_jobs;
-    const int ulinesize = frame->linesize[1];
-    const int vlinesize = frame->linesize[2];
+    const ptrdiff_t ulinesize = frame->linesize[1];
+    const ptrdiff_t vlinesize = frame->linesize[2];
     const uint8_t *uptr = (const uint8_t *)frame->data[1] + slice_start * ulinesize;
     const uint8_t *vptr = (const uint8_t *)frame->data[2] + slice_start * vlinesize;
     int sum_u = 0, sum_v = 0;
@@ -100,8 +101,8 @@ static int average_slice16(AVFilterContext *ctx, void *arg, int jobnr, int nb_jo
     const int height = s->planeheight[1];
     const int slice_start = (height * jobnr) / nb_jobs;
     const int slice_end = (height * (jobnr + 1)) / nb_jobs;
-    const int ulinesize = frame->linesize[1] / 2;
-    const int vlinesize = frame->linesize[2] / 2;
+    const ptrdiff_t ulinesize = frame->linesize[1] / 2;
+    const ptrdiff_t vlinesize = frame->linesize[2] / 2;
     const uint16_t *uptr = (const uint16_t *)frame->data[1] + slice_start * ulinesize;
     const uint16_t *vptr = (const uint16_t *)frame->data[2] + slice_start * vlinesize;
     int64_t sum_u = 0, sum_v = 0;
@@ -131,8 +132,8 @@ static int minmax_slice8(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs
     const int height = s->planeheight[1];
     const int slice_start = (height * jobnr) / nb_jobs;
     const int slice_end = (height * (jobnr + 1)) / nb_jobs;
-    const int ulinesize = frame->linesize[1];
-    const int vlinesize = frame->linesize[2];
+    const ptrdiff_t ulinesize = frame->linesize[1];
+    const ptrdiff_t vlinesize = frame->linesize[2];
     const uint8_t *uptr = (const uint8_t *)frame->data[1] + slice_start * ulinesize;
     const uint8_t *vptr = (const uint8_t *)frame->data[2] + slice_start * vlinesize;
     int min_u = 255, min_v = 255;
@@ -167,8 +168,8 @@ static int minmax_slice16(AVFilterContext *ctx, void *arg, int jobnr, int nb_job
     const int height = s->planeheight[1];
     const int slice_start = (height * jobnr) / nb_jobs;
     const int slice_end = (height * (jobnr + 1)) / nb_jobs;
-    const int ulinesize = frame->linesize[1] / 2;
-    const int vlinesize = frame->linesize[2] / 2;
+    const ptrdiff_t ulinesize = frame->linesize[1] / 2;
+    const ptrdiff_t vlinesize = frame->linesize[2] / 2;
     const uint16_t *uptr = (const uint16_t *)frame->data[1] + slice_start * ulinesize;
     const uint16_t *vptr = (const uint16_t *)frame->data[2] + slice_start * vlinesize;
     int min_u = INT_MAX, min_v = INT_MAX;
@@ -201,8 +202,8 @@ static int median_8(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
     const float imax = s->imax;
     const int width = s->planewidth[1];
     const int height = s->planeheight[1];
-    const int ulinesize = frame->linesize[1];
-    const int vlinesize = frame->linesize[2];
+    const ptrdiff_t ulinesize = frame->linesize[1];
+    const ptrdiff_t vlinesize = frame->linesize[2];
     const uint8_t *uptr = (const uint8_t *)frame->data[1];
     const uint8_t *vptr = (const uint8_t *)frame->data[2];
     unsigned *uhistogram = s->uhistogram;
@@ -255,8 +256,8 @@ static int median_16(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
     const float imax = s->imax;
     const int width = s->planewidth[1];
     const int height = s->planeheight[1];
-    const int ulinesize = frame->linesize[1] / 2;
-    const int vlinesize = frame->linesize[2] / 2;
+    const ptrdiff_t ulinesize = frame->linesize[1] / 2;
+    const ptrdiff_t vlinesize = frame->linesize[2] / 2;
     const uint16_t *uptr = (const uint16_t *)frame->data[1];
     const uint16_t *vptr = (const uint16_t *)frame->data[2];
     unsigned *uhistogram = s->uhistogram;
@@ -323,9 +324,9 @@ static int colorcorrect_slice8(AVFilterContext *ctx, void *arg, int jobnr, int n
     const int height = s->planeheight[1];
     const int slice_start = (height * jobnr) / nb_jobs;
     const int slice_end = (height * (jobnr + 1)) / nb_jobs;
-    const int ylinesize = frame->linesize[0];
-    const int ulinesize = frame->linesize[1];
-    const int vlinesize = frame->linesize[2];
+    const ptrdiff_t ylinesize = frame->linesize[0];
+    const ptrdiff_t ulinesize = frame->linesize[1];
+    const ptrdiff_t vlinesize = frame->linesize[2];
     uint8_t *yptr = frame->data[0] + slice_start * chroma_h * ylinesize;
     uint8_t *uptr = frame->data[1] + slice_start * ulinesize;
     uint8_t *vptr = frame->data[2] + slice_start * vlinesize;
@@ -364,9 +365,9 @@ static int colorcorrect_slice16(AVFilterContext *ctx, void *arg, int jobnr, int 
     const int height = s->planeheight[1];
     const int slice_start = (height * jobnr) / nb_jobs;
     const int slice_end = (height * (jobnr + 1)) / nb_jobs;
-    const int ylinesize = frame->linesize[0] / 2;
-    const int ulinesize = frame->linesize[1] / 2;
-    const int vlinesize = frame->linesize[2] / 2;
+    const ptrdiff_t ylinesize = frame->linesize[0] / 2;
+    const ptrdiff_t ulinesize = frame->linesize[1] / 2;
+    const ptrdiff_t vlinesize = frame->linesize[2] / 2;
     uint16_t *yptr = (uint16_t *)frame->data[0] + slice_start * chroma_h * ylinesize;
     uint16_t *uptr = (uint16_t *)frame->data[1] + slice_start * ulinesize;
     uint16_t *vptr = (uint16_t *)frame->data[2] + slice_start * vlinesize;
@@ -497,6 +498,8 @@ static av_cold void uninit(AVFilterContext *ctx)
     ColorCorrectContext *s = ctx->priv;
 
     av_freep(&s->analyzeret);
+    av_freep(&s->uhistogram);
+    av_freep(&s->vhistogram);
 }
 
 static const AVFilterPad colorcorrect_inputs[] = {
@@ -518,11 +521,11 @@ static const AVOption colorcorrect_options[] = {
     { "rh", "set the red highlight spot",           OFFSET(rh), AV_OPT_TYPE_FLOAT, {.dbl=0}, -1, 1, VF },
     { "bh", "set the blue highlight spot",          OFFSET(bh), AV_OPT_TYPE_FLOAT, {.dbl=0}, -1, 1, VF },
     { "saturation", "set the amount of saturation", OFFSET(saturation), AV_OPT_TYPE_FLOAT, {.dbl=1}, -3, 3, VF },
-    { "analyze", "set the analyze mode",            OFFSET(analyze), AV_OPT_TYPE_INT, {.i64=0}, 0, NB_ANALYZE-1, VF, "analyze" },
-    {   "manual",  "manually set options", 0, AV_OPT_TYPE_CONST, {.i64=MANUAL},  0, 0, VF, "analyze" },
-    {   "average", "use average pixels",   0, AV_OPT_TYPE_CONST, {.i64=AVERAGE}, 0, 0, VF, "analyze" },
-    {   "minmax",  "use minmax pixels",    0, AV_OPT_TYPE_CONST, {.i64=MINMAX},  0, 0, VF, "analyze" },
-    {   "median",  "use median pixels",    0, AV_OPT_TYPE_CONST, {.i64=MEDIAN},  0, 0, VF, "analyze" },
+    { "analyze", "set the analyze mode",            OFFSET(analyze), AV_OPT_TYPE_INT, {.i64=0}, 0, NB_ANALYZE-1, VF, .unit = "analyze" },
+    {   "manual",  "manually set options", 0, AV_OPT_TYPE_CONST, {.i64=MANUAL},  0, 0, VF, .unit = "analyze" },
+    {   "average", "use average pixels",   0, AV_OPT_TYPE_CONST, {.i64=AVERAGE}, 0, 0, VF, .unit = "analyze" },
+    {   "minmax",  "use minmax pixels",    0, AV_OPT_TYPE_CONST, {.i64=MINMAX},  0, 0, VF, .unit = "analyze" },
+    {   "median",  "use median pixels",    0, AV_OPT_TYPE_CONST, {.i64=MEDIAN},  0, 0, VF, .unit = "analyze" },
     { NULL }
 };
 

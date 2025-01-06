@@ -26,6 +26,7 @@
 #include "libavutil/intreadwrite.h"
 #include "libavutil/lzo.h"
 #include "libavutil/imgutils.h"
+#include "libavutil/mem.h"
 #include "avcodec.h"
 #include "codec_internal.h"
 #include "decode.h"
@@ -56,8 +57,8 @@ static void copy_frame(AVFrame *f, const uint8_t *src, int width, int height)
     int src_linesize[4];
     av_image_fill_arrays(src_data, src_linesize, src,
                          f->format, width, height, 1);
-    av_image_copy(f->data, f->linesize, (const uint8_t **)src_data, src_linesize,
-                  f->format, width, height);
+    av_image_copy2(f->data, f->linesize, src_data, src_linesize,
+                   f->format, width, height);
 }
 
 /**

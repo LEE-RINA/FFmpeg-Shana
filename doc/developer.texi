@@ -24,6 +24,10 @@ generated from the headers
 the examples under @file{doc/examples}
 @end itemize
 
+For more detailed legal information about the use of FFmpeg in
+external programs read the @file{LICENSE} file in the source tree and
+consult @url{https://ffmpeg.org/legal.html}.
+
 If you modify FFmpeg code for your own use case, you are highly encouraged to
 @emph{submit your changes back to us}, using this document as a guide. There are
 both pragmatic and ideological reasons to do so:
@@ -40,12 +44,6 @@ By supporting the project you find useful you ensure it continues to be
 maintained and developed.
 @end itemize
 
-For more detailed legal information about the use of FFmpeg in
-external programs read the @file{LICENSE} file in the source tree and
-consult @url{https://ffmpeg.org/legal.html}.
-
-@section Contributing code
-
 All proposed code changes should be submitted for review to
 @url{mailto:ffmpeg-devel@@ffmpeg.org, the development mailing list}, as
 described in more detail in the @ref{Submitting patches} chapter. The code
@@ -58,14 +56,8 @@ and should try to fix issues their commit causes.
 
 @section Language
 
-FFmpeg is mainly programmed in the ISO C99 language, extended with:
-@itemize @bullet
-@item
-Atomic operations from C11 @file{stdatomic.h}. They are emulated on
-architectures/compilers that do not support them, so all FFmpeg-internal code
-may use atomics without any extra checks. However, @file{stdatomic.h} must not
-be included in public headers, so they stay C99-compatible.
-@end itemize
+FFmpeg is mainly programmed in the ISO C11 language, except for the public
+headers which must stay C99 compatible.
 
 Compiler-specific extensions may be used with good reason, but must not be
 depended on, i.e. the code must still compile and work with compilers lacking
@@ -101,7 +93,7 @@ The specific syntax used for writing assembly is:
 NASM on x86;
 
 @item
-GAS on ARM.
+GAS on ARM and RISC-V.
 @end itemize
 
 A unit testing framework for assembly called @code{checkasm} lives under
@@ -123,7 +115,7 @@ Objective-C where required for interacting with macOS-specific interfaces.
 
 @section Code formatting conventions
 
-There are the following guidelines regarding the indentation in files:
+There are the following guidelines regarding the code style in files:
 
 @itemize @bullet
 @item
@@ -142,6 +134,105 @@ and only if this improves readability.
 K&R coding style is used.
 @end itemize
 The presentation is one inspired by 'indent -i4 -kr -nut'.
+
+@subsection Examples
+Some notable examples to illustrate common code style in FFmpeg:
+
+@itemize @bullet
+
+@item
+Space around assignments and after
+@code{if}/@code{do}/@code{while}/@code{for} keywords:
+
+@example c, good
+// Good
+if (condition)
+    av_foo();
+@end example
+
+@example c, good
+// Good
+for (size_t i = 0; i < len; i++)
+    av_bar(i);
+@end example
+
+@example c, good
+// Good
+size_t size = 0;
+@end example
+
+However no spaces between the parentheses and condition, unless it helps
+readability of complex conditions, so the following should not be done:
+
+@example c, bad
+// Bad style
+if ( condition )
+    av_foo();
+@end example
+
+@item
+No unnecessary parentheses, unless it helps readability:
+
+@example c, good
+// Good
+int fields = ilace ? 2 : 1;
+@end example
+
+@item
+No braces around single-line blocks:
+
+@example c, good
+// Good
+if (bits_pixel == 24)
+    avctx->pix_fmt = AV_PIX_FMT_BGR24;
+else if (bits_pixel == 8)
+    avctx->pix_fmt = AV_PIX_FMT_GRAY8;
+else @{
+    av_log(avctx, AV_LOG_ERROR, "Invalid pixel format.\n");
+    return AVERROR_INVALIDDATA;
+@}
+@end example
+
+@item
+Avoid assignments in conditions where it makes sense:
+
+@example c, good
+// Good
+video_enc->chroma_intra_matrix = av_mallocz(sizeof(*video_enc->chroma_intra_matrix) * 64)
+if (!video_enc->chroma_intra_matrix)
+    return AVERROR(ENOMEM);
+@end example
+
+@example c, bad
+// Bad style
+if (!(video_enc->chroma_intra_matrix = av_mallocz(sizeof(*video_enc->chroma_intra_matrix) * 64)))
+    return AVERROR(ENOMEM);
+@end example
+
+@example c, good
+// Ok
+while ((entry = av_dict_iterate(options, entry)))
+    av_log(ctx, AV_LOG_INFO, "Item '%s': '%s'\n", entry->key, entry->value);
+@end example
+
+@item
+When declaring a pointer variable, the @code{*} goes with the variable not the type:
+
+@example c, good
+// Good
+AVStream *stream;
+@end example
+
+@example c, bad
+// Bad style
+AVStream* stream;
+@end example
+
+@end itemize
+
+If you work on a file that does not follow these guidelines consistently,
+change the parts that you are editing to follow these guidelines but do
+not make unrelated changes in the file to make it conform to these.
 
 @subsection Vim configuration
 In order to configure Vim to follow FFmpeg formatting conventions, paste
@@ -277,16 +368,48 @@ symbols. If in doubt, just avoid names starting with @code{_} altogether.
 
 @itemize @bullet
 @item
-fprintf and printf are forbidden in libavformat and libavcodec,
-please use av_log() instead.
-
-@item
 Casts should be used only when necessary. Unneeded parentheses
 should also be avoided if they don't make the code easier to understand.
 @end itemize
 
 @anchor{Development Policy}
 @chapter Development Policy
+
+@section Code behaviour
+
+@subheading Correctness
+The code must be valid. It must not crash, abort, access invalid pointers, leak
+memory, cause data races or signed integer overflow, or otherwise cause
+undefined behaviour. Error codes should be checked and, when applicable,
+forwarded to the caller.
+
+@subheading Thread- and library-safety
+Our libraries may be called by multiple independent callers in the same process.
+These calls may happen from any number of threads and the different call sites
+may not be aware of each other - e.g. a user program may be calling our
+libraries directly, and use one or more libraries that also call our libraries.
+The code must behave correctly under such conditions.
+
+@subheading Robustness
+The code must treat as untrusted any bytestream received from a caller or read
+from a file, network, etc. It must not misbehave when arbitrary data is sent to
+it - typically it should print an error message and return
+@code{AVERROR_INVALIDDATA} on encountering invalid input data.
+
+@subheading Memory allocation
+The code must use the @code{av_malloc()} family of functions from
+@file{libavutil/mem.h} to perform all memory allocation, except in special cases
+(e.g. when interacting with an external library that requires a specific
+allocator to be used).
+
+All allocations should be checked and @code{AVERROR(ENOMEM)} returned on
+failure. A common mistake is that error paths leak memory - make sure that does
+not happen.
+
+@subheading stdio
+Our libraries must not access the stdio streams stdin/stdout/stderr directly
+(e.g. via @code{printf()} family of functions), as that is not library-safe. For
+logging, use @code{av_log()}.
 
 @section Patches/Committing
 @subheading Licenses for patches must be compatible with FFmpeg.
@@ -310,13 +433,24 @@ missing samples or an implementation with a small subset of features.
 Always check the mailing list for any reviewers with issues and test
 FATE before you push.
 
-@subheading Keep the main commit message short with an extended description below.
-The commit message should have a short first line in the form of
-a @samp{topic: short description} as a header, separated by a newline
-from the body consisting of an explanation of why the change is necessary.
-If the commit fixes a known bug on the bug tracker, the commit message
-should include its bug ID. Referring to the issue on the bug tracker does
-not exempt you from writing an excerpt of the bug in the commit message.
+@subheading Commit messages
+Commit messages are highly important tools for informing other developers on
+what a given change does and why. Every commit must always have a properly
+filled out commit message with the following format:
+@example
+area changed: short 1 line description
+
+details describing what and why and giving references.
+@end example
+
+If the commit addresses a known bug on our bug tracker or other external issue
+(e.g. CVE), the commit message should include the relevant bug ID(s) or other
+external identifiers. Note that this should be done in addition to a proper
+explanation and not instead of it. Comments such as "fixed!" or "Changed it."
+are not acceptable.
+
+When applying patches that have been discussed at length on the mailing list,
+reference the thread in the commit message.
 
 @subheading Testing must be adequate but not excessive.
 If it works for you, others, and passes FATE then it should be OK to commit
@@ -335,15 +469,6 @@ later on.
 Also if you have doubts about splitting or not splitting, do not hesitate to
 ask/discuss it on the developer mailing list.
 
-@subheading Ask before you change the build system (configure, etc).
-Do not commit changes to the build system (Makefiles, configure script)
-which change behavior, defaults etc, without asking first. The same
-applies to compiler warning fixes, trivial looking fixes and to code
-maintained by other developers. We usually have a reason for doing things
-the way we do. Send your changes as patches to the ffmpeg-devel mailing
-list, and if the code maintainers say OK, you may commit. This does not
-apply to files you wrote and/or maintain.
-
 @subheading Cosmetic changes should be kept in separate patches.
 We refuse source indentation and other cosmetic changes if they are mixed
 with functional changes, such commits will be rejected and removed. Every
@@ -358,27 +483,15 @@ NOTE: If you had to put if()@{ .. @} over a large (> 5 lines) chunk of code,
 then either do NOT change the indentation of the inner part within (do not
 move it to the right)! or do so in a separate commit
 
-@subheading Commit messages should always be filled out properly.
-Always fill out the commit log message. Describe in a few lines what you
-changed and why. You can refer to mailing list postings if you fix a
-particular bug. Comments such as "fixed!" or "Changed it." are unacceptable.
-Recommended format:
-
-@example
-area changed: Short 1 line description
-
-details describing what and why and giving references.
-@end example
-
 @subheading Credit the author of the patch.
 Make sure the author of the commit is set correctly. (see git commit --author)
 If you apply a patch, send an
 answer to ffmpeg-devel (or wherever you got the patch from) saying that
 you applied the patch.
 
-@subheading Complex patches should refer to discussion surrounding them.
-When applying patches that have been discussed (at length) on the mailing
-list, reference the thread in the log message.
+@subheading Credit any researchers
+If a commit/patch fixes an issues found by some researcher, always credit the
+researcher in the commit message for finding/reporting the issue.
 
 @subheading Always wait long enough before pushing changes
 Do NOT commit to code actively maintained by others without permission.
@@ -396,11 +509,6 @@ Thus the remaining warnings can either be bugs or correct code.
 If it is a bug, the bug has to be fixed. If it is not, the code should
 be changed to not generate a warning unless that causes a slowdown
 or obfuscates the code.
-
-@subheading Check untrusted input properly.
-Never write to unallocated memory, never write over the end of arrays,
-always check values read from some untrusted source before using them
-as array index or other risky things.
 
 @section Library public interfaces
 Every library in FFmpeg provides a set of public APIs in its installed headers,
@@ -427,7 +535,7 @@ number remains unchanged.
 @subsection Adding new interfaces
 Any new public identifiers in installed headers are considered new API - this
 includes new functions, structs, macros, enum values, typedefs, new fields in
-existing functions, new installed headers, etc. Consider the following
+existing structs, new installed headers, etc. Consider the following
 guidelines when adding new APIs.
 
 @subsubheading Motivation
@@ -629,6 +737,11 @@ patch is inline or attached per mail.
 You can check @url{https://patchwork.ffmpeg.org}, if your patch does not show up, its mime type
 likely was wrong.
 
+@subheading How to setup git send-email?
+
+Please see @url{https://git-send-email.io/}.
+For gmail additionally see @url{https://shallowsky.com/blog/tech/email/gmail-app-passwds.html}.
+
 @subheading Sending patches from email clients
 Using @code{git send-email} might not be desirable for everyone. The
 following trick allows to send patches via email clients in a safe
@@ -673,7 +786,7 @@ number) in @file{libavcodec/version.h} or @file{libavformat/version.h}?
 Did you register it in @file{allcodecs.c} or @file{allformats.c}?
 
 @item
-Did you add the AVCodecID to @file{avcodec.h}?
+Did you add the AVCodecID to @file{codec_id.h}?
 When adding new codec IDs, also add an entry to the codec descriptor
 list in @file{libavcodec/codec_desc.c}.
 
@@ -688,7 +801,7 @@ already being compiled by some other rule, like a raw demuxer.
 
 @item
 Did you add an entry to the table of supported formats or codecs in
-@file{doc/general.texi}?
+@file{doc/general_contents.texi}?
 
 @item
 Did you add an entry in the Changelog?
@@ -811,12 +924,7 @@ filters, bitstream filters, parsers. If its not possible to do that, add
 an explanation why to your patchset, its ok to not test if theres a reason.
 
 @item
-If you added YASM code please check that things still work with --disable-yasm.
-
-@item
-Make sure you check the return values of function and return appropriate
-error codes. Especially memory allocation functions like @code{av_malloc()}
-are notoriously left unchecked, which is a serious problem.
+If you added NASM code please check that things still work with --disable-x86asm.
 
 @item
 Test your code with valgrind and or Address Sanitizer to ensure it's free
@@ -917,6 +1025,25 @@ FATE under the supervision of either the @strong{memcheck} or the
 In case you need finer control over how valgrind is invoked, use the
 @code{--target-exec='valgrind <your_custom_valgrind_options>} option in
 your configure line instead.
+
+@anchor{Maintenance}
+@chapter Maintenance process
+
+@anchor{MAINTAINERS}
+@section MAINTAINERS
+
+The developers maintaining each part of the codebase are listed in @file{MAINTAINERS}.
+Being listed in @file{MAINTAINERS}, gives one the right to have git write access to
+the specific repository.
+
+@anchor{Becoming a maintainer}
+@section Becoming a maintainer
+
+People add themselves to @file{MAINTAINERS} by sending a patch like any other code
+change. These get reviewed by the community like any other patch. It is expected
+that, if someone has an objection to a new maintainer, she is willing to object
+in public with her full name and is willing to take over maintainership for the area.
+
 
 @anchor{Release process}
 @chapter Release process

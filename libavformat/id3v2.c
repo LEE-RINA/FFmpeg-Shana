@@ -36,6 +36,7 @@
 #include "libavutil/bprint.h"
 #include "libavutil/dict.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "libavcodec/png.h"
 #include "avio_internal.h"
 #include "demux.h"
@@ -370,7 +371,7 @@ static void read_uslt(AVFormatContext *s, AVIOContext *pb, int taglen,
     int encoding;
     int ok = 0;
 
-    if (taglen < 1)
+    if (taglen < 4)
         goto error;
 
     encoding = avio_r8(pb);
@@ -1001,8 +1002,7 @@ static void id3v2_parse(AVIOContext *pb, AVDictionary **metadata,
                         t++;
                 }
 
-                ffio_init_context(&pb_local, buffer, b - buffer, 0, NULL, NULL, NULL,
-                                  NULL);
+                ffio_init_read_context(&pb_local, buffer, b - buffer);
                 tlen = b - buffer;
                 pbx  = &pb_local.pub; // read from sync buffer
             }
@@ -1038,7 +1038,7 @@ static void id3v2_parse(AVIOContext *pb, AVDictionary **metadata,
                         av_log(s, AV_LOG_ERROR, "Failed to uncompress tag: %d\n", err);
                         goto seek;
                     }
-                    ffio_init_context(&pb_local, uncompressed_buffer, dlen, 0, NULL, NULL, NULL, NULL);
+                    ffio_init_read_context(&pb_local, uncompressed_buffer, dlen);
                     tlen = dlen;
                     pbx = &pb_local.pub; // read from sync buffer
                 }

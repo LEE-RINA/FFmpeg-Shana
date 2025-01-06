@@ -26,6 +26,7 @@
  */
 
 #include <limits.h>
+#include "libavutil/mem.h"
 #include "avcodec.h"
 #include "bswapdsp.h"
 #include "bytestream.h"
@@ -280,7 +281,7 @@ static int decode_wave_header(AVCodecContext *avctx, const uint8_t *header,
                               int header_size)
 {
     int len, bps;
-    short wave_format;
+    uint16_t wave_format;
     GetByteContext gb;
 
     bytestream2_init(&gb, header, header_size);
@@ -581,10 +582,9 @@ static int shorten_decode_frame(AVCodecContext *avctx, AVFrame *frame,
             return ret;
 
         if (avpkt->size) {
-            int max_framesize;
+            int max_framesize = s->blocksize * s->channels * 8;
             void *tmp_ptr;
 
-            max_framesize = FFMAX(s->max_framesize, s->blocksize * s->channels * 8);
             tmp_ptr = av_fast_realloc(s->bitstream, &s->allocated_bitstream_size,
                                       max_framesize + AV_INPUT_BUFFER_PADDING_SIZE);
             if (!tmp_ptr) {
@@ -592,7 +592,10 @@ static int shorten_decode_frame(AVCodecContext *avctx, AVFrame *frame,
                 return AVERROR(ENOMEM);
             }
             s->bitstream = tmp_ptr;
-            s->max_framesize = max_framesize;
+            if (max_framesize > s->max_framesize)
+                memset(s->bitstream + s->max_framesize, 0, (max_framesize - s->max_framesize) +
+                                                            AV_INPUT_BUFFER_PADDING_SIZE);
+            s->max_framesize = FFMAX(s->max_framesize, max_framesize);
             *got_frame_ptr = 0;
             goto finish_frame;
         }

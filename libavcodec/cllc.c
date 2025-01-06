@@ -23,6 +23,7 @@
 #include <inttypes.h>
 
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "bswapdsp.h"
 #include "canopus.h"
 #include "get_bits.h"
@@ -77,7 +78,7 @@ static int read_code_table(CLLCContext *ctx, GetBitContext *gb, VLC *vlc)
         }
     }
 
-    return ff_init_vlc_from_lengths(vlc, VLC_BITS, count, bits, 1,
+    return ff_vlc_init_from_lengths(vlc, VLC_BITS, count, bits, 1,
                                     symbols, 1, 1, 0, 0, ctx->avctx);
 }
 
@@ -235,7 +236,7 @@ static int decode_argb_frame(CLLCContext *ctx, GetBitContext *gb, AVFrame *pic)
         ret = read_code_table(ctx, gb, &vlc[i]);
         if (ret < 0) {
             for (j = 0; j < i; j++)
-                ff_free_vlc(&vlc[j]);
+                ff_vlc_free(&vlc[j]);
 
             av_log(ctx->avctx, AV_LOG_ERROR,
                    "Could not read code table %d.\n", i);
@@ -251,7 +252,7 @@ static int decode_argb_frame(CLLCContext *ctx, GetBitContext *gb, AVFrame *pic)
     }
 
     for (i = 0; i < 4; i++)
-        ff_free_vlc(&vlc[i]);
+        ff_vlc_free(&vlc[i]);
 
     return 0;
 }
@@ -278,7 +279,7 @@ static int decode_rgb24_frame(CLLCContext *ctx, GetBitContext *gb, AVFrame *pic)
         ret = read_code_table(ctx, gb, &vlc[i]);
         if (ret < 0) {
             for (j = 0; j < i; j++)
-                ff_free_vlc(&vlc[j]);
+                ff_vlc_free(&vlc[j]);
 
             av_log(ctx->avctx, AV_LOG_ERROR,
                    "Could not read code table %d.\n", i);
@@ -295,7 +296,7 @@ static int decode_rgb24_frame(CLLCContext *ctx, GetBitContext *gb, AVFrame *pic)
     }
 
     for (i = 0; i < 3; i++)
-        ff_free_vlc(&vlc[i]);
+        ff_vlc_free(&vlc[i]);
 
     return 0;
 }
@@ -331,7 +332,7 @@ static int decode_yuv_frame(CLLCContext *ctx, GetBitContext *gb, AVFrame *pic)
         ret = read_code_table(ctx, gb, &vlc[i]);
         if (ret < 0) {
             for (j = 0; j < i; j++)
-                ff_free_vlc(&vlc[j]);
+                ff_vlc_free(&vlc[j]);
 
             av_log(ctx->avctx, AV_LOG_ERROR,
                    "Could not read code table %d.\n", i);
@@ -350,7 +351,7 @@ static int decode_yuv_frame(CLLCContext *ctx, GetBitContext *gb, AVFrame *pic)
     }
 
     for (i = 0; i < 2; i++)
-        ff_free_vlc(&vlc[i]);
+        ff_vlc_free(&vlc[i]);
 
     return 0;
 }
@@ -459,9 +460,6 @@ static int cllc_decode_frame(AVCodecContext *avctx, AVFrame *pic,
         av_log(avctx, AV_LOG_ERROR, "Unknown coding type: %d.\n", coding_type);
         return AVERROR_INVALIDDATA;
     }
-
-    pic->flags |= AV_FRAME_FLAG_KEY;
-    pic->pict_type = AV_PICTURE_TYPE_I;
 
     *got_picture_ptr = 1;
 

@@ -20,10 +20,10 @@
 
 #include "libavutil/random_seed.h"
 #include "libavutil/opt.h"
+#include "libavutil/vulkan_spirv.h"
 #include "vulkan_filter.h"
-#include "vulkan_spirv.h"
 #include "scale_eval.h"
-#include "internal.h"
+#include "filters.h"
 #include "colorspace.h"
 #include "video.h"
 
@@ -38,10 +38,9 @@ typedef struct ScaleVulkanContext {
     FFVulkanContext vkctx;
 
     int initialized;
-    FFVulkanPipeline pl;
     FFVkExecPool e;
     FFVkQueueFamilyCtx qf;
-    FFVkSPIRVShader shd;
+    FFVulkanShader shd;
     VkSampler sampler;
 
     /* Push constants / options */
@@ -118,7 +117,7 @@ static av_cold int init_filter(AVFilterContext *ctx, AVFrame *in)
     VkFilter sampler_mode;
     ScaleVulkanContext *s = ctx->priv;
     FFVulkanContext *vkctx = &s->vkctx;
-    FFVkSPIRVShader *shd = &s->shd;
+    FFVulkanShader *shd = &s->shd;
     FFVkSPIRVCompiler *spv;
     FFVulkanDescriptorSetBinding *desc;
 
@@ -146,18 +145,19 @@ static av_cold int init_filter(AVFilterContext *ctx, AVFrame *in)
     ff_vk_qf_init(vkctx, &s->qf, VK_QUEUE_COMPUTE_BIT);
     RET(ff_vk_exec_pool_init(vkctx, &s->qf, &s->e, s->qf.nb_queues*4, 0, 0, 0, NULL));
     RET(ff_vk_init_sampler(vkctx, &s->sampler, 0, sampler_mode));
-    RET(ff_vk_shader_init(&s->pl, &s->shd, "scale_compute",
-                          VK_SHADER_STAGE_COMPUTE_BIT, 0));
-
-    ff_vk_shader_set_compute_sizes(&s->shd, 32, 32, 1);
+    RET(ff_vk_shader_init(vkctx, &s->shd, "scale",
+                          VK_SHADER_STAGE_COMPUTE_BIT,
+                          NULL, 0,
+                          32, 32, 1,
+                          0));
 
     GLSLC(0, layout(push_constant, std430) uniform pushConstants {        );
     GLSLC(1,    mat4 yuv_matrix;                                          );
     GLSLC(0, };                                                           );
     GLSLC(0,                                                              );
 
-    ff_vk_add_push_constant(&s->pl, 0, sizeof(s->opts),
-                            VK_SHADER_STAGE_COMPUTE_BIT);
+    ff_vk_shader_add_push_const(&s->shd, 0, sizeof(s->opts),
+                                VK_SHADER_STAGE_COMPUTE_BIT);
 
     desc = (FFVulkanDescriptorSetBinding []) {
         {
@@ -171,7 +171,7 @@ static av_cold int init_filter(AVFilterContext *ctx, AVFrame *in)
         {
             .name       = "output_img",
             .type       = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            .mem_layout = ff_vk_shader_rep_fmt(s->vkctx.output_format),
+            .mem_layout = ff_vk_shader_rep_fmt(s->vkctx.output_format, FF_VK_REP_FLOAT),
             .mem_quali  = "writeonly",
             .dimensions = 2,
             .elems      = av_pix_fmt_count_planes(s->vkctx.output_format),
@@ -179,7 +179,7 @@ static av_cold int init_filter(AVFilterContext *ctx, AVFrame *in)
         },
     };
 
-    RET(ff_vk_pipeline_descriptor_set_add(vkctx, &s->pl, shd, desc, 2, 0, 0));
+    RET(ff_vk_shader_add_descriptor_set(vkctx, &s->shd, desc, 2, 0, 0));
 
     GLSLD(   scale_bilinear                                                  );
 
@@ -204,7 +204,7 @@ static av_cold int init_filter(AVFilterContext *ctx, AVFrame *in)
     GLSLC(0,                                                                 );
 
     if (s->vkctx.output_format == s->vkctx.input_format) {
-        for (int i = 0; i < desc[i].elems; i++) {
+        for (int i = 0; i < desc[1].elems; i++) {
             GLSLF(1,  size = imageSize(output_img[%i]);                    ,i);
             GLSLC(1,  if (IS_WITHIN(pos, size)) {                            );
             switch (s->scaler) {
@@ -247,16 +247,13 @@ static av_cold int init_filter(AVFilterContext *ctx, AVFrame *in)
         s->opts.yuv_matrix[3][3] = 1.0;
     }
 
-    RET(spv->compile_shader(spv, ctx, shd, &spv_data, &spv_len, "main",
+    RET(spv->compile_shader(vkctx, spv, shd, &spv_data, &spv_len, "main",
                             &spv_opaque));
-    RET(ff_vk_shader_create(vkctx, shd, spv_data, spv_len, "main"));
+    RET(ff_vk_shader_link(vkctx, shd, spv_data, spv_len, "main"));
 
-    RET(ff_vk_init_compute_pipeline(vkctx, &s->pl, shd));
-    RET(ff_vk_exec_pipeline_register(vkctx, &s->e, &s->pl));
+    RET(ff_vk_shader_register_exec(vkctx, &s->e, &s->shd));
 
     s->initialized = 1;
-
-    return 0;
 
 fail:
     if (spv_opaque)
@@ -283,7 +280,7 @@ static int scale_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
     if (!s->initialized)
         RET(init_filter(ctx, in));
 
-    RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->pl, out, in,
+    RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in,
                                     s->sampler, &s->opts, sizeof(s->opts)));
 
     err = av_frame_copy_props(out, in);
@@ -355,7 +352,6 @@ static void scale_vulkan_uninit(AVFilterContext *avctx)
     FFVulkanFunctions *vk = &vkctx->vkfn;
 
     ff_vk_exec_pool_free(vkctx, &s->e);
-    ff_vk_pipeline_free(vkctx, &s->pl);
     ff_vk_shader_free(vkctx, &s->shd);
 
     if (s->sampler)
@@ -372,17 +368,17 @@ static void scale_vulkan_uninit(AVFilterContext *avctx)
 static const AVOption scale_vulkan_options[] = {
     { "w", "Output video width",  OFFSET(w_expr), AV_OPT_TYPE_STRING, {.str = "iw"}, .flags = FLAGS },
     { "h", "Output video height", OFFSET(h_expr), AV_OPT_TYPE_STRING, {.str = "ih"}, .flags = FLAGS },
-    { "scaler", "Scaler function", OFFSET(scaler), AV_OPT_TYPE_INT, {.i64 = F_BILINEAR}, 0, F_NB, .flags = FLAGS, "scaler" },
-        { "bilinear", "Bilinear interpolation (fastest)", 0, AV_OPT_TYPE_CONST, {.i64 = F_BILINEAR}, 0, 0, .flags = FLAGS, "scaler" },
-        { "nearest", "Nearest (useful for pixel art)", 0, AV_OPT_TYPE_CONST, {.i64 = F_NEAREST}, 0, 0, .flags = FLAGS, "scaler" },
+    { "scaler", "Scaler function", OFFSET(scaler), AV_OPT_TYPE_INT, {.i64 = F_BILINEAR}, 0, F_NB, .flags = FLAGS, .unit = "scaler" },
+        { "bilinear", "Bilinear interpolation (fastest)", 0, AV_OPT_TYPE_CONST, {.i64 = F_BILINEAR}, 0, 0, .flags = FLAGS, .unit = "scaler" },
+        { "nearest", "Nearest (useful for pixel art)", 0, AV_OPT_TYPE_CONST, {.i64 = F_NEAREST}, 0, 0, .flags = FLAGS, .unit = "scaler" },
     { "format", "Output video format (software format of hardware frames)", OFFSET(out_format_string), AV_OPT_TYPE_STRING, .flags = FLAGS },
-    { "out_range", "Output colour range (from 0 to 2) (default 0)", OFFSET(out_range), AV_OPT_TYPE_INT, {.i64 = AVCOL_RANGE_UNSPECIFIED}, AVCOL_RANGE_UNSPECIFIED, AVCOL_RANGE_JPEG, .flags = FLAGS, "range" },
-        { "full", "Full range", 0, AV_OPT_TYPE_CONST, { .i64 = AVCOL_RANGE_JPEG }, 0, 0, FLAGS, "range" },
-        { "limited", "Limited range", 0, AV_OPT_TYPE_CONST, { .i64 = AVCOL_RANGE_MPEG }, 0, 0, FLAGS, "range" },
-        { "jpeg", "Full range", 0, AV_OPT_TYPE_CONST, { .i64 = AVCOL_RANGE_JPEG }, 0, 0, FLAGS, "range" },
-        { "mpeg", "Limited range", 0, AV_OPT_TYPE_CONST, { .i64 = AVCOL_RANGE_MPEG }, 0, 0, FLAGS, "range" },
-        { "tv", "Limited range", 0, AV_OPT_TYPE_CONST, { .i64 = AVCOL_RANGE_MPEG }, 0, 0, FLAGS, "range" },
-        { "pc", "Full range", 0, AV_OPT_TYPE_CONST, { .i64 = AVCOL_RANGE_JPEG }, 0, 0, FLAGS, "range" },
+    { "out_range", "Output colour range (from 0 to 2) (default 0)", OFFSET(out_range), AV_OPT_TYPE_INT, {.i64 = AVCOL_RANGE_UNSPECIFIED}, AVCOL_RANGE_UNSPECIFIED, AVCOL_RANGE_JPEG, .flags = FLAGS, .unit = "range" },
+        { "full", "Full range", 0, AV_OPT_TYPE_CONST, { .i64 = AVCOL_RANGE_JPEG }, 0, 0, FLAGS, .unit = "range" },
+        { "limited", "Limited range", 0, AV_OPT_TYPE_CONST, { .i64 = AVCOL_RANGE_MPEG }, 0, 0, FLAGS, .unit = "range" },
+        { "jpeg", "Full range", 0, AV_OPT_TYPE_CONST, { .i64 = AVCOL_RANGE_JPEG }, 0, 0, FLAGS, .unit = "range" },
+        { "mpeg", "Limited range", 0, AV_OPT_TYPE_CONST, { .i64 = AVCOL_RANGE_MPEG }, 0, 0, FLAGS, .unit = "range" },
+        { "tv", "Limited range", 0, AV_OPT_TYPE_CONST, { .i64 = AVCOL_RANGE_MPEG }, 0, 0, FLAGS, .unit = "range" },
+        { "pc", "Full range", 0, AV_OPT_TYPE_CONST, { .i64 = AVCOL_RANGE_JPEG }, 0, 0, FLAGS, .unit = "range" },
     { NULL },
 };
 

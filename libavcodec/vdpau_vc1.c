@@ -36,7 +36,7 @@ static int vdpau_vc1_start_frame(AVCodecContext *avctx,
 {
     VC1Context * const v  = avctx->priv_data;
     MpegEncContext * const s = &v->s;
-    Picture *pic          = s->current_picture_ptr;
+    MPVPicture *pic          = s->cur_pic.ptr;
     struct vdpau_picture_context *pic_ctx = pic->hwaccel_picture_private;
     VdpPictureInfoVC1 *info = &pic_ctx->info.vc1;
     VdpVideoSurface ref;
@@ -47,17 +47,17 @@ static int vdpau_vc1_start_frame(AVCodecContext *avctx,
 
     switch (s->pict_type) {
     case AV_PICTURE_TYPE_B:
-        if (s->next_picture_ptr) {
-        ref = ff_vdpau_get_surface_id(s->next_picture.f);
-        assert(ref != VDP_INVALID_HANDLE);
-        info->backward_reference = ref;
+        if (s->next_pic.ptr) {
+            ref = ff_vdpau_get_surface_id(s->next_pic.ptr->f);
+            assert(ref != VDP_INVALID_HANDLE);
+            info->backward_reference = ref;
         }
         /* fall-through */
     case AV_PICTURE_TYPE_P:
-        if (s->last_picture_ptr) {
-        ref = ff_vdpau_get_surface_id(s->last_picture.f);
-        assert(ref != VDP_INVALID_HANDLE);
-        info->forward_reference  = ref;
+        if (s->last_pic.ptr) {
+            ref = ff_vdpau_get_surface_id(s->last_pic.ptr->f);
+            assert(ref != VDP_INVALID_HANDLE);
+            info->forward_reference  = ref;
         }
     }
 
@@ -104,7 +104,7 @@ static int vdpau_vc1_decode_slice(AVCodecContext *avctx,
 {
     VC1Context * const v  = avctx->priv_data;
     MpegEncContext * const s = &v->s;
-    Picture *pic          = s->current_picture_ptr;
+    MPVPicture *pic          = s->cur_pic.ptr;
     struct vdpau_picture_context *pic_ctx = pic->hwaccel_picture_private;
     int val;
 
@@ -121,13 +121,13 @@ static int vdpau_vc1_init(AVCodecContext *avctx)
     VdpDecoderProfile profile;
 
     switch (avctx->profile) {
-    case FF_PROFILE_VC1_SIMPLE:
+    case AV_PROFILE_VC1_SIMPLE:
         profile = VDP_DECODER_PROFILE_VC1_SIMPLE;
         break;
-    case FF_PROFILE_VC1_MAIN:
+    case AV_PROFILE_VC1_MAIN:
         profile = VDP_DECODER_PROFILE_VC1_MAIN;
         break;
-    case FF_PROFILE_VC1_ADVANCED:
+    case AV_PROFILE_VC1_ADVANCED:
         profile = VDP_DECODER_PROFILE_VC1_ADVANCED;
         break;
     default:

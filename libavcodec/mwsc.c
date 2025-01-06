@@ -22,6 +22,7 @@
 
 #include <stdio.h>
 
+#include "libavutil/mem.h"
 #include "avcodec.h"
 #include "bytestream.h"
 #include "codec_internal.h"
@@ -50,6 +51,10 @@ static int rle_uncompress(GetByteContext *gb, PutByteContext *pb, GetByteContext
 
         if (run == 0) {
             run = bytestream2_get_le32(gb);
+
+            if (bytestream2_tell_p(pb) + width - w < run)
+                return AVERROR_INVALIDDATA;
+
             for (int j = 0; j < run; j++, w++) {
                 if (w == width) {
                     w = 0;
@@ -61,6 +66,10 @@ static int rle_uncompress(GetByteContext *gb, PutByteContext *pb, GetByteContext
             int pos = bytestream2_tell_p(pb);
 
             bytestream2_seek(gbp, pos, SEEK_SET);
+
+            if (pos + width - w < fill)
+                return AVERROR_INVALIDDATA;
+
             for (int j = 0; j < fill; j++, w++) {
                 if (w == width) {
                     w = 0;
@@ -72,6 +81,9 @@ static int rle_uncompress(GetByteContext *gb, PutByteContext *pb, GetByteContext
 
             intra = 0;
         } else {
+            if (bytestream2_tell_p(pb) + width - w < run)
+                return AVERROR_INVALIDDATA;
+
             for (int j = 0; j < run; j++, w++) {
                 if (w == width) {
                     w = 0;
@@ -127,8 +139,7 @@ static int decode_frame(AVCodecContext *avctx, AVFrame *frame,
 
     frame->pict_type = (frame->flags & AV_FRAME_FLAG_KEY) ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_P;
 
-    av_frame_unref(s->prev_frame);
-    if ((ret = av_frame_ref(s->prev_frame, frame)) < 0)
+    if ((ret = av_frame_replace(s->prev_frame, frame)) < 0)
         return ret;
 
     *got_frame = 1;

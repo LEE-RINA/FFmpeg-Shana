@@ -30,7 +30,7 @@
 
 #include "avfilter.h"
 #include "fflcms2.h"
-#include "internal.h"
+#include "filters.h"
 #include "video.h"
 
 typedef struct IccDetectContext {
@@ -93,7 +93,9 @@ static int iccdetect_filter_frame(AVFilterLink *inlink, AVFrame *frame)
     if (!profile)
         return AVERROR_INVALIDDATA;
 
-    ret = ff_icc_profile_read_primaries(&s->icc, profile, &coeffs);
+    ret = ff_icc_profile_sanitize(&s->icc, profile);
+    if (!ret)
+        ret = ff_icc_profile_read_primaries(&s->icc, profile, &coeffs);
     if (!ret)
         ret = ff_icc_profile_detect_transfer(&s->icc, profile, &s->profile_trc);
     cmsCloseProfile(profile);

@@ -29,7 +29,8 @@
 #include "libavutil/opt.h"
 
 #include "avfilter.h"
-#include "internal.h"
+#include "avfilter_internal.h"
+#include "filters.h"
 
 #define WHITESPACES " \n\t\r"
 
@@ -626,7 +627,8 @@ int avfilter_graph_segment_init(AVFilterGraphSegment *seg, int flags)
 
             if (p->filter_name)
                 return fail_creation_pending(seg, p->filter_name, __func__);
-            if (!p->filter || p->filter->internal->initialized)
+            if (!p->filter ||
+                (fffilterctx(p->filter)->state_flags & AV_CLASS_STATE_INITIALIZED))
                 continue;
 
             ret = avfilter_init_dict(p->filter, NULL);

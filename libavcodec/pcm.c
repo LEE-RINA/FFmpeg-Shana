@@ -28,6 +28,7 @@
 #include "config_components.h"
 #include "libavutil/attributes.h"
 #include "libavutil/float_dsp.h"
+#include "libavutil/mem.h"
 #include "libavutil/reverse.h"
 #include "libavutil/thread.h"
 #include "avcodec.h"
@@ -538,7 +539,6 @@ static int pcm_decode_frame(AVCodecContext *avctx, AVFrame *frame,
         s->vector_fmul_scalar((float *)frame->extended_data[0],
                               (const float *)frame->extended_data[0],
                               s->scale, FFALIGN(frame->nb_samples * avctx->ch_layout.nb_channels, 4));
-        emms_c();
     }
 
     *got_frame_ptr = 1;

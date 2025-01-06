@@ -19,11 +19,12 @@
  */
 
 #include "libavutil/imgutils.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
+#include "filters.h"
 #include "framesync.h"
-#include "internal.h"
 #include "video.h"
 
 typedef struct VarBlurContext {
@@ -45,7 +46,7 @@ typedef struct VarBlurContext {
     void (*compute_sat)(const uint8_t *ssrc,
                         int linesize,
                         int w, int h,
-                        const uint8_t *dstp,
+                        uint8_t *dstp,
                         int dst_linesize);
 
     int (*blur_plane)(AVFilterContext *ctx,
@@ -98,7 +99,7 @@ static const enum AVPixelFormat pix_fmts[] = {
 static void compute_sat##depth(const uint8_t *ssrc,  \
                                int linesize,         \
                                int w, int h,         \
-                               const uint8_t *dstp,  \
+                               uint8_t *dstp,        \
                                int dst_linesize)     \
 {                                                    \
     const type *src = (const type *)ssrc;            \
@@ -319,6 +320,8 @@ static int config_output(AVFilterLink *outlink)
     AVFilterContext *ctx = outlink->src;
     AVFilterLink *inlink = ctx->inputs[0];
     AVFilterLink *radiuslink = ctx->inputs[1];
+    FilterLink *il = ff_filter_link(inlink);
+    FilterLink *ol = ff_filter_link(outlink);
     VarBlurContext *s = ctx->priv;
     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(outlink->format);
     int ret;
@@ -336,7 +339,7 @@ static int config_output(AVFilterLink *outlink)
     outlink->h = inlink->h;
     outlink->time_base = inlink->time_base;
     outlink->sample_aspect_ratio = inlink->sample_aspect_ratio;
-    outlink->frame_rate = inlink->frame_rate;
+    ol->frame_rate = il->frame_rate;
 
     s->depth = desc->comp[0].depth;
     s->blur_plane = s->depth <= 8 ? blur_plane8 : s->depth <= 16 ? blur_plane16 : blur_plane32;

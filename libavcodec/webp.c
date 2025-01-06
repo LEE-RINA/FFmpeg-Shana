@@ -41,6 +41,7 @@
  */
 
 #include "libavutil/imgutils.h"
+#include "libavutil/mem.h"
 
 #define BITSTREAM_READER_LE
 #include "avcodec.h"
@@ -233,7 +234,7 @@ static void image_ctx_free(ImageContext *img)
     if (img->huffman_groups) {
         for (i = 0; i < img->nb_huffman_groups; i++) {
             for (j = 0; j < HUFFMAN_CODES_PER_META_CODE; j++)
-                ff_free_vlc(&img->huffman_groups[i * HUFFMAN_CODES_PER_META_CODE + j].vlc);
+                ff_vlc_free(&img->huffman_groups[i * HUFFMAN_CODES_PER_META_CODE + j].vlc);
         }
         av_free(img->huffman_groups);
     }
@@ -300,9 +301,9 @@ static int huff_reader_build_canonical(HuffReader *r, const uint8_t *code_length
         return AVERROR_INVALIDDATA;
     }
 
-    ret = init_vlc(&r->vlc, 8, alphabet_size,
+    ret = vlc_init(&r->vlc, 8, alphabet_size,
                    code_lengths, sizeof(*code_lengths), sizeof(*code_lengths),
-                   codes, sizeof(*codes), sizeof(*codes), INIT_VLC_OUTPUT_LE);
+                   codes, sizeof(*codes), sizeof(*codes), VLC_INIT_OUTPUT_LE);
     if (ret < 0) {
         av_free(codes);
         return ret;
@@ -415,7 +416,7 @@ static int read_huffman_code_normal(WebPContext *s, HuffReader *hc,
     ret = huff_reader_build_canonical(hc, code_lengths, alphabet_size);
 
 finish:
-    ff_free_vlc(&code_len_hc.vlc);
+    ff_vlc_free(&code_len_hc.vlc);
     av_free(code_lengths);
     return ret;
 }
@@ -702,6 +703,9 @@ static int decode_entropy_coded_image(WebPContext *s, enum ImageRole role,
             }
             ref_x = FFMAX(0, ref_x);
             ref_y = FFMAX(0, ref_y);
+
+            if (ref_y == y && ref_x >= x)
+                return AVERROR_INVALIDDATA;
 
             /* copy pixels
              * source and dest regions can overlap and wrap lines, so just
@@ -1500,11 +1504,16 @@ exif_end:
                        "VP8X header\n");
 
             s->has_iccp = 1;
-            sd = av_frame_new_side_data(p, AV_FRAME_DATA_ICC_PROFILE, chunk_size);
-            if (!sd)
-                return AVERROR(ENOMEM);
 
-            bytestream2_get_buffer(&gb, sd->data, chunk_size);
+            ret = ff_frame_new_side_data(avctx, p, AV_FRAME_DATA_ICC_PROFILE, chunk_size, &sd);
+            if (ret < 0)
+                return ret;
+
+            if (sd) {
+                bytestream2_get_buffer(&gb, sd->data, chunk_size);
+            } else {
+                bytestream2_skip(&gb, chunk_size);
+            }
             break;
         }
         case MKTAG('A', 'N', 'I', 'M'):
@@ -1565,5 +1574,6 @@ const FFCodec ff_webp_decoder = {
     FF_CODEC_DECODE_CB(webp_decode_frame),
     .close          = webp_decode_close,
     .p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS,
-    .caps_internal  = FF_CODEC_CAP_ICC_PROFILES,
+    .caps_internal  = FF_CODEC_CAP_ICC_PROFILES |
+                      FF_CODEC_CAP_USES_PROGRESSFRAMES,
 };

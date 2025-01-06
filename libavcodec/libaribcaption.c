@@ -25,6 +25,7 @@
 #include "libavcodec/ass.h"
 #include "libavutil/avstring.h"
 #include "libavutil/avutil.h"
+#include "libavutil/mem.h"
 #include "libavutil/thread.h"
 #include "libavutil/log.h"
 #include "libavutil/opt.h"
@@ -68,14 +69,16 @@ typedef struct ARIBCaptionContext {
 
     int subtitle_type;
     int encoding_scheme;
-    bool ass_single_rect;
+    int ass_single_rect;
     char *font;
-    bool replace_fullwidth_ascii;
-    bool force_stroke_text;
-    bool ignore_background;
-    bool ignore_ruby;
+    int force_stroke_text;
+    int ignore_background;
+    int ignore_ruby;
     float stroke_width;
-    bool replace_drcs;
+    int replace_drcs;
+    int replace_msz_ascii;
+    int replace_msz_japanese;
+    int replace_msz_glyph;
 
     int64_t pts;
     AVRational time_base;
@@ -452,7 +455,7 @@ static int aribcaption_trans_bitmap_subtitle(ARIBCaptionContext *ctx)
             goto fail;
         }
 
-        if (ctx->avctx->profile == FF_PROFILE_ARIB_PROFILE_C) {
+        if (ctx->avctx->profile == AV_PROFILE_ARIB_PROFILE_C) {
             /* ARIB TR-B14 version 3.8 Fascicle 1-(2/2) Volume 3 [Section 4] */
             /* No position information is provided for profile C */
             rect->x = (ctx->frame_width - rect->w) / 2;
@@ -594,7 +597,7 @@ static int aribcaption_trans_ass_subtitle(ARIBCaptionContext *ctx)
 
     /* ARIB TR-B14 version 3.8 Fascicle 1-(2/2) Volume 3 [Section 4] */
     /* No position information is provided for profile C */
-    if (ctx->avctx->profile == FF_PROFILE_ARIB_PROFILE_C)
+    if (ctx->avctx->profile == AV_PROFILE_ARIB_PROFILE_C)
         single_rect = true;
 
     sub->format = 1; /* text */
@@ -606,7 +609,7 @@ static int aribcaption_trans_ass_subtitle(ARIBCaptionContext *ctx)
 
     av_bprint_init(&buf, ARIBC_BPRINT_SIZE_INIT, ARIBC_BPRINT_SIZE_MAX);
 
-    if (single_rect && ctx->avctx->profile != FF_PROFILE_ARIB_PROFILE_C) {
+    if (single_rect && ctx->avctx->profile != AV_PROFILE_ARIB_PROFILE_C) {
         int x, y, rx, ry;
         x = ctx->plane_width;
         y = ctx->plane_height;
@@ -660,7 +663,7 @@ static int aribcaption_trans_ass_subtitle(ARIBCaptionContext *ctx)
         for (int j = 0; j < region->char_count; j++) {
             aribcc_caption_char_t *ch = &region->chars[j];
 
-            if (ctx->avctx->profile != FF_PROFILE_ARIB_PROFILE_C) {
+            if (ctx->avctx->profile != AV_PROFILE_ARIB_PROFILE_C) {
                 if (ch->char_horizontal_spacing != char_horizontal_spacing) {
                     av_bprintf(&buf, "{\\fsp%d}", (region->is_ruby) ?
                                      ch->char_horizontal_spacing / 2 :
@@ -960,14 +963,14 @@ static int aribcaption_init(AVCodecContext *avctx)
     ctx->avctx = avctx;
 
     switch (avctx->profile) {
-    case FF_PROFILE_ARIB_PROFILE_A:
+    case AV_PROFILE_ARIB_PROFILE_A:
         profile = ARIBCC_PROFILE_A;
         /* assume 960x540 at initial state */
         ctx->plane_width = 960;
         ctx->plane_height = 540;
         ctx->font_size = 36;
         break;
-    case FF_PROFILE_ARIB_PROFILE_C:
+    case AV_PROFILE_ARIB_PROFILE_C:
         profile = ARIBCC_PROFILE_C;
         ctx->plane_width = 320;
         ctx->plane_height = 180;
@@ -1004,7 +1007,9 @@ static int aribcaption_init(AVCodecContext *avctx)
         return AVERROR_EXTERNAL;
     }
     aribcc_decoder_set_replace_msz_fullwidth_ascii(ctx->decoder,
-                                                   ctx->replace_fullwidth_ascii);
+                                                   ctx->replace_msz_ascii);
+    aribcc_decoder_set_replace_msz_fullwidth_japanese(ctx->decoder,
+                                                      ctx->replace_msz_japanese);
 
     /* Similar behavior as ffmpeg tool to set canvas size */
     if (ctx->canvas_width > 0 && ctx->canvas_height > 0 &&
@@ -1057,6 +1062,8 @@ static int aribcaption_init(AVCodecContext *avctx)
         aribcc_renderer_set_force_no_background(ctx->renderer, ctx->ignore_background);
         aribcc_renderer_set_force_no_ruby(ctx->renderer, ctx->ignore_ruby);
         aribcc_renderer_set_stroke_width(ctx->renderer, ctx->stroke_width);
+        aribcc_renderer_set_replace_msz_halfwidth_glyph(ctx->renderer,
+                                                        ctx->replace_msz_glyph);
         if (ctx->font) {
             int is_nomem = 0;
             size_t count = 0;
@@ -1108,7 +1115,7 @@ static int aribcaption_init(AVCodecContext *avctx)
 static const AVOption options[] = {
     { "sub_type", "subtitle rendering type",
       OFFSET(subtitle_type), AV_OPT_TYPE_INT,
-      { .i64 = SUBTITLE_ASS }, SUBTITLE_NONE, SUBTITLE_ASS, SD, "type" },
+      { .i64 = SUBTITLE_ASS }, SUBTITLE_NONE, SUBTITLE_ASS, SD, .unit = "type" },
     { "none",   "do nothing", 0, AV_OPT_TYPE_CONST,
       { .i64 = SUBTITLE_NONE }, .flags = SD, .unit = "type" },
     { "bitmap", "bitmap rendering", 0, AV_OPT_TYPE_CONST,
@@ -1119,7 +1126,7 @@ static const AVOption options[] = {
       { .i64 = SUBTITLE_ASS }, .flags = SD, .unit = "type" },
     { "caption_encoding", "encoding scheme of subtitle text",
       OFFSET(encoding_scheme), AV_OPT_TYPE_INT, { .i64 = ARIBCC_ENCODING_SCHEME_AUTO },
-      ARIBCC_ENCODING_SCHEME_AUTO, ARIBCC_ENCODING_SCHEME_ABNT_NBR_15606_1_LATIN, SD, "encoding" },
+      ARIBCC_ENCODING_SCHEME_AUTO, ARIBCC_ENCODING_SCHEME_ABNT_NBR_15606_1_LATIN, SD, .unit = "encoding" },
     { "auto",   "automatically detect encoding scheme", 0, AV_OPT_TYPE_CONST,
       { .i64 = ARIBCC_ENCODING_SCHEME_AUTO }, .flags = SD, .unit = "encoding" },
     { "jis",    "8bit-char JIS encoding (Japanese ISDB captions)", 0, AV_OPT_TYPE_CONST,
@@ -1132,8 +1139,6 @@ static const AVOption options[] = {
       OFFSET(ass_single_rect), AV_OPT_TYPE_BOOL, { .i64 = ASS_SINGLE_RECT }, 0, 1, SD },
     { "font", "comma-separated font family [ass, bitmap]",
       OFFSET(font), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, SD },
-    { "replace_fullwidth_ascii", "replace MSZ fullwidth alphanumerics with halfwidth alphanumerics [ass, bitmap]",
-      OFFSET(replace_fullwidth_ascii), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, SD },
     { "force_outline_text", "always render characters with outline [(ass), bitmap]",
       OFFSET(force_stroke_text), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, SD },
     { "ignore_background", "ignore rendering caption background [(ass), bitmap]",
@@ -1144,6 +1149,12 @@ static const AVOption options[] = {
       OFFSET(stroke_width), AV_OPT_TYPE_FLOAT, { .dbl = 1.5 }, 0.0, 3.0, SD },
     { "replace_drcs", "replace known DRCS [bitmap]",
       OFFSET(replace_drcs), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, SD },
+    { "replace_msz_ascii", "replace MSZ fullwidth alphanumerics with halfwidth alphanumerics [ass, bitmap]",
+      OFFSET(replace_msz_ascii), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, SD },
+    { "replace_msz_japanese", "replace MSZ fullwidth Japanese with halfwidth [ass, bitmap]",
+      OFFSET(replace_msz_japanese), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, SD },
+    { "replace_msz_glyph", "replace MSZ characters with halfwidth glyphs [bitmap]",
+      OFFSET(replace_msz_glyph), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, SD },
     {"canvas_size", "set input video size (WxH or abbreviation) [bitmap]",
       OFFSET(canvas_width), AV_OPT_TYPE_IMAGE_SIZE, { .str = NULL }, 0, INT_MAX, SD },
     { NULL }

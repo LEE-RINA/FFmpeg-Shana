@@ -36,13 +36,16 @@
 
 #include "avcodec.h"
 #include "bswapdsp.h"
+#include "bytestream.h"
 #include "codec_internal.h"
 #include "get_bits.h"
 #include "huffyuv.h"
 #include "huffyuvdsp.h"
 #include "lossless_videodsp.h"
 #include "thread.h"
+#include "libavutil/emms.h"
 #include "libavutil/imgutils.h"
+#include "libavutil/mem.h"
 #include "libavutil/pixdesc.h"
 
 #define VLC_BITS 12
@@ -68,8 +71,10 @@ typedef struct HYuvDecContext {
     int context;
     int last_slice_end;
 
-    uint8_t *temp[3];
-    uint16_t *temp16[3];                    ///< identical to temp but 16bit type
+    union {
+        uint8_t  *temp[3];
+        uint16_t *temp16[3];
+    };
     uint8_t len[4][MAX_VLC_N];
     uint32_t bits[4][MAX_VLC_N];
     uint32_t pix_bgr_map[1<<VLC_BITS];
@@ -82,21 +87,17 @@ typedef struct HYuvDecContext {
 } HYuvDecContext;
 
 
-#define classic_shift_luma_table_size 42
-static const unsigned char classic_shift_luma[classic_shift_luma_table_size + AV_INPUT_BUFFER_PADDING_SIZE] = {
+static const uint8_t classic_shift_luma[] = {
     34, 36, 35, 69, 135, 232,   9, 16, 10, 24,  11,  23,  12,  16, 13, 10,
     14,  8, 15,  8,  16,   8,  17, 20, 16, 10, 207, 206, 205, 236, 11,  8,
-    10, 21,  9, 23,   8,   8, 199, 70, 69, 68,   0,
-  0,0,0,0,0,0,0,0,
+    10, 21,  9, 23,   8,   8, 199, 70, 69, 68,
 };
 
-#define classic_shift_chroma_table_size 59
-static const unsigned char classic_shift_chroma[classic_shift_chroma_table_size + AV_INPUT_BUFFER_PADDING_SIZE] = {
+static const uint8_t classic_shift_chroma[] = {
     66, 36,  37,  38, 39, 40,  41,  75,  76,  77, 110, 239, 144, 81, 82,  83,
     84, 85, 118, 183, 56, 57,  88,  89,  56,  89, 154,  57,  58, 57, 26, 141,
     57, 56,  58,  57, 58, 57, 184, 119, 214, 245, 116,  83,  82, 49, 80,  79,
-    78, 77,  44,  75, 41, 40,  39,  38,  37,  36,  34,  0,
-  0,0,0,0,0,0,0,0,
+    78, 77,  44,  75, 41, 40,  39,  38,  37,  36,  34,
 };
 
 static const unsigned char classic_add_luma[256] = {
@@ -137,23 +138,30 @@ static const unsigned char classic_add_chroma[256] = {
       6,  12,   8,  10,   7,   9,   6,   4,   6,   2,   2,   3,   3,   3,   3,   2,
 };
 
-static int read_len_table(uint8_t *dst, GetBitContext *gb, int n)
+static int read_len_table(uint8_t *dst, GetByteContext *gb, int n)
 {
     int i, val, repeat;
 
     for (i = 0; i < n;) {
-        repeat = get_bits(gb, 3);
-        val    = get_bits(gb, 5);
-        if (repeat == 0)
-            repeat = get_bits(gb, 8);
-        if (i + repeat > n || get_bits_left(gb) < 0) {
-            av_log(NULL, AV_LOG_ERROR, "Error reading huffman table\n");
-            return AVERROR_INVALIDDATA;
+        if (bytestream2_get_bytes_left(gb) <= 0)
+            goto error;
+        repeat = bytestream2_peek_byteu(gb) >> 5;
+        val    = bytestream2_get_byteu(gb) & 0x1F;
+        if (repeat == 0) {
+            if (bytestream2_get_bytes_left(gb) <= 0)
+                goto error;
+            repeat = bytestream2_get_byteu(gb);
         }
+        if (i + repeat > n)
+            goto error;
         while (repeat--)
             dst[i++] = val;
     }
     return 0;
+
+error:
+    av_log(NULL, AV_LOG_ERROR, "Error reading huffman table\n");
+    return AVERROR_INVALIDDATA;
 }
 
 static int generate_joint_tables(HYuvDecContext *s)
@@ -168,8 +176,9 @@ static int generate_joint_tables(HYuvDecContext *s)
     len = (uint8_t *)(bits + (1 << VLC_BITS));
 
     if (s->bitstream_bpp < 24 || s->version > 2) {
+        int count = 1 + s->alpha + 2 * s->chroma;
         int p, i, y, u;
-        for (p = 0; p < 4; p++) {
+        for (p = 0; p < count; p++) {
             int p0 = s->version > 2 ? p : 0;
             for (i = y = 0; y < s->vlc_n; y++) {
                 int len0  = s->len[p0][y];
@@ -191,8 +200,8 @@ static int generate_joint_tables(HYuvDecContext *s)
                         i++;
                 }
             }
-            ff_free_vlc(&s->vlc[4 + p]);
-            if ((ret = ff_init_vlc_sparse(&s->vlc[4 + p], VLC_BITS, i, len, 1, 1,
+            ff_vlc_free(&s->vlc[4 + p]);
+            if ((ret = ff_vlc_init_sparse(&s->vlc[4 + p], VLC_BITS, i, len, 1, 1,
                                           bits, 2, 2, symbols, 2, 2, 0)) < 0)
                 goto out;
         }
@@ -235,8 +244,8 @@ static int generate_joint_tables(HYuvDecContext *s)
                 }
             }
         }
-        ff_free_vlc(&s->vlc[4]);
-        if ((ret = init_vlc(&s->vlc[4], VLC_BITS, i, len, 1, 1,
+        ff_vlc_free(&s->vlc[4]);
+        if ((ret = vlc_init(&s->vlc[4], VLC_BITS, i, len, 1, 1,
                             bits, 2, 2, 0)) < 0)
             goto out;
     }
@@ -248,12 +257,11 @@ out:
 
 static int read_huffman_tables(HYuvDecContext *s, const uint8_t *src, int length)
 {
-    GetBitContext gb;
+    GetByteContext gb;
     int i, ret;
     int count = 3;
 
-    if ((ret = init_get_bits(&gb, src, length * 8)) < 0)
-        return ret;
+    bytestream2_init(&gb, src, length);
 
     if (s->version > 2)
         count = 1 + s->alpha + 2*s->chroma;
@@ -263,8 +271,8 @@ static int read_huffman_tables(HYuvDecContext *s, const uint8_t *src, int length
             return ret;
         if ((ret = ff_huffyuv_generate_bits_table(s->bits[i], s->len[i], s->vlc_n)) < 0)
             return ret;
-        ff_free_vlc(&s->vlc[i]);
-        if ((ret = init_vlc(&s->vlc[i], VLC_BITS, s->vlc_n, s->len[i], 1, 1,
+        ff_vlc_free(&s->vlc[i]);
+        if ((ret = vlc_init(&s->vlc[i], VLC_BITS, s->vlc_n, s->len[i], 1, 1,
                            s->bits[i], 4, 4, 0)) < 0)
             return ret;
     }
@@ -272,23 +280,23 @@ static int read_huffman_tables(HYuvDecContext *s, const uint8_t *src, int length
     if ((ret = generate_joint_tables(s)) < 0)
         return ret;
 
-    return (get_bits_count(&gb) + 7) / 8;
+    return bytestream2_tell(&gb);
 }
 
 static int read_old_huffman_tables(HYuvDecContext *s)
 {
-    GetBitContext gb;
+    GetByteContext gb;
     int i, ret;
 
-    init_get_bits(&gb, classic_shift_luma,
-                  classic_shift_luma_table_size * 8);
-    if ((ret = read_len_table(s->len[0], &gb, 256)) < 0)
-        return ret;
+    bytestream2_init(&gb, classic_shift_luma,
+                     sizeof(classic_shift_luma));
+    ret = read_len_table(s->len[0], &gb, 256);
+    av_assert1(ret >= 0);
 
-    init_get_bits(&gb, classic_shift_chroma,
-                  classic_shift_chroma_table_size * 8);
-    if ((ret = read_len_table(s->len[1], &gb, 256)) < 0)
-        return ret;
+    bytestream2_init(&gb, classic_shift_chroma,
+                     sizeof(classic_shift_chroma));
+    ret = read_len_table(s->len[1], &gb, 256);
+    av_assert1(ret >= 0);
 
     for (i = 0; i < 256; i++)
         s->bits[0][i] = classic_add_luma[i];
@@ -303,8 +311,8 @@ static int read_old_huffman_tables(HYuvDecContext *s)
     memcpy(s->len[2], s->len[1], 256 * sizeof(uint8_t));
 
     for (i = 0; i < 4; i++) {
-        ff_free_vlc(&s->vlc[i]);
-        if ((ret = init_vlc(&s->vlc[i], VLC_BITS, 256, s->len[i], 1, 1,
+        ff_vlc_free(&s->vlc[i]);
+        if ((ret = vlc_init(&s->vlc[i], VLC_BITS, 256, s->len[i], 1, 1,
                             s->bits[i], 4, 4, 0)) < 0)
             return ret;
     }
@@ -320,11 +328,13 @@ static av_cold int decode_end(AVCodecContext *avctx)
     HYuvDecContext *s = avctx->priv_data;
     int i;
 
-    ff_huffyuv_common_end(s->temp, s->temp16);
+    for (int i = 0; i < 3; i++)
+        av_freep(&s->temp[i]);
+
     av_freep(&s->bitstream_buffer);
 
     for (i = 0; i < 8; i++)
-        ff_free_vlc(&s->vlc[i]);
+        ff_vlc_free(&s->vlc[i]);
 
     return 0;
 }
@@ -343,7 +353,6 @@ static av_cold int decode_init(AVCodecContext *avctx)
     ff_bswapdsp_init(&s->bdsp);
     ff_huffyuvdsp_init(&s->hdsp, avctx->pix_fmt);
     ff_llviddsp_init(&s->llviddsp);
-    memset(s->vlc, 0, 4 * sizeof(VLC));
 
     s->interlaced = avctx->height > 288;
     s->bgr32      = 1;
@@ -597,8 +606,11 @@ static av_cold int decode_init(AVCodecContext *avctx)
         return AVERROR_INVALIDDATA;
     }
 
-    if ((ret = ff_huffyuv_alloc_temp(s->temp, s->temp16, avctx->width)) < 0)
-        return ret;
+    for (int i = 0; i < 3; i++) {
+        s->temp[i] = av_malloc(4 * avctx->width + 16);
+        if (!s->temp[i])
+            return AVERROR(ENOMEM);
+    }
 
     return 0;
 }
@@ -755,7 +767,7 @@ static void decode_plane_bitstream(HYuvDecContext *s, int width, int plane)
             }
         }
         if( width&1 && get_bits_left(&s->gb)>0 ) {
-            int dst = get_vlc2(&s->gb, s->vlc[plane].table, VLC_BITS, 3)<<2;
+            int dst = (unsigned)get_vlc2(&s->gb, s->vlc[plane].table, VLC_BITS, 3)<<2;
             s->temp16[0][width-1] = dst + get_bits(&s->gb, 2);
         }
     }

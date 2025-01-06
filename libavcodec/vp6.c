@@ -68,10 +68,11 @@ static int vp6_parse_header(VP56Context *s, const uint8_t *buf, int buf_size)
         if (sub_version > 8)
             return AVERROR_INVALIDDATA;
         s->filter_header = buf[1] & 0x06;
-        if (buf[1] & 1) {
-            avpriv_report_missing_feature(s->avctx, "Interlacing");
-            return AVERROR_PATCHWELCOME;
-        }
+        s->interlaced = buf[1] & 1;
+        if (s->interlaced)
+            s->def_coeff_reorder = vp6_il_coeff_reorder;
+        else
+            s->def_coeff_reorder = vp6_def_coeff_reorder;
         if (separated_coeff || !s->filter_header) {
             coeff_offset = AV_RB16(buf+2) - 2;
             buf += 2;
@@ -228,7 +229,7 @@ static void vp6_default_models_init(VP56Context *s)
     memcpy(model->vector_fdv, vp6_def_fdv_vector_model, sizeof(model->vector_fdv));
     memcpy(model->vector_pdv, vp6_def_pdv_vector_model, sizeof(model->vector_pdv));
     memcpy(model->coeff_runv, vp6_def_runv_coeff_model, sizeof(model->coeff_runv));
-    memcpy(model->coeff_reorder, vp6_def_coeff_reorder, sizeof(model->coeff_reorder));
+    memcpy(model->coeff_reorder, s->def_coeff_reorder, sizeof(model->coeff_reorder));
 
     vp6_coeff_order_table_init(s);
 }
@@ -279,7 +280,7 @@ static int vp6_build_huff_tree(VP56Context *s, uint8_t coeff_model[],
         nodes[map[2*i+1]].count = b + !b;
     }
 
-    ff_free_vlc(vlc);
+    ff_vlc_free(vlc);
     /* then build the huffman tree according to probabilities */
     return ff_huff_build_tree(s->avctx, vlc, size, FF_HUFFMAN_BITS,
                               nodes, vp6_huff_cmp,
@@ -708,11 +709,11 @@ static av_cold void vp6_decode_free_context(VP56Context *s)
     ff_vp56_free_context(s);
 
     for (pt=0; pt<2; pt++) {
-        ff_free_vlc(&s->dccv_vlc[pt]);
-        ff_free_vlc(&s->runv_vlc[pt]);
+        ff_vlc_free(&s->dccv_vlc[pt]);
+        ff_vlc_free(&s->runv_vlc[pt]);
         for (ct=0; ct<3; ct++)
             for (cg=0; cg<6; cg++)
-                ff_free_vlc(&s->ract_vlc[pt][ct][cg]);
+                ff_vlc_free(&s->ract_vlc[pt][ct][cg]);
     }
 }
 

@@ -53,8 +53,8 @@ typedef struct SCDetContext {
 static const AVOption scdet_options[] = {
     { "threshold",   "set scene change detect threshold",        OFFSET(threshold),  AV_OPT_TYPE_DOUBLE,   {.dbl = 10.},     0,  100., V|F },
     { "t",           "set scene change detect threshold",        OFFSET(threshold),  AV_OPT_TYPE_DOUBLE,   {.dbl = 10.},     0,  100., V|F },
-    { "sc_pass",     "Set the flag to pass scene change frames", OFFSET(sc_pass),    AV_OPT_TYPE_BOOL,     {.dbl =  0  },    0,    1,  V|F },
-    { "s",           "Set the flag to pass scene change frames", OFFSET(sc_pass),    AV_OPT_TYPE_BOOL,     {.dbl =  0  },    0,    1,  V|F },
+    { "sc_pass",     "Set the flag to pass scene change frames", OFFSET(sc_pass),    AV_OPT_TYPE_BOOL,     {.i64 = 0  },     0,    1,  V|F },
+    { "s",           "Set the flag to pass scene change frames", OFFSET(sc_pass),    AV_OPT_TYPE_BOOL,     {.i64 = 0  },     0,    1,  V|F },
     {NULL}
 };
 
@@ -126,7 +126,6 @@ static double get_scene_score(AVFilterContext *ctx, AVFrame *frame)
             count += s->width[plane] * s->height[plane];
         }
 
-        emms_c();
         mafd = (double)sad * 100. / count / (1ULL << s->bitdepth);
         diff = fabs(mafd - s->prev_mafd);
         ret  = av_clipf(FFMIN(mafd, diff), 0, 100.);

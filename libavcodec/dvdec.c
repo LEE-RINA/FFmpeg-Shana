@@ -36,6 +36,7 @@
  */
 
 #include "libavutil/avassert.h"
+#include "libavutil/emms.h"
 #include "libavutil/internal.h"
 #include "libavutil/mem_internal.h"
 #include "libavutil/thread.h"
@@ -174,9 +175,9 @@ static av_cold void dv_init_static(void)
 
     /* NOTE: as a trick, we use the fact the no codes are unused
      * to accelerate the parsing of partial codes */
-    ff_init_vlc_from_lengths(&dv_vlc, TEX_VLC_BITS, j,
+    ff_vlc_init_from_lengths(&dv_vlc, TEX_VLC_BITS, j,
                              &tmp[0].len, sizeof(tmp[0]),
-                             NULL, 0, 0, 0, INIT_VLC_USE_NEW_STATIC, NULL);
+                             NULL, 0, 0, 0, VLC_INIT_USE_STATIC, NULL);
     av_assert1(dv_vlc.table_size == 1664);
 
     for (int i = 0; i < dv_vlc.table_size; i++) {
@@ -345,7 +346,7 @@ static inline void bit_copy(PutBitContext *pb, GetBitContext *gb)
         put_bits(pb, bits_left, get_bits(gb, bits_left));
 }
 
-static av_always_inline void put_block_8x4(int16_t *block, uint8_t *av_restrict p, int stride)
+static av_always_inline void put_block_8x4(int16_t *block, uint8_t *restrict p, int stride)
 {
     int i, j;
 
@@ -636,18 +637,12 @@ static int dvvideo_decode_frame(AVCodecContext *avctx, AVFrame *frame,
     }
 
     if (sys != s->sys) {
-        ret = ff_dv_init_dynamic_tables(s->work_chunks, sys);
-        if (ret < 0) {
-            av_log(avctx, AV_LOG_ERROR, "Error initializing the work tables.\n");
-            return ret;
-        }
+        ff_dv_init_dynamic_tables(s->work_chunks, sys);
         dv_init_weight_tables(s, sys);
         s->sys = sys;
     }
 
     s->frame            = frame;
-    frame->flags |= AV_FRAME_FLAG_KEY;
-    frame->pict_type    = AV_PICTURE_TYPE_I;
     avctx->pix_fmt      = s->sys->pix_fmt;
     avctx->framerate    = av_inv_q(s->sys->time_base);
     avctx->bit_rate     = av_rescale_q(s->sys->frame_size,

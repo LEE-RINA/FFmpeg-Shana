@@ -21,7 +21,9 @@
 #include "avformat.h"
 #include "subtitles.h"
 #include "avio_internal.h"
+#include "libavutil/avassert.h"
 #include "libavutil/avstring.h"
+#include "libavutil/mem.h"
 
 void ff_text_init_avio(void *s, FFTextReader *r, AVIOContext *pb)
 {
@@ -49,9 +51,9 @@ void ff_text_init_avio(void *s, FFTextReader *r, AVIOContext *pb)
                "UTF16 is automatically converted to UTF8, do not specify a character encoding\n");
 }
 
-void ff_text_init_buf(FFTextReader *r, void *buf, size_t size)
+void ff_text_init_buf(FFTextReader *r, const void *buf, size_t size)
 {
-    ffio_init_context(&r->buf_pb, buf, size, 0, NULL, NULL, NULL, NULL);
+    ffio_init_read_context(&r->buf_pb, buf, size);
     ff_text_init_avio(NULL, r, &r->buf_pb.pub);
 }
 
@@ -111,15 +113,19 @@ AVPacket *ff_subtitles_queue_insert(FFDemuxSubtitlesQueue *q,
 {
     AVPacket **subs, *sub;
 
+    av_assert1(event || len == 0);
+
     if (merge && q->nb_subs > 0) {
         /* merge with previous event */
 
         int old_len;
         sub = q->subs[q->nb_subs - 1];
         old_len = sub->size;
-        if (av_grow_packet(sub, len) < 0)
-            return NULL;
-        memcpy(sub->data + old_len, event, len);
+        if (event) {
+            if (av_grow_packet(sub, len) < 0)
+                return NULL;
+            memcpy(sub->data + old_len, event, len);
+        }
     } else {
         /* new event */
 
@@ -133,14 +139,16 @@ AVPacket *ff_subtitles_queue_insert(FFDemuxSubtitlesQueue *q,
         sub = av_packet_alloc();
         if (!sub)
             return NULL;
-        if (av_new_packet(sub, len) < 0) {
-            av_packet_free(&sub);
-            return NULL;
+        if (event) {
+            if (av_new_packet(sub, len) < 0) {
+                av_packet_free(&sub);
+                return NULL;
+            }
+            memcpy(sub->data, event, len);
         }
-        subs[q->nb_subs++] = sub;
         sub->flags |= AV_PKT_FLAG_KEY;
         sub->pts = sub->dts = 0;
-        memcpy(sub->data, event, len);
+        subs[q->nb_subs++] = sub;
     }
     return sub;
 }

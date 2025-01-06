@@ -25,6 +25,7 @@
  * JPEG-LS decoder.
  */
 
+#include "libavutil/mem.h"
 #include "avcodec.h"
 #include "codec_internal.h"
 #include "get_bits.h"
@@ -382,6 +383,19 @@ int ff_jpegls_decode_picture(MJpegDecodeContext *s, int near,
     state->T3     = s->t3;
     state->reset  = s->reset;
     ff_jpegls_reset_coding_parameters(state, 0);
+
+    /* Testing parameters here, we cannot test in LSE or SOF because
+     * these interdepend and are allowed in either order
+     */
+    if (state->maxval >= (1<<state->bpp) ||
+        state->T1 > state->T2 ||
+        state->T2 > state->T3 ||
+        state->T3 > state->maxval ||
+        state->reset > FFMAX(255, state->maxval)) {
+        ret = AVERROR_INVALIDDATA;
+        goto end;
+    }
+
     ff_jpegls_init_state(state);
 
     if (s->bits <= 8)

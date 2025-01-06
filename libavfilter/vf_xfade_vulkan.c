@@ -19,10 +19,9 @@
 #include "libavutil/avassert.h"
 #include "libavutil/random_seed.h"
 #include "libavutil/opt.h"
+#include "libavutil/vulkan_spirv.h"
 #include "vulkan_filter.h"
-#include "vulkan_spirv.h"
 #include "filters.h"
-#include "internal.h"
 #include "video.h"
 
 #define IN_A  0
@@ -41,10 +40,9 @@ typedef struct XFadeVulkanContext {
     int64_t             offset;
 
     int                 initialized;
-    FFVulkanPipeline    pl;
     FFVkExecPool        e;
     FFVkQueueFamilyCtx  qf;
-    FFVkSPIRVShader     shd;
+    FFVulkanShader      shd;
     VkSampler           sampler;
 
     // PTS when the fade should start (in IN_A timebase)
@@ -77,6 +75,14 @@ enum XFadeTransitions {
     SLIDEUP,
     SLIDELEFT,
     SLIDERIGHT,
+    CIRCLEOPEN,
+    CIRCLECLOSE,
+    DISSOLVE,
+    PIXELIZE,
+    WIPETL,
+    WIPETR,
+    WIPEBL,
+    WIPEBR,
     NB_TRANSITIONS,
 };
 
@@ -179,16 +185,135 @@ static const char transition_slideright[] = {
     C(0, }                                                                     )
 };
 
+#define SHADER_CIRCLE_COMMON                                                     \
+    C(0, void circle(int idx, ivec2 pos, float progress, bool open)            ) \
+    C(0, {                                                                     ) \
+    C(1,     const ivec2 half_size = imageSize(output_images[idx]) / 2;        ) \
+    C(1,     const float z = dot(half_size, half_size);                        ) \
+    C(1,     float p = ((open ? (1.0 - progress) : progress) - 0.5) * 3.0;     ) \
+    C(1,     ivec2 dsize = pos - half_size;                                    ) \
+    C(1,     float sm = dot(dsize, dsize) / z + p;                             ) \
+    C(1,     vec4 a = texture(a_images[idx], pos);                             ) \
+    C(1,     vec4 b = texture(b_images[idx], pos);                             ) \
+    C(1,     imageStore(output_images[idx], pos, \
+                        mix(open ? b : a, open ? a : b, \
+                            smoothstep(0.f, 1.f, sm)));                        ) \
+    C(0, }                                                                     )
+
+static const char transition_circleopen[] = {
+    SHADER_CIRCLE_COMMON
+    C(0, void transition(int idx, ivec2 pos, float progress)                   )
+    C(0, {                                                                     )
+    C(1,     circle(idx, pos, progress, true);                                 )
+    C(0, }                                                                     )
+};
+
+static const char transition_circleclose[] = {
+    SHADER_CIRCLE_COMMON
+    C(0, void transition(int idx, ivec2 pos, float progress)                   )
+    C(0, {                                                                     )
+    C(1,     circle(idx, pos, progress, false);                                )
+    C(0, }                                                                     )
+};
+
+#define SHADER_FRAND_FUNC                                                        \
+    C(0, float frand(vec2 v)                                                   ) \
+    C(0, {                                                                     ) \
+    C(1,     return fract(sin(dot(v, vec2(12.9898, 78.233))) * 43758.545);     ) \
+    C(0, }                                                                     )
+
+static const char transition_dissolve[] = {
+    SHADER_FRAND_FUNC
+    C(0, void transition(int idx, ivec2 pos, float progress)                   )
+    C(0, {                                                                     )
+    C(1,     float sm = frand(pos) * 2.0 + (1.0 - progress) * 2.0 - 1.5;       )
+    C(1,     vec4 a = texture(a_images[idx], pos);                             )
+    C(1,     vec4 b = texture(b_images[idx], pos);                             )
+    C(1,     imageStore(output_images[idx], pos, sm >= 0.5 ? a : b);           )
+    C(0, }                                                                     )
+};
+
+static const char transition_pixelize[] = {
+    C(0, void transition(int idx, ivec2 pos, float progress)                                  )
+    C(0, {                                                                                    )
+    C(1,     ivec2 size = imageSize(output_images[idx]);                                      )
+    C(1,     float d = min(progress, 1.0 - progress);                                         )
+    C(1,     float dist = ceil(d * 50.0) / 50.0;                                              )
+    C(1,     float sq = 2.0 * dist * min(size.x, size.y) / 20.0;                              )
+    C(1,     float sx = dist > 0.0 ? min((floor(pos.x / sq) + 0.5) * sq, size.x - 1) : pos.x; )
+    C(1,     float sy = dist > 0.0 ? min((floor(pos.y / sq) + 0.5) * sq, size.y - 1) : pos.y; )
+    C(1,     vec4 a = texture(a_images[idx], vec2(sx, sy));                                   )
+    C(1,     vec4 b = texture(b_images[idx], vec2(sx, sy));                                   )
+    C(1,     imageStore(output_images[idx], pos, mix(a, b, progress));                        )
+    C(0, }                                                                                    )
+};
+
+static const char transition_wipetl[] = {
+    C(0, void transition(int idx, ivec2 pos, float progress)                                  )
+    C(0, {                                                                                    )
+    C(1,     ivec2 size = imageSize(output_images[idx]);                                      )
+    C(1,     float zw = size.x * (1.0 - progress);                                            )
+    C(1,     float zh = size.y * (1.0 - progress);                                            )
+    C(1,     vec4 a = texture(a_images[idx], pos);                                            )
+    C(1,     vec4 b = texture(b_images[idx], pos);                                            )
+    C(1,     imageStore(output_images[idx], pos, (pos.y <= zh && pos.x <= zw) ? a : b);       )
+    C(0, }                                                                                    )
+};
+
+static const char transition_wipetr[] = {
+    C(0, void transition(int idx, ivec2 pos, float progress)                                  )
+    C(0, {                                                                                    )
+    C(1,     ivec2 size = imageSize(output_images[idx]);                                      )
+    C(1,     float zw = size.x * (progress);                                                  )
+    C(1,     float zh = size.y * (1.0 - progress);                                            )
+    C(1,     vec4 a = texture(a_images[idx], pos);                                            )
+    C(1,     vec4 b = texture(b_images[idx], pos);                                            )
+    C(1,     imageStore(output_images[idx], pos, (pos.y <= zh && pos.x > zw) ? a : b);        )
+    C(0, }                                                                                    )
+};
+
+static const char transition_wipebl[] = {
+    C(0, void transition(int idx, ivec2 pos, float progress)                                  )
+    C(0, {                                                                                    )
+    C(1,     ivec2 size = imageSize(output_images[idx]);                                      )
+    C(1,     float zw = size.x * (1.0 - progress);                                            )
+    C(1,     float zh = size.y * (progress);                                                  )
+    C(1,     vec4 a = texture(a_images[idx], pos);                                            )
+    C(1,     vec4 b = texture(b_images[idx], pos);                                            )
+    C(1,     imageStore(output_images[idx], pos, (pos.y > zh && pos.x <= zw) ? a : b);        )
+    C(0, }                                                                                    )
+};
+
+static const char transition_wipebr[] = {
+    C(0, void transition(int idx, ivec2 pos, float progress)                                  )
+    C(0, {                                                                                    )
+    C(1,     ivec2 size = imageSize(output_images[idx]);                                      )
+    C(1,     float zw = size.x * (progress);                                                  )
+    C(1,     float zh = size.y * (progress);                                                  )
+    C(1,     vec4 a = texture(a_images[idx], pos);                                            )
+    C(1,     vec4 b = texture(b_images[idx], pos);                                            )
+    C(1,     imageStore(output_images[idx], pos, (pos.y > zh && pos.x > zw) ? a : b);         )
+    C(0, }                                                                                    )
+};
+
 static const char* transitions_map[NB_TRANSITIONS] = {
-    [FADE]      = transition_fade,
-    [WIPELEFT]  = transition_wipeleft,
-    [WIPERIGHT] = transition_wiperight,
-    [WIPEUP]    = transition_wipeup,
-    [WIPEDOWN]  = transition_wipedown,
-    [SLIDEDOWN] = transition_slidedown,
-    [SLIDEUP]   = transition_slideup,
-    [SLIDELEFT] = transition_slideleft,
-    [SLIDERIGHT]= transition_slideright,
+    [FADE]          = transition_fade,
+    [WIPELEFT]      = transition_wipeleft,
+    [WIPERIGHT]     = transition_wiperight,
+    [WIPEUP]        = transition_wipeup,
+    [WIPEDOWN]      = transition_wipedown,
+    [SLIDEDOWN]     = transition_slidedown,
+    [SLIDEUP]       = transition_slideup,
+    [SLIDELEFT]     = transition_slideleft,
+    [SLIDERIGHT]    = transition_slideright,
+    [CIRCLEOPEN]    = transition_circleopen,
+    [CIRCLECLOSE]   = transition_circleclose,
+    [DISSOLVE]      = transition_dissolve,
+    [PIXELIZE]      = transition_pixelize,
+    [WIPETL]        = transition_wipetl,
+    [WIPETR]        = transition_wipetr,
+    [WIPEBL]        = transition_wipebl,
+    [WIPEBR]        = transition_wipebr,
 };
 
 static av_cold int init_vulkan(AVFilterContext *avctx)
@@ -200,7 +325,7 @@ static av_cold int init_vulkan(AVFilterContext *avctx)
     XFadeVulkanContext *s = avctx->priv;
     FFVulkanContext *vkctx = &s->vkctx;
     const int planes = av_pix_fmt_count_planes(s->vkctx.output_format);
-    FFVkSPIRVShader *shd = &s->shd;
+    FFVulkanShader *shd = &s->shd;
     FFVkSPIRVCompiler *spv;
     FFVulkanDescriptorSetBinding *desc;
 
@@ -213,10 +338,11 @@ static av_cold int init_vulkan(AVFilterContext *avctx)
     ff_vk_qf_init(vkctx, &s->qf, VK_QUEUE_COMPUTE_BIT);
     RET(ff_vk_exec_pool_init(vkctx, &s->qf, &s->e, s->qf.nb_queues*4, 0, 0, 0, NULL));
     RET(ff_vk_init_sampler(vkctx, &s->sampler, 1, VK_FILTER_NEAREST));
-    RET(ff_vk_shader_init(&s->pl, &s->shd, "xfade_compute",
-                          VK_SHADER_STAGE_COMPUTE_BIT, 0));
-
-    ff_vk_shader_set_compute_sizes(&s->shd, 32, 32, 1);
+    RET(ff_vk_shader_init(vkctx, &s->shd, "xfade",
+                          VK_SHADER_STAGE_COMPUTE_BIT,
+                          NULL, 0,
+                          32, 32, 1,
+                          0));
 
     desc = (FFVulkanDescriptorSetBinding []) {
         {
@@ -238,7 +364,7 @@ static av_cold int init_vulkan(AVFilterContext *avctx)
         {
             .name       = "output_images",
             .type       = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            .mem_layout = ff_vk_shader_rep_fmt(s->vkctx.output_format),
+            .mem_layout = ff_vk_shader_rep_fmt(s->vkctx.output_format, FF_VK_REP_FLOAT),
             .mem_quali  = "writeonly",
             .dimensions = 2,
             .elems      = planes,
@@ -246,14 +372,14 @@ static av_cold int init_vulkan(AVFilterContext *avctx)
         },
     };
 
-    RET(ff_vk_pipeline_descriptor_set_add(vkctx, &s->pl, shd, desc, 3, 0, 0));
+    RET(ff_vk_shader_add_descriptor_set(vkctx, &s->shd, desc, 3, 0, 0));
 
     GLSLC(0, layout(push_constant, std430) uniform pushConstants {                 );
     GLSLC(1,    float progress;                                                    );
     GLSLC(0, };                                                                    );
 
-    ff_vk_add_push_constant(&s->pl, 0, sizeof(XFadeParameters),
-                            VK_SHADER_STAGE_COMPUTE_BIT);
+    ff_vk_shader_add_push_const(&s->shd, 0, sizeof(XFadeParameters),
+                                VK_SHADER_STAGE_COMPUTE_BIT);
 
     // Add the right transition type function to the shader
     GLSLD(transitions_map[s->transition]);
@@ -267,12 +393,11 @@ static av_cold int init_vulkan(AVFilterContext *avctx)
     GLSLC(1,     }                                                        );
     GLSLC(0, }                                                            );
 
-    RET(spv->compile_shader(spv, avctx, shd, &spv_data, &spv_len, "main",
+    RET(spv->compile_shader(vkctx, spv, shd, &spv_data, &spv_len, "main",
                             &spv_opaque));
-    RET(ff_vk_shader_create(vkctx, shd, spv_data, spv_len, "main"));
+    RET(ff_vk_shader_link(vkctx, shd, spv_data, spv_len, "main"));
 
-    RET(ff_vk_init_compute_pipeline(vkctx, &s->pl, shd));
-    RET(ff_vk_exec_pipeline_register(vkctx, &s->e, &s->pl));
+    RET(ff_vk_shader_register_exec(vkctx, &s->e, &s->shd));
 
     s->initialized = 1;
 
@@ -315,7 +440,7 @@ static int xfade_frame(AVFilterContext *avctx, AVFrame *frame_a, AVFrame *frame_
     progress = av_clipf((float)(s->pts - s->start_pts) / s->duration_pts,
                         0.f, 1.f);
 
-    RET(ff_vk_filter_process_Nin(&s->vkctx, &s->e, &s->pl, output,
+    RET(ff_vk_filter_process_Nin(&s->vkctx, &s->e, &s->shd, output,
                                  (AVFrame *[]){ frame_a, frame_b }, 2, s->sampler,
                                  &(XFadeParameters){ progress }, sizeof(XFadeParameters)));
 
@@ -333,6 +458,8 @@ static int config_props_output(AVFilterLink *outlink)
     XFadeVulkanContext *s = avctx->priv;
     AVFilterLink *inlink_a = avctx->inputs[IN_A];
     AVFilterLink *inlink_b = avctx->inputs[IN_B];
+    FilterLink *il = ff_filter_link(inlink_a);
+    FilterLink *ol = ff_filter_link(outlink);
 
     if (inlink_a->w != inlink_b->w || inlink_a->h != inlink_b->h) {
         av_log(avctx, AV_LOG_ERROR, "First input link %s parameters "
@@ -356,7 +483,7 @@ static int config_props_output(AVFilterLink *outlink)
     s->start_pts = s->inputs_offset_pts = AV_NOPTS_VALUE;
 
     outlink->time_base = inlink_a->time_base;
-    outlink->frame_rate = inlink_a->frame_rate;
+    ol->frame_rate = il->frame_rate;
     outlink->sample_aspect_ratio = inlink_a->sample_aspect_ratio;
 
     if (s->duration)
@@ -504,7 +631,6 @@ static av_cold void uninit(AVFilterContext *avctx)
     FFVulkanFunctions *vk = &vkctx->vkfn;
 
     ff_vk_exec_pool_free(vkctx, &s->e);
-    ff_vk_pipeline_free(vkctx, &s->pl);
     ff_vk_shader_free(vkctx, &s->shd);
 
     if (s->sampler)
@@ -529,16 +655,24 @@ static AVFrame *get_video_buffer(AVFilterLink *inlink, int w, int h)
 #define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 
 static const AVOption xfade_vulkan_options[] = {
-    { "transition", "set cross fade transition", OFFSET(transition), AV_OPT_TYPE_INT, {.i64=FADE}, 0, NB_TRANSITIONS-1, FLAGS, "transition" },
-        { "fade",      "fade transition", 0, AV_OPT_TYPE_CONST, {.i64=FADE}, 0, 0, FLAGS, "transition" },
-        { "wipeleft",  "wipe left transition", 0, AV_OPT_TYPE_CONST, {.i64=WIPELEFT}, 0, 0, FLAGS, "transition" },
-        { "wiperight", "wipe right transition", 0, AV_OPT_TYPE_CONST, {.i64=WIPERIGHT}, 0, 0, FLAGS, "transition" },
-        { "wipeup",    "wipe up transition", 0, AV_OPT_TYPE_CONST, {.i64=WIPEUP}, 0, 0, FLAGS, "transition" },
-        { "wipedown",  "wipe down transition", 0, AV_OPT_TYPE_CONST, {.i64=WIPEDOWN}, 0, 0, FLAGS, "transition" },
-        { "slidedown", "slide down transition", 0, AV_OPT_TYPE_CONST, {.i64=SLIDEDOWN}, 0, 0, FLAGS, "transition" },
-        { "slideup",   "slide up transition", 0, AV_OPT_TYPE_CONST, {.i64=SLIDEUP}, 0, 0, FLAGS, "transition" },
-        { "slideleft", "slide left transition", 0, AV_OPT_TYPE_CONST, {.i64=SLIDELEFT}, 0, 0, FLAGS, "transition" },
-        { "slideright","slide right transition", 0, AV_OPT_TYPE_CONST, {.i64=SLIDERIGHT}, 0, 0, FLAGS, "transition" },
+    { "transition", "set cross fade transition", OFFSET(transition), AV_OPT_TYPE_INT, {.i64=FADE}, 0, NB_TRANSITIONS-1, FLAGS, .unit = "transition" },
+        { "fade", "fade transition", 0, AV_OPT_TYPE_CONST, {.i64=FADE}, 0, 0, FLAGS, .unit = "transition" },
+        { "wipeleft", "wipe left transition", 0, AV_OPT_TYPE_CONST, {.i64=WIPELEFT}, 0, 0, FLAGS, .unit = "transition" },
+        { "wiperight", "wipe right transition", 0, AV_OPT_TYPE_CONST, {.i64=WIPERIGHT}, 0, 0, FLAGS, .unit = "transition" },
+        { "wipeup", "wipe up transition", 0, AV_OPT_TYPE_CONST, {.i64=WIPEUP}, 0, 0, FLAGS, .unit = "transition" },
+        { "wipedown", "wipe down transition", 0, AV_OPT_TYPE_CONST, {.i64=WIPEDOWN}, 0, 0, FLAGS, .unit = "transition" },
+        { "slidedown", "slide down transition", 0, AV_OPT_TYPE_CONST, {.i64=SLIDEDOWN}, 0, 0, FLAGS, .unit = "transition" },
+        { "slideup", "slide up transition", 0, AV_OPT_TYPE_CONST, {.i64=SLIDEUP}, 0, 0, FLAGS, .unit = "transition" },
+        { "slideleft", "slide left transition", 0, AV_OPT_TYPE_CONST, {.i64=SLIDELEFT}, 0, 0, FLAGS, .unit = "transition" },
+        { "slideright", "slide right transition", 0, AV_OPT_TYPE_CONST, {.i64=SLIDERIGHT}, 0, 0, FLAGS, .unit = "transition" },
+        { "circleopen", "circleopen transition", 0, AV_OPT_TYPE_CONST, {.i64=CIRCLEOPEN}, 0, 0, FLAGS, .unit = "transition" },
+        { "circleclose", "circleclose transition", 0, AV_OPT_TYPE_CONST, {.i64=CIRCLECLOSE}, 0, 0, FLAGS, .unit = "transition" },
+        { "dissolve", "dissolve transition", 0, AV_OPT_TYPE_CONST, {.i64=DISSOLVE}, 0, 0, FLAGS, .unit = "transition" },
+        { "pixelize", "pixelize transition", 0, AV_OPT_TYPE_CONST, {.i64=PIXELIZE}, 0, 0, FLAGS, .unit = "transition" },
+        { "wipetl", "wipe top left transition", 0, AV_OPT_TYPE_CONST, {.i64=WIPETL}, 0, 0, FLAGS, .unit = "transition" },
+        { "wipetr", "wipe top right transition", 0, AV_OPT_TYPE_CONST, {.i64=WIPETR}, 0, 0, FLAGS, .unit = "transition" },
+        { "wipebl", "wipe bottom left transition", 0, AV_OPT_TYPE_CONST, {.i64=WIPEBL}, 0, 0, FLAGS, .unit = "transition" },
+        { "wipebr", "wipe bottom right transition", 0, AV_OPT_TYPE_CONST, {.i64=WIPEBR}, 0, 0, FLAGS, .unit = "transition" },
     { "duration", "set cross fade duration", OFFSET(duration), AV_OPT_TYPE_DURATION, {.i64=1000000}, 0, 60000000, FLAGS },
     { "offset",   "set cross fade start relative to first input stream", OFFSET(offset), AV_OPT_TYPE_DURATION, {.i64=0}, INT64_MIN, INT64_MAX, FLAGS },
     { NULL }

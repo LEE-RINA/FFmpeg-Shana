@@ -23,6 +23,7 @@
 
 #include "avformat.h"
 #include "avio.h"
+#include "demux.h"
 #include "internal.h"
 
 typedef struct SMUSHContext {
@@ -50,7 +51,7 @@ static int smush_read_header(AVFormatContext *ctx)
     AVStream *vst, *ast;
     uint32_t magic, nframes, size, subversion, i;
     uint32_t width = 0, height = 0, got_audio = 0, read = 0;
-    uint32_t sample_rate, channels, palette[256];
+    uint32_t sample_rate, channels, palette[256], frame_rate = 15;
     int ret;
 
     magic = avio_rb32(pb);
@@ -63,6 +64,7 @@ static int smush_read_header(AVFormatContext *ctx)
         size = avio_rb32(pb);
         if (size < 3 * 256 + 6)
             return AVERROR_INVALIDDATA;
+        size -= 3 * 256 + 6;
 
         smush->version = 0;
         subversion     = avio_rl16(pb);
@@ -75,7 +77,17 @@ static int smush_read_header(AVFormatContext *ctx)
         for (i = 0; i < 256; i++)
             palette[i] = avio_rb24(pb);
 
-        avio_skip(pb, size - (3 * 256 + 6));
+        if (subversion > 1) {
+            if (size < 12)
+                return AVERROR_INVALIDDATA;
+            size -= 12;
+            frame_rate = avio_rl32(pb);
+            avio_skip(pb, 4);            // max size of FRME chunk in file
+            sample_rate = avio_rl32(pb);
+            if (frame_rate < 1 || frame_rate > 70)
+                frame_rate = 12;
+        }
+        avio_skip(pb, size);
     } else if (magic == MKBETAG('S', 'A', 'N', 'M')) {
         if (avio_rb32(pb) != MKBETAG('S', 'H', 'D', 'R'))
             return AVERROR_INVALIDDATA;
@@ -145,7 +157,7 @@ static int smush_read_header(AVFormatContext *ctx)
 
     smush->video_stream_index = vst->index;
 
-    avpriv_set_pts_info(vst, 64, 1, 15);
+    avpriv_set_pts_info(vst, 64, 1, frame_rate);
 
     vst->start_time        = 0;
     vst->duration          =
@@ -241,9 +253,9 @@ static int smush_read_packet(AVFormatContext *ctx, AVPacket *pkt)
     return 0;
 }
 
-const AVInputFormat ff_smush_demuxer = {
-    .name           = "smush",
-    .long_name      = NULL_IF_CONFIG_SMALL("LucasArts Smush"),
+const FFInputFormat ff_smush_demuxer = {
+    .p.name         = "smush",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("LucasArts Smush"),
     .priv_data_size = sizeof(SMUSHContext),
     .read_probe     = smush_read_probe,
     .read_header    = smush_read_header,

@@ -28,7 +28,6 @@
 #include "avfilter.h"
 #include "filters.h"
 #include "formats.h"
-#include "internal.h"
 #include "video.h"
 
 typedef struct FeedbackContext {
@@ -107,11 +106,14 @@ static int config_output(AVFilterLink *outlink)
     return 0;
 }
 
-static int query_formats(AVFilterContext *ctx)
+static int query_formats(const AVFilterContext *ctx,
+                         AVFilterFormatsConfig **cfg_in,
+                         AVFilterFormatsConfig **cfg_out)
 {
-    return ff_set_common_formats(ctx, ff_formats_pixdesc_filter(0, AV_PIX_FMT_FLAG_BITSTREAM |
-                                                                   AV_PIX_FMT_FLAG_HWACCEL |
-                                                                   AV_PIX_FMT_FLAG_PAL));
+    return ff_set_common_formats2(ctx, cfg_in, cfg_out,
+                                  ff_formats_pixdesc_filter(0, AV_PIX_FMT_FLAG_BITSTREAM |
+                                                               AV_PIX_FMT_FLAG_HWACCEL |
+                                                               AV_PIX_FMT_FLAG_PAL));
 }
 
 static int activate(AVFilterContext *ctx)
@@ -185,12 +187,15 @@ static int activate(AVFilterContext *ctx)
         return ret;
     }
 
-    if (!s->feed) {
+    if (!s->feed || ctx->is_disabled) {
         AVFrame *in = NULL;
 
         ret = ff_inlink_consume_frame(ctx->inputs[0], &in);
         if (ret < 0)
             return ret;
+
+        if (ret > 0 && ctx->is_disabled)
+            return ff_filter_frame(ctx->outputs[0], in);
 
         if (ret > 0) {
             AVFrame *frame;
@@ -239,10 +244,11 @@ static int activate(AVFilterContext *ctx)
         return 0;
     }
 
-    if (!s->feed) {
+    if (!s->feed || ctx->is_disabled) {
         if (ff_outlink_frame_wanted(ctx->outputs[0])) {
             ff_inlink_request_frame(ctx->inputs[0]);
-            ff_inlink_request_frame(ctx->inputs[1]);
+            if (!ctx->is_disabled)
+                ff_inlink_request_frame(ctx->inputs[1]);
             return 0;
         }
     }
@@ -329,6 +335,7 @@ const AVFilter ff_vf_feedback = {
     .uninit      = uninit,
     FILTER_INPUTS(inputs),
     FILTER_OUTPUTS(outputs),
-    FILTER_QUERY_FUNC(query_formats),
+    FILTER_QUERY_FUNC2(query_formats),
+    .flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL,
     .process_command = ff_filter_process_command,
 };

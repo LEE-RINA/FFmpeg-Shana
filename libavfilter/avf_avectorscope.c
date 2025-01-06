@@ -32,7 +32,6 @@
 #include "formats.h"
 #include "audio.h"
 #include "video.h"
-#include "internal.h"
 
 enum VectorScopeMode {
     LISSAJOUS,
@@ -79,11 +78,11 @@ typedef struct AudioVectorScopeContext {
 #define TFLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_RUNTIME_PARAM
 
 static const AVOption avectorscope_options[] = {
-    { "mode", "set mode", OFFSET(mode), AV_OPT_TYPE_INT, {.i64=LISSAJOUS}, 0, MODE_NB-1, TFLAGS, "mode" },
-    { "m",    "set mode", OFFSET(mode), AV_OPT_TYPE_INT, {.i64=LISSAJOUS}, 0, MODE_NB-1, TFLAGS, "mode" },
-    { "lissajous",    "", 0, AV_OPT_TYPE_CONST, {.i64=LISSAJOUS},    0, 0, TFLAGS, "mode" },
-    { "lissajous_xy", "", 0, AV_OPT_TYPE_CONST, {.i64=LISSAJOUS_XY}, 0, 0, TFLAGS, "mode" },
-    { "polar",        "", 0, AV_OPT_TYPE_CONST, {.i64=POLAR},        0, 0, TFLAGS, "mode" },
+    { "mode", "set mode", OFFSET(mode), AV_OPT_TYPE_INT, {.i64=LISSAJOUS}, 0, MODE_NB-1, TFLAGS, .unit = "mode" },
+    { "m",    "set mode", OFFSET(mode), AV_OPT_TYPE_INT, {.i64=LISSAJOUS}, 0, MODE_NB-1, TFLAGS, .unit = "mode" },
+    { "lissajous",    "", 0, AV_OPT_TYPE_CONST, {.i64=LISSAJOUS},    0, 0, TFLAGS, .unit = "mode" },
+    { "lissajous_xy", "", 0, AV_OPT_TYPE_CONST, {.i64=LISSAJOUS_XY}, 0, 0, TFLAGS, .unit = "mode" },
+    { "polar",        "", 0, AV_OPT_TYPE_CONST, {.i64=POLAR},        0, 0, TFLAGS, .unit = "mode" },
     { "rate", "set video rate", OFFSET(frame_rate), AV_OPT_TYPE_VIDEO_RATE, {.str="25"}, 0, INT_MAX, FLAGS },
     { "r",    "set video rate", OFFSET(frame_rate), AV_OPT_TYPE_VIDEO_RATE, {.str="25"}, 0, INT_MAX, FLAGS },
     { "size", "set video size", OFFSET(w), AV_OPT_TYPE_IMAGE_SIZE, {.str="400x400"}, 0, 0, FLAGS },
@@ -97,21 +96,21 @@ static const AVOption avectorscope_options[] = {
     { "bf", "set blue fade",      OFFSET(fade[2]), AV_OPT_TYPE_INT, {.i64=5},  0, 255, TFLAGS },
     { "af", "set alpha fade",     OFFSET(fade[3]), AV_OPT_TYPE_INT, {.i64=5},  0, 255, TFLAGS },
     { "zoom", "set zoom factor",  OFFSET(zoom), AV_OPT_TYPE_DOUBLE, {.dbl=1},  0, 10, TFLAGS },
-    { "draw", "set draw mode", OFFSET(draw), AV_OPT_TYPE_INT, {.i64=DOT}, 0, DRAW_NB-1, TFLAGS, "draw" },
-    { "dot",   "draw dots",               0, AV_OPT_TYPE_CONST, {.i64=DOT} , 0, 0, TFLAGS, "draw" },
-    { "line",  "draw lines",              0, AV_OPT_TYPE_CONST, {.i64=LINE}, 0, 0, TFLAGS, "draw" },
-    { "aaline","draw anti-aliased lines", 0, AV_OPT_TYPE_CONST, {.i64=AALINE},0,0, TFLAGS, "draw" },
-    { "scale", "set amplitude scale mode", OFFSET(scale), AV_OPT_TYPE_INT, {.i64=LIN}, 0, SCALE_NB-1, TFLAGS, "scale" },
-    { "lin",   "linear",      0, AV_OPT_TYPE_CONST, {.i64=LIN},  0, 0, TFLAGS, "scale" },
-    { "sqrt",  "square root", 0, AV_OPT_TYPE_CONST, {.i64=SQRT}, 0, 0, TFLAGS, "scale" },
-    { "cbrt",  "cube root",   0, AV_OPT_TYPE_CONST, {.i64=CBRT}, 0, 0, TFLAGS, "scale" },
-    { "log",   "logarithmic", 0, AV_OPT_TYPE_CONST, {.i64=LOG},  0, 0, TFLAGS, "scale" },
+    { "draw", "set draw mode", OFFSET(draw), AV_OPT_TYPE_INT, {.i64=DOT}, 0, DRAW_NB-1, TFLAGS, .unit = "draw" },
+    { "dot",   "draw dots",               0, AV_OPT_TYPE_CONST, {.i64=DOT} , 0, 0, TFLAGS, .unit = "draw" },
+    { "line",  "draw lines",              0, AV_OPT_TYPE_CONST, {.i64=LINE}, 0, 0, TFLAGS, .unit = "draw" },
+    { "aaline","draw anti-aliased lines", 0, AV_OPT_TYPE_CONST, {.i64=AALINE},0,0, TFLAGS, .unit = "draw" },
+    { "scale", "set amplitude scale mode", OFFSET(scale), AV_OPT_TYPE_INT, {.i64=LIN}, 0, SCALE_NB-1, TFLAGS, .unit = "scale" },
+    { "lin",   "linear",      0, AV_OPT_TYPE_CONST, {.i64=LIN},  0, 0, TFLAGS, .unit = "scale" },
+    { "sqrt",  "square root", 0, AV_OPT_TYPE_CONST, {.i64=SQRT}, 0, 0, TFLAGS, .unit = "scale" },
+    { "cbrt",  "cube root",   0, AV_OPT_TYPE_CONST, {.i64=CBRT}, 0, 0, TFLAGS, .unit = "scale" },
+    { "log",   "logarithmic", 0, AV_OPT_TYPE_CONST, {.i64=LOG},  0, 0, TFLAGS, .unit = "scale" },
     { "swap", "swap x axis with y axis", OFFSET(swap), AV_OPT_TYPE_BOOL, {.i64=1}, 0, 1, TFLAGS },
-    { "mirror", "mirror axis", OFFSET(mirror), AV_OPT_TYPE_INT, {.i64=0}, 0, 3, TFLAGS, "mirror" },
-    { "none",  "no mirror", 0, AV_OPT_TYPE_CONST, {.i64=0}, 0, 0, TFLAGS, "mirror" },
-    { "x",  "mirror x",     0, AV_OPT_TYPE_CONST, {.i64=1}, 0, 0, TFLAGS, "mirror" },
-    { "y",  "mirror y",     0, AV_OPT_TYPE_CONST, {.i64=2}, 0, 0, TFLAGS, "mirror" },
-    { "xy", "mirror both",  0, AV_OPT_TYPE_CONST, {.i64=3}, 0, 0, TFLAGS, "mirror" },
+    { "mirror", "mirror axis", OFFSET(mirror), AV_OPT_TYPE_INT, {.i64=0}, 0, 3, TFLAGS, .unit = "mirror" },
+    { "none",  "no mirror", 0, AV_OPT_TYPE_CONST, {.i64=0}, 0, 0, TFLAGS, .unit = "mirror" },
+    { "x",  "mirror x",     0, AV_OPT_TYPE_CONST, {.i64=1}, 0, 0, TFLAGS, .unit = "mirror" },
+    { "y",  "mirror y",     0, AV_OPT_TYPE_CONST, {.i64=2}, 0, 0, TFLAGS, .unit = "mirror" },
+    { "xy", "mirror both",  0, AV_OPT_TYPE_CONST, {.i64=3}, 0, 0, TFLAGS, .unit = "mirror" },
     { NULL }
 };
 
@@ -231,28 +230,29 @@ static int fade(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
     return 0;
 }
 
-static int query_formats(AVFilterContext *ctx)
+static int query_formats(const AVFilterContext *ctx,
+                         AVFilterFormatsConfig **cfg_in,
+                         AVFilterFormatsConfig **cfg_out)
 {
     AVFilterFormats *formats = NULL;
-    AVFilterChannelLayouts *layout = NULL;
-    AVFilterLink *inlink = ctx->inputs[0];
-    AVFilterLink *outlink = ctx->outputs[0];
     static const enum AVSampleFormat sample_fmts[] = { AV_SAMPLE_FMT_S16, AV_SAMPLE_FMT_FLT, AV_SAMPLE_FMT_NONE };
     static const enum AVPixelFormat pix_fmts[] = { AV_PIX_FMT_RGBA, AV_PIX_FMT_NONE };
+    static const AVChannelLayout layouts[] = {
+        AV_CHANNEL_LAYOUT_STEREO,
+        { .nb_channels = 0 },
+    };
     int ret;
 
     formats = ff_make_format_list(sample_fmts);
-    if ((ret = ff_formats_ref         (formats, &inlink->outcfg.formats        )) < 0 ||
-        (ret = ff_add_channel_layout  (&layout, &(AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO)) < 0 ||
-        (ret = ff_channel_layouts_ref (layout , &inlink->outcfg.channel_layouts)) < 0)
+    if ((ret = ff_formats_ref         (formats, &cfg_in[0]->formats        )) < 0)
         return ret;
 
-    formats = ff_all_samplerates();
-    if ((ret = ff_formats_ref(formats, &inlink->outcfg.samplerates)) < 0)
+    ret = ff_set_common_channel_layouts_from_list2(ctx, cfg_in, cfg_out, layouts);
+    if (ret < 0)
         return ret;
 
     formats = ff_make_format_list(pix_fmts);
-    if ((ret = ff_formats_ref(formats, &outlink->incfg.formats)) < 0)
+    if ((ret = ff_formats_ref(formats, &cfg_out[0]->formats)) < 0)
         return ret;
 
     return 0;
@@ -271,12 +271,13 @@ static int config_input(AVFilterLink *inlink)
 static int config_output(AVFilterLink *outlink)
 {
     AudioVectorScopeContext *s = outlink->src->priv;
+    FilterLink *l = ff_filter_link(outlink);
 
     outlink->w = s->w;
     outlink->h = s->h;
     outlink->sample_aspect_ratio = (AVRational){1,1};
-    outlink->frame_rate = s->frame_rate;
-    outlink->time_base = av_inv_q(outlink->frame_rate);
+    l->frame_rate = s->frame_rate;
+    outlink->time_base = av_inv_q(l->frame_rate);
 
     s->prev_x = s->hw = s->w / 2;
     s->prev_y = s->hh = s->mode == POLAR ? s->h - 1 : s->h / 2;
@@ -493,7 +494,7 @@ const AVFilter ff_avf_avectorscope = {
     .activate      = activate,
     FILTER_INPUTS(audiovectorscope_inputs),
     FILTER_OUTPUTS(audiovectorscope_outputs),
-    FILTER_QUERY_FUNC(query_formats),
+    FILTER_QUERY_FUNC2(query_formats),
     .priv_class    = &avectorscope_class,
     .flags         = AVFILTER_FLAG_SLICE_THREADS,
     .process_command = ff_filter_process_command,

@@ -23,6 +23,7 @@
 
 #include "libavutil/intreadwrite.h"
 #include "avformat.h"
+#include "demux.h"
 #include "internal.h"
 #include "riff.h"
 
@@ -119,10 +120,12 @@ static int dxa_read_header(AVFormatContext *s)
             avio_skip(pb, fsize);
         }
         c->bpc = (fsize + (int64_t)c->frames - 1) / c->frames;
+        if (c->bpc < 0)
+            return AVERROR_INVALIDDATA;
         if(ast->codecpar->block_align) {
             if (c->bpc > INT_MAX - ast->codecpar->block_align + 1)
                 return AVERROR_INVALIDDATA;
-            c->bpc = ((c->bpc + ast->codecpar->block_align - 1) / ast->codecpar->block_align) * ast->codecpar->block_align;
+            c->bpc = ((c->bpc - 1 + ast->codecpar->block_align) / ast->codecpar->block_align) * ast->codecpar->block_align;
         }
         c->bytes_left = fsize;
         c->wavpos = avio_tell(pb);
@@ -229,9 +232,9 @@ static int dxa_read_packet(AVFormatContext *s, AVPacket *pkt)
     return AVERROR_EOF;
 }
 
-const AVInputFormat ff_dxa_demuxer = {
-    .name           = "dxa",
-    .long_name      = NULL_IF_CONFIG_SMALL("DXA"),
+const FFInputFormat ff_dxa_demuxer = {
+    .p.name         = "dxa",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("DXA"),
     .priv_data_size = sizeof(DXAContext),
     .read_probe     = dxa_probe,
     .read_header    = dxa_read_header,

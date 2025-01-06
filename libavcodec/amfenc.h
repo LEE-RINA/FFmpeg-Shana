@@ -21,6 +21,7 @@
 
 #include <AMF/core/Factory.h>
 
+#include <AMF/components/ColorSpace.h>
 #include <AMF/components/VideoEncoderVCE.h>
 #include <AMF/components/VideoEncoderHEVC.h>
 #include <AMF/components/VideoEncoderAV1.h>
@@ -67,6 +68,7 @@ typedef struct AmfContext {
 
     int                 hwsurfaces_in_queue;
     int                 hwsurfaces_in_queue_max;
+    int                 query_timeout_supported;
 
     // helpers to handle async calls
     int                 delayed_drain;
@@ -76,6 +78,8 @@ typedef struct AmfContext {
     // shift dts back by max_b_frames in timing
     AVFifo             *timestamp_list;
     int64_t             dts_delay;
+    int                 submitted_frame;
+    amf_bool            use_b_frame;
 
     // common encoder option options
 
@@ -85,6 +89,7 @@ typedef struct AmfContext {
     int                 usage;
     int                 profile;
     int                 level;
+    int                 latency;
     int                 preencode;
     int                 quality;
     int                 b_frame_delta_qp;
@@ -112,6 +117,7 @@ typedef struct AmfContext {
     int                 max_b_frames;
     int                 qvbr_quality_level;
     int                 hw_high_motion_quality_boost;
+    int                 forced_idr;
 
     // HEVC - specific options
 
@@ -126,6 +132,7 @@ typedef struct AmfContext {
     // AV1 - specific options
 
     enum AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE_ENUM                 align;
+    enum AMF_VIDEO_ENCODER_AV1_AQ_MODE_ENUM                        aq_mode;
 
     // Preanalysis - specific options
 
@@ -169,6 +176,8 @@ int ff_amf_receive_packet(AVCodecContext *avctx, AVPacket *avpkt);
 * Supported formats
 */
 extern const enum AVPixelFormat ff_amf_pix_fmts[];
+
+int ff_amf_get_color_profile(AVCodecContext *avctx);
 
 /**
 * Error handling helper

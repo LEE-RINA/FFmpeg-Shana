@@ -1796,8 +1796,8 @@ static av_cold int build_vlc(VLC *vlc, const SheerTable *table)
             lens[count]  = len;
     }
 
-    ff_free_vlc(vlc);
-    return ff_init_vlc_from_lengths(vlc, SHEER_VLC_BITS, count,
+    ff_vlc_free(vlc);
+    return ff_vlc_init_from_lengths(vlc, SHEER_VLC_BITS, count,
                                     lens, sizeof(*lens), NULL, 0, 0, 0, 0, NULL);
 }
 
@@ -1972,9 +1972,6 @@ static int decode_frame(AVCodecContext *avctx, AVFrame *p,
         return AVERROR_INVALIDDATA;
     }
 
-    p->pict_type = AV_PICTURE_TYPE_I;
-    p->flags |= AV_FRAME_FLAG_KEY;
-
     if ((ret = ff_thread_get_buffer(avctx, p, 0)) < 0)
         return ret;
 
@@ -1992,8 +1989,8 @@ static av_cold int decode_end(AVCodecContext *avctx)
 {
     SheerVideoContext *s = avctx->priv_data;
 
-    ff_free_vlc(&s->vlc[0]);
-    ff_free_vlc(&s->vlc[1]);
+    ff_vlc_free(&s->vlc[0]);
+    ff_vlc_free(&s->vlc[1]);
 
     return 0;
 }

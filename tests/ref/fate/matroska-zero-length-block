@@ -1,5 +1,5 @@
-b9a8a67ffdba18eec1c04827d3d404ca *tests/data/fate/matroska-zero-length-block.matroska
-645 tests/data/fate/matroska-zero-length-block.matroska
+451a43f61da7baee559005881d94203e *tests/data/fate/matroska-zero-length-block.matroska
+633 tests/data/fate/matroska-zero-length-block.matroska
 #tb 0: 1/1000
 #media_type 0: subtitle
 #codec_id 0: subrip
