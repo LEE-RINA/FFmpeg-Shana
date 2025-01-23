@@ -110,7 +110,7 @@ OBJS-$(CONFIG_H264PARSE)               += h264_parse.o h264_ps.o h264data.o \
                                           h2645data.o h2645_parse.o h2645_vui.o
 OBJS-$(CONFIG_H264PRED)                += h264pred.o
 OBJS-$(CONFIG_H264QPEL)                += h264qpel.o
-OBJS-$(CONFIG_H264_SEI)                += h264_sei.o h2645_sei.o
+OBJS-$(CONFIG_H264_SEI)                += h264_sei.o h2645_sei.o aom_film_grain.o
 OBJS-$(CONFIG_HEVCPARSE)               += h2645data.o h2645_parse.o h2645_vui.o
 OBJS-$(CONFIG_HEVC_SEI)                += h2645_sei.o aom_film_grain.o \
                                           dynamic_hdr_vivid.o
@@ -977,6 +977,7 @@ OBJS-$(CONFIG_ADPCM_IMA_WAV_DECODER)      += adpcm.o adpcm_data.o
 OBJS-$(CONFIG_ADPCM_IMA_WAV_ENCODER)      += adpcmenc.o adpcm_data.o
 OBJS-$(CONFIG_ADPCM_IMA_WS_DECODER)       += adpcm.o adpcm_data.o
 OBJS-$(CONFIG_ADPCM_IMA_WS_ENCODER)       += adpcmenc.o adpcm_data.o
+OBJS-$(CONFIG_ADPCM_IMA_XBOX_DECODER)     += adpcm.o adpcm_data.o
 OBJS-$(CONFIG_ADPCM_MS_DECODER)           += adpcm.o adpcm_data.o
 OBJS-$(CONFIG_ADPCM_MS_ENCODER)           += adpcmenc.o adpcm_data.o
 OBJS-$(CONFIG_ADPCM_MTAF_DECODER)         += adpcm.o adpcm_data.o

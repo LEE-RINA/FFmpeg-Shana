@@ -59,6 +59,7 @@ float audio_drift_threshold = 0.1;
 float dts_delta_threshold   = 10;
 float dts_error_threshold   = 3600*30;
 
+int audio_sync_method = 0;
 #if FFMPEG_OPT_VSYNC
 enum VideoSyncMethod video_sync_method = VSYNC_AUTO;
 #endif
@@ -357,7 +358,7 @@ static void correct_input_start_times(void)
             if (copy_ts && start_at_zero)
                 ifile->ts_offset = -new_start_time;
             else if (!copy_ts) {
-                abs_start_seek = is->start_time + (ifile->start_time != AV_NOPTS_VALUE) ? ifile->start_time : 0;
+                abs_start_seek = is->start_time + ((ifile->start_time != AV_NOPTS_VALUE) ? ifile->start_time : 0);
                 ifile->ts_offset = abs_start_seek > new_start_time ? -abs_start_seek : -new_start_time;
             } else if (copy_ts)
                 ifile->ts_offset = 0;
@@ -1630,6 +1631,12 @@ const OptionDef options[] = {
     { "frame_drop_threshold",   OPT_TYPE_FLOAT, OPT_EXPERT,
         { &frame_drop_threshold },
         "frame drop threshold", "" },
+    { "async",                  OPT_TYPE_INT, OPT_EXPERT,
+        { &audio_sync_method },
+        "audio sync method", "" },
+    { "adrift_threshold",       OPT_TYPE_FLOAT, OPT_EXPERT,
+        { &audio_drift_threshold },
+        "audio drift threshold", "threshold" },
     { "copyts",                 OPT_TYPE_BOOL, OPT_EXPERT,
         { &copy_ts },
         "copy timestamps" },

@@ -210,6 +210,7 @@ static int write_packet(Muxer *mux, OutputStream *ost, AVPacket *pkt)
 {
     MuxStream *ms = ms_from_ost(ost);
     AVFormatContext *s = mux->fc;
+    AVStream *st = ost->st;
     int64_t fs;
     uint64_t frame_num;
     int ret;
@@ -220,6 +221,9 @@ static int write_packet(Muxer *mux, OutputStream *ost, AVPacket *pkt)
         ret = AVERROR_EOF;
         goto fail;
     }
+
+   if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO && audio_sync_method < 0)
+        pkt->pts = pkt->dts = AV_NOPTS_VALUE;
 
     ret = mux_fixup_ts(mux, ms, pkt);
     if (ret < 0)

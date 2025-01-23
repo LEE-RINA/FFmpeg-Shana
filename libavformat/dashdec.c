@@ -446,7 +446,7 @@ static int open_url(AVFormatContext *s, AVIOContext **pb, const char *url,
     av_freep(pb);
     av_dict_copy(&tmp, *opts, 0);
     av_dict_copy(&tmp, opts2, 0);
-    ret = avio_open2(pb, url, AVIO_FLAG_READ, c->interrupt_callback, &tmp);
+    ret = ffio_open_whitelist(pb, url, AVIO_FLAG_READ, c->interrupt_callback, &tmp, s->protocol_whitelist, s->protocol_blacklist);
     if (ret >= 0) {
         // update cookies on http response with setcookies.
         char *new_cookies = NULL;
@@ -578,9 +578,9 @@ static enum AVMediaType get_content_type(xmlNodePtr node)
     return type;
 }
 
-static struct fragment * get_Fragment(char *range)
+static struct fragment *get_fragment(char *range)
 {
-    struct fragment * seg =  av_mallocz(sizeof(struct fragment));
+    struct fragment *seg = av_mallocz(sizeof(struct fragment));
 
     if (!seg)
         return NULL;
@@ -614,7 +614,7 @@ static int parse_manifest_segmenturlnode(AVFormatContext *s, struct representati
         range_val = xmlGetProp(fragmenturl_node, "range");
         if (initialization_val || range_val) {
             free_fragment(&rep->init_section);
-            rep->init_section = get_Fragment(range_val);
+            rep->init_section = get_fragment(range_val);
             xmlFree(range_val);
             if (!rep->init_section) {
                 xmlFree(initialization_val);
@@ -635,7 +635,7 @@ static int parse_manifest_segmenturlnode(AVFormatContext *s, struct representati
         media_val = xmlGetProp(fragmenturl_node, "media");
         range_val = xmlGetProp(fragmenturl_node, "mediaRange");
         if (media_val || range_val) {
-            struct fragment *seg = get_Fragment(range_val);
+            struct fragment *seg = get_fragment(range_val);
             xmlFree(range_val);
             if (!seg) {
                 xmlFree(media_val);
@@ -1225,7 +1225,7 @@ static int parse_manifest(AVFormatContext *s, const char *url, AVIOContext *in)
         close_in = 1;
 
         av_dict_copy(&opts, c->avio_opts, 0);
-        ret = avio_open2(&in, url, AVIO_FLAG_READ, c->interrupt_callback, &opts);
+        ret = ffio_open_whitelist(&in, url, AVIO_FLAG_READ, c->interrupt_callback, &opts, s->protocol_whitelist, s->protocol_blacklist);
         av_dict_free(&opts);
         if (ret < 0)
             return ret;

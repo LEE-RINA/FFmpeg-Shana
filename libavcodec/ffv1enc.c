@@ -199,7 +199,7 @@ static av_always_inline av_flatten void put_symbol_inline(RangeCoder *c,
     } while (0)
 
     if (v) {
-        const int a = FFABS(v);
+        const unsigned a = is_signed ? FFABS(v) : v;
         const int e = av_log2(a);
         put_rac(c, state + 0, 0);
         if (e <= 9) {
@@ -516,7 +516,7 @@ static int sort_stt(FFV1Context *s, uint8_t stt[256])
 }
 
 
-static int encode_determine_slices(AVCodecContext *avctx)
+int ff_ffv1_encode_determine_slices(AVCodecContext *avctx)
 {
     FFV1Context *s = avctx->priv_data;
     int plane_count = 1 + 2*s->chroma_planes + s->transparency;
@@ -919,7 +919,7 @@ static int encode_init_internal(AVCodecContext *avctx)
         return ret;
 
     if (s->version > 1) {
-        if ((ret = encode_determine_slices(avctx)) < 0)
+        if ((ret = ff_ffv1_encode_determine_slices(avctx)) < 0)
             return ret;
 
         if ((ret = ff_ffv1_write_extradata(avctx)) < 0)

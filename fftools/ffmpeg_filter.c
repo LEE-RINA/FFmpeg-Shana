@@ -19,6 +19,7 @@
  */
 
 #include <stdint.h>
+#include <float.h>
 
 #include "ffmpeg.h"
 
@@ -48,6 +49,7 @@ typedef struct FilterGraphPriv {
     char             log_name[32];
 
     int              is_simple;
+    int reconfiguration;
     // true when the filtergraph contains only meta filters
     // that do not modify the frame data
     int              is_meta;
@@ -1807,6 +1809,7 @@ fail:
 static int configure_input_audio_filter(FilterGraph *fg, AVFilterGraph *graph,
                                         InputFilter *ifilter, AVFilterInOut *in)
 {
+    FilterGraphPriv *fgp = fgp_from_fg(fg);
     InputFilterPriv *ifp = ifp_from_ifilter(ifilter);
     AVFilterContext *last_filter;
     const AVFilter *abuffer_filt = avfilter_get_by_name("abuffer");
@@ -1832,6 +1835,35 @@ static int configure_input_audio_filter(FilterGraph *fg, AVFilterGraph *graph,
                                             graph)) < 0)
         return ret;
     last_filter = ifp->filter;
+
+#define AUTO_INSERT_FILTER_INPUT(opt_name, filter_name, arg) do {           \
+    AVFilterContext *filt_ctx;                                              \
+                                                                            \
+    snprintf(name, sizeof(name), "graph_%d_%s_in_%s",                       \
+                fg->index, filter_name, ifp->opts.name);                    \
+    ret = avfilter_graph_create_filter(&filt_ctx,                           \
+                                       avfilter_get_by_name(filter_name),   \
+                                       name, arg, NULL, graph);             \
+    if (ret < 0)                                                            \
+        return ret;                                                         \
+                                                                            \
+    ret = avfilter_link(last_filter, 0, filt_ctx, 0);                       \
+    if (ret < 0)                                                            \
+        return ret;                                                         \
+                                                                            \
+    last_filter = filt_ctx;                                                 \
+} while (0)
+
+    if (audio_sync_method > 0) {
+        char args[256] = {0};
+
+        av_strlcatf(args, sizeof(args), "async=%d", audio_sync_method);
+        if (fabsf(audio_drift_threshold - 0.1) > FLT_EPSILON)
+            av_strlcatf(args, sizeof(args), ":min_hard_comp=%f", audio_drift_threshold);
+        if (!fgp->reconfiguration)
+            av_strlcatf(args, sizeof(args), ":first_pts=0");
+        AUTO_INSERT_FILTER_INPUT("-async", "aresample", args);
+    }
 
     snprintf(name, sizeof(name), "trim for input stream %s", ifp->opts.name);
     ret = insert_trim(fg, ifp->opts.trim_start_us, ifp->opts.trim_end_us,
@@ -1999,6 +2031,8 @@ static int configure_filtergraph(FilterGraph *fg, FilterGraphThread *fgt)
         if (ret < 0)
             goto fail;
     }
+
+    fgp->reconfiguration = 1;
 
     for (int i = 0; i < fg->nb_inputs; i++) {
         InputFilterPriv *ifp = ifp_from_ifilter(fg->inputs[i]);
@@ -2456,7 +2490,7 @@ static int fg_output_frame(OutputFilterPriv *ofp, FilterGraphThread *fgt,
                 ofp->fps.dropped_keyframe = 0;
             }
         } else {
-            frame->pts = (frame->pts == AV_NOPTS_VALUE) ? ofp->next_pts :
+            frame->pts = (frame->pts == AV_NOPTS_VALUE || audio_sync_method < 0) ? ofp->next_pts :
                 av_rescale_q(frame->pts,   frame->time_base, ofp->tb_out) -
                 av_rescale_q(ofp->ts_offset, AV_TIME_BASE_Q, ofp->tb_out);
 
