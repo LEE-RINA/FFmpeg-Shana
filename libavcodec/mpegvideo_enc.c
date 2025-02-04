@@ -133,11 +133,11 @@ void ff_convert_matrix(MpegEncContext *s, int (*qmat)[64],
             for (i = 0; i < 64; i++) {
                 const int j = s->idsp.idct_permutation[i];
                 int64_t den = (int64_t) qscale2 * quant_matrix[j];
-                /* 16 <= qscale * quant_matrix[i] <= 7905
-                 * Assume x = ff_aanscales[i] * qscale * quant_matrix[i]
-                 *             19952 <=              x  <= 249205026
-                 * (1 << 36) / 19952 >= (1 << 36) / (x) >= (1 << 36) / 249205026
-                 *           3444240 >= (1 << 36) / (x) >= 275 */
+                /* 1 * 1 <= qscale2 * quant_matrix[j] <= 112 * 255
+                 * Assume x = qscale2 * quant_matrix[j]
+                 *                 1 <=              x  <= 28560
+                 *     (1 << 22) / 1 >= (1 << 22) / (x) >= (1 << 22) / 28560
+                 *           4194304 >= (1 << 22) / (x) >= 146 */
 
                 qmat[qscale][i] = (int)((UINT64_C(2) << QMAT_SHIFT) / den);
             }
@@ -145,11 +145,11 @@ void ff_convert_matrix(MpegEncContext *s, int (*qmat)[64],
             for (i = 0; i < 64; i++) {
                 const int j = s->idsp.idct_permutation[i];
                 int64_t den = ff_aanscales[i] * (int64_t) qscale2 * quant_matrix[j];
-                /* 16 <= qscale * quant_matrix[i] <= 7905
-                 * Assume x = ff_aanscales[i] * qscale * quant_matrix[i]
-                 *             19952 <=              x  <= 249205026
-                 * (1 << 36) / 19952 >= (1 << 36) / (x) >= (1 << 36) / 249205026
-                 *           3444240 >= (1 << 36) / (x) >= 275 */
+                /* 1247 * 1 * 1 <= ff_aanscales[i] * qscale2 * quant_matrix[j] <= 31521 * 112 * 255
+                 * Assume x = ff_aanscales[i] * qscale2 * quant_matrix[j]
+                 *              1247 <=              x  <= 900239760
+                 *  (1 << 36) / 1247 >= (1 << 36) / (x) >= (1 << 36) / 900239760
+                 *          55107840 >= (1 << 36) / (x) >= 76 */
 
                 qmat[qscale][i] = (int)((UINT64_C(2) << (QMAT_SHIFT + 14)) / den);
             }
@@ -157,14 +157,17 @@ void ff_convert_matrix(MpegEncContext *s, int (*qmat)[64],
             for (i = 0; i < 64; i++) {
                 const int j = s->idsp.idct_permutation[i];
                 int64_t den = (int64_t) qscale2 * quant_matrix[j];
-                /* We can safely suppose that 16 <= quant_matrix[i] <= 255
-                 * Assume x = qscale * quant_matrix[i]
-                 * So             16 <=              x  <= 7905
-                 * so (1 << 19) / 16 >= (1 << 19) / (x) >= (1 << 19) / 7905
-                 * so          32768 >= (1 << 19) / (x) >= 67 */
+                /* 1 * 1 <= qscale2 * quant_matrix[j] <= 112 * 255
+                 * Assume x = qscale2 * quant_matrix[j]
+                 *                 1 <=              x  <= 28560
+                 *     (1 << 22) / 1 >= (1 << 22) / (x) >= (1 << 22) / 28560
+                 *           4194304 >= (1 << 22) / (x) >= 146
+                 *
+                 *                 1 <=              x  <= 28560
+                 *     (1 << 17) / 1 >= (1 << 17) / (x) >= (1 << 17) / 28560
+                 *            131072 >= (1 << 17) / (x) >= 4 */
+
                 qmat[qscale][i] = (int)((UINT64_C(2) << QMAT_SHIFT) / den);
-                //qmat  [qscale][i] = (1 << QMAT_SHIFT_MMX) /
-                //                    (qscale * quant_matrix[i]);
                 qmat16[qscale][0][i] = (2 << QMAT_SHIFT_MMX) / den;
 
                 if (qmat16[qscale][0][i] == 0 ||
@@ -993,6 +996,10 @@ av_cold int ff_mpv_encode_init(AVCodecContext *avctx)
     /* precompute matrix */
     /* for mjpeg, we do include qscale in the matrix */
     if (s->out_format != FMT_MJPEG) {
+        ret = ff_check_codec_matrices(avctx, FF_MATRIX_TYPE_INTRA | FF_MATRIX_TYPE_INTER, 1, 255);
+        if (ret < 0)
+            return ret;
+
         ff_convert_matrix(s, s->q_intra_matrix, s->q_intra_matrix16,
                           s->intra_matrix, s->intra_quant_bias, avctx->qmin,
                           31, 1);
@@ -3760,6 +3767,10 @@ static int encode_picture(MpegEncContext *s, const AVPacket *pkt)
         const uint16_t *  luma_matrix = ff_mpeg1_default_intra_matrix;
         const uint16_t *chroma_matrix = ff_mpeg1_default_intra_matrix;
 
+        ret = ff_check_codec_matrices(s->avctx, FF_MATRIX_TYPE_INTRA | FF_MATRIX_TYPE_CHROMA_INTRA, (7 + s->qscale) / s->qscale, 65535);
+        if (ret < 0)
+            return ret;
+
         if (s->avctx->intra_matrix) {
             chroma_matrix =
             luma_matrix = s->avctx->intra_matrix;
@@ -3987,9 +3998,9 @@ static int dct_quantize_trellis_c(MpegEncContext *s,
 
     for(i=63; i>=start_i; i--) {
         const int j = scantable[i];
-        int level = block[j] * qmat[j];
+        int64_t level = (int64_t)block[j] * qmat[j];
 
-        if(((unsigned)(level+threshold1))>threshold2){
+        if(((uint64_t)(level+threshold1))>threshold2){
             last_non_zero = i;
             break;
         }
@@ -3997,11 +4008,11 @@ static int dct_quantize_trellis_c(MpegEncContext *s,
 
     for(i=start_i; i<=last_non_zero; i++) {
         const int j = scantable[i];
-        int level = block[j] * qmat[j];
+        int64_t level = (int64_t)block[j] * qmat[j];
 
 //        if(   bias+level >= (1<<(QMAT_SHIFT - 3))
 //           || bias-level >= (1<<(QMAT_SHIFT - 3))){
-        if(((unsigned)(level+threshold1))>threshold2){
+        if(((uint64_t)(level+threshold1))>threshold2){
             if(level>0){
                 level= (bias + level)>>QMAT_SHIFT;
                 coeff[0][i]= level;
@@ -4590,7 +4601,7 @@ static int dct_quantize_c(MpegEncContext *s,
                           int16_t *block, int n,
                           int qscale, int *overflow)
 {
-    int i, j, level, last_non_zero, q, start_i;
+    int i, last_non_zero, q, start_i;
     const int *qmat;
     const uint8_t *scantable;
     int bias;
@@ -4630,10 +4641,10 @@ static int dct_quantize_c(MpegEncContext *s,
     threshold1= (1<<QMAT_SHIFT) - bias - 1;
     threshold2= (threshold1<<1);
     for(i=63;i>=start_i;i--) {
-        j = scantable[i];
-        level = block[j] * qmat[j];
+        const int j = scantable[i];
+        int64_t level = (int64_t)block[j] * qmat[j];
 
-        if(((unsigned)(level+threshold1))>threshold2){
+        if(((uint64_t)(level+threshold1))>threshold2){
             last_non_zero = i;
             break;
         }else{
@@ -4641,12 +4652,12 @@ static int dct_quantize_c(MpegEncContext *s,
         }
     }
     for(i=start_i; i<=last_non_zero; i++) {
-        j = scantable[i];
-        level = block[j] * qmat[j];
+        const int j = scantable[i];
+        int64_t level = (int64_t)block[j] * qmat[j];
 
 //        if(   bias+level >= (1<<QMAT_SHIFT)
 //           || bias-level >= (1<<QMAT_SHIFT)){
-        if(((unsigned)(level+threshold1))>threshold2){
+        if(((uint64_t)(level+threshold1))>threshold2){
             if(level>0){
                 level= (bias + level)>>QMAT_SHIFT;
                 block[j]= level;

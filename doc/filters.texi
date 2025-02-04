@@ -14330,7 +14330,7 @@ A '|'-separated list of color space names, such as
 
 @item color_ranges
 A '|'-separated list of color range names, such as
-"color_spaces=tv|pc".
+"color_ranges=tv|pc".
 
 @end table
 
@@ -31477,6 +31477,12 @@ This filter accepts the following options:
 
 @item expr
 The expression which is evaluated for each frame to construct its timestamp.
+
+@item strip_fps (@emph{video only})
+Boolean option which determines if the original framerate metadata is unset.
+If set to true, be advised that a sane frame rate should be explicitly
+specified if output is sent to a constant frame rate muxer.
+Default is @code{false}.
 
 @end table
 

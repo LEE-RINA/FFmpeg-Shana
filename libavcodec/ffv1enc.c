@@ -414,11 +414,13 @@ av_cold int ff_ffv1_write_extradata(AVCodecContext *avctx)
     ff_build_rac_states(&c, 0.05 * (1LL << 32), 256 - 8);
 
     put_symbol(&c, state, f->version, 0);
+    f->combined_version = f->version << 16;
     if (f->version > 2) {
         if (f->version == 3) {
             f->micro_version = 4;
         } else if (f->version == 4)
             f->micro_version = 3;
+        f->combined_version += f->micro_version;
         put_symbol(&c, state, f->micro_version, 0);
     }
 
@@ -912,7 +914,6 @@ static int encode_init_internal(AVCodecContext *avctx)
         }
     }
 
-    s->version = 0;
 
     ret = ff_ffv1_encode_init(avctx);
     if (ret < 0)
@@ -1045,6 +1046,10 @@ static void choose_rct_params(const FFV1Context *f, FFV1SliceContext *sc,
                 r = p[0];
                 g = p[1];
                 b = p[2];
+            } else if (f->use32bit || transparency) {
+                g = *((const uint16_t *)(src[0] + x*2 + stride[0]*y));
+                b = *((const uint16_t *)(src[1] + x*2 + stride[1]*y));
+                r = *((const uint16_t *)(src[2] + x*2 + stride[2]*y));
             } else {
                 b = *((const uint16_t*)(src[0] + x*2 + stride[0]*y));
                 g = *((const uint16_t*)(src[1] + x*2 + stride[1]*y));

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 Tim Walker <tdskywalker@gmail.com>
+ * Copyright (c) 2025 Krzysztof Aleksander Pyrkosz
  *
  * This file is part of FFmpeg.
  *
@@ -18,24 +18,21 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "downmix_info.h"
-#include "frame.h"
+#include "config.h"
 
-AVDownmixInfo *av_downmix_info_update_side_data(AVFrame *frame)
+#include "libavutil/arm/cpu.h"
+#include "libavutil/attributes.h"
+#include "libavcodec/aacencdsp.h"
+
+void ff_abs_pow34_neon(float *out, const float *in, const int size);
+void ff_aac_quant_bands_neon(int *, const float *, const float *, int, int,
+                             int, const float, const float);
+
+av_cold void ff_aacenc_dsp_init_aarch64(AACEncDSPContext *s)
 {
-    AVFrameSideData *side_data;
+    int cpu_flags = av_get_cpu_flags();
+    if (!have_neon(cpu_flags)) return;
 
-    side_data = av_frame_get_side_data(frame, AV_FRAME_DATA_DOWNMIX_INFO);
-
-    if (!side_data) {
-        side_data = av_frame_new_side_data(frame, AV_FRAME_DATA_DOWNMIX_INFO,
-                                           sizeof(AVDownmixInfo));
-        if (side_data)
-            memset(side_data->data, 0, sizeof(AVDownmixInfo));
-    }
-
-    if (!side_data)
-        return NULL;
-
-    return (AVDownmixInfo*)side_data->data;
+    s->abs_pow34 = ff_abs_pow34_neon;
+    s->quant_bands = ff_aac_quant_bands_neon;
 }
