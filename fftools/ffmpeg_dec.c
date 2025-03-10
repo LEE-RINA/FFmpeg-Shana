@@ -788,11 +788,6 @@ static int packet_decode(DecoderPriv *dp, AVPacket *pkt, AVFrame *frame)
 
         frame->time_base = dec->pkt_timebase;
 
-        ret = clone_side_data(&frame->side_data, &frame->nb_side_data,
-                              dec->decoded_side_data, dec->nb_decoded_side_data, 0);
-        if (ret < 0)
-            return ret;
-
         if (dec->codec_type == AVMEDIA_TYPE_AUDIO) {
             dp->dec.samples_decoded += frame->nb_samples;
 
